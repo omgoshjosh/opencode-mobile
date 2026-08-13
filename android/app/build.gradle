@@ -95,6 +95,9 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 39
+        if (System.getenv("BUILD_VERSION_CODE")) {
+            versionCode System.getenv("BUILD_VERSION_CODE").toInteger()
+        }
         versionName "0.4.12"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""

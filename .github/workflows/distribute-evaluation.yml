@@ -1,0 +1,98 @@
+name: Distribute evaluation APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: Monotonically increasing Android version code
+        required: true
+        type: number
+      release_notes:
+        description: Tester-facing release notes
+        required: false
+        type: string
+
+jobs:
+  build-and-distribute:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: opencodex-mobile-evaluation-distribution
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      BUILD_VERSION_CODE: ${{ inputs.version_code }}
+      NODE_ENV: production
+      SENTRY_DISABLE_AUTO_UPLOAD: "true"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Validate version code
+        run: |
+          if (( BUILD_VERSION_CODE < 1 || BUILD_VERSION_CODE > 2100000000 )); then
+            echo "version_code must be between 1 and 2100000000" >&2
+            exit 1
+          fi
+
+      - name: Verify source
+        run: |
+          npm run check:versions
+          npm run typecheck
+          npm test
+
+      - name: Configure signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.EVALUATION_KEYSTORE_BASE64 }}
+        run: |
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/app/evaluation.keystore
+          echo "RELEASE_STORE_FILE=evaluation.keystore" >> "$GITHUB_ENV"
+
+      - name: Build signed APK
+        working-directory: android
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.EVALUATION_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: opencodex-evaluation
+          RELEASE_KEY_PASSWORD: ${{ secrets.EVALUATION_KEYSTORE_PASSWORD }}
+        run: ./gradlew assembleRelease
+
+      - name: Verify APK
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          sha256sum "$APK"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: opencodex-mobile-${{ inputs.version_code }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Distribute to Firebase testers
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+          FIREBASE_TESTER_GROUP: ${{ secrets.FIREBASE_TESTER_GROUP }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: |
+          npm install --global firebase-tools@15.26.0 --ignore-scripts
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/firebase-service-account.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/firebase-service-account.json"
+          firebase appdistribution:distribute android/app/build/outputs/apk/release/app-release.apk \
+            --app "$FIREBASE_APP_ID" \
+            --groups "$FIREBASE_TESTER_GROUP" \
+            --release-notes "${RELEASE_NOTES:-Evaluation build $BUILD_VERSION_CODE from $GITHUB_SHA}"
