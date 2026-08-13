@@ -51,6 +51,10 @@ jobs:
           BRANCH="sync/upstream-main-$(date +%Y%m%d)"
           git checkout -b "$BRANCH" upstream/main
           git push origin "$BRANCH"
+          if gh pr view "$BRANCH" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "PR already exists for $BRANCH, skipping"
+            exit 0
+          fi
           gh api -X POST "repos/${{ github.repository }}/pulls" \
             --field title="chore: sync main with upstream ($(date +%Y-%m-%d))" \
             --field head="$BRANCH" \
