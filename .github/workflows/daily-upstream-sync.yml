@@ -51,11 +51,12 @@ jobs:
           BRANCH="sync/upstream-main-$(date +%Y%m%d)"
           git checkout -b "$BRANCH" upstream/main
           git push origin "$BRANCH"
-          gh pr create \
-            --title "chore: sync main with upstream ($(date +%Y-%m-%d))" \
-            --body "Upstream has diverged from our main. This PR brings in upstream changes but could not be fast-forwarded — review for conflicts.
+          BODY="Upstream has diverged from our main. This PR brings in upstream changes but could not be fast-forwarded — review for conflicts.
 
-            **Commits behind:** ${{ steps.check.outputs.behind }}
-            **Our unique commits:** ${{ steps.check.outputs.ahead }}" \
-            --base main \
-            --head "$BRANCH"
+**Commits behind:** ${{ steps.check.outputs.behind }}
+**Our unique commits:** ${{ steps.check.outputs.ahead }}"
+          gh api -X POST "repos/${{ github.repository }}/pulls" \
+            --field title="chore: sync main with upstream ($(date +%Y-%m-%d))" \
+            --field head="$BRANCH" \
+            --field base="main" \
+            --field body="$BODY"
