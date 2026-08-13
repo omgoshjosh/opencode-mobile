@@ -173,6 +173,49 @@ client's prompt immediately, without refetch.
 
 ---
 
+## M-6 — No transcript reconciliation after SSE reconnect `OPEN` — client-side root cause
+
+**This is the client-side gap the realtime contract doc predicts but does not name.**
+The server contract passes (an already-connected `/global/event` subscriber does get
+another client's prompt immediately), so the doc narrows the stale-session symptom to
+"the client or transport path". Here is the specific hole.
+
+**The chain:**
+
+1. SSE reconnect resumes the stream from *now*. It does **not** replay missed events —
+   stated explicitly in `src/stores/events.ts:93-98`.
+2. The only reconnect-time reconciliation is `resyncBusySessions()`, invoked once per
+   reconnect at `events.ts:232-235`.
+3. `resyncBusySessions()` filters to sessions whose store status is `busy` and
+   **returns immediately if none are** (`events.ts:105-109`).
+4. Mobile only learns a session is busy from a `session.status` SSE event. If mobile was
+   disconnected when the other client's prompt arrived, **it never saw that event**, so
+   the session is still `idle` in its store.
+5. Therefore `resyncBusySessions()` no-ops, nothing refetches, and the open transcript
+   stays stale until the user navigates away and back (which triggers `selectSession`).
+
+The session screen subscribes to `reconnectAttempts` (`app/session/[id].tsx:143`) but
+uses it **only** to render the reconnect/connected banner (lines 512-522, 675-683).
+No effect refetches messages when the connection is restored.
+
+**Why this survived the M-3 fix.** `616753b` fixed a *rendering* bug — a spinner hiding
+content that was arriving. This is a *data* bug: the content never arrives at all. Same
+user-visible symptom, different layer. The two are complementary, not duplicates.
+
+**Proposed fix.** In the `isReconnect && !resyncedAfterReconnect` block, also refetch
+the currently-open session's transcript unconditionally, not just busy ones. One GET on
+a relatively rare event. This composes well with `616753b`: because that change stopped
+same-session refreshes from forcing `isLoading`, the refetch lands as a silent
+background reconcile with no spinner flash.
+
+**Not yet implemented** — flagged for a decision first, since it changes reconnect
+behavior for every user.
+
+**Test dependency.** Cannot be validated end-to-end while M-4 is active. Fix the split
+bus first, or a passing test proves nothing.
+
+---
+
 ## M-5 — Messages do not auto-scroll `OPEN`
 
 **Upstream.** [`dzianisv/opencode-mobile#155`](https://github.com/dzianisv/opencode-mobile/issues/155)
