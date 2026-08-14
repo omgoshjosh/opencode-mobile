@@ -10,7 +10,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  sync-main:
+  sync:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,37 +26,80 @@ jobs:
       - name: Add upstream remote
         run: |
           git remote add upstream https://github.com/dzianisv/opencode-mobile.git 2>/dev/null || true
-          git fetch upstream --prune
+          git fetch --prune upstream
+          git fetch --prune origin
 
-      - name: Check if main is behind upstream
-        id: check
-        run: |
-          BEHIND=$(git rev-list --count HEAD..upstream/main)
-          AHEAD=$(git rev-list --count upstream/main..HEAD)
-          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
-          echo "ahead=$AHEAD" >> "$GITHUB_OUTPUT"
-          echo "main is $BEHIND behind, $AHEAD ahead of upstream"
-
-      - name: Fast-forward main
-        if: steps.check.outputs.behind != '0' && steps.check.outputs.ahead == '0'
-        run: |
-          git merge --ff-only upstream/main
-          git push origin main
-
-      - name: Create sync PR for main (conflicts)
-        if: steps.check.outputs.behind != '0' && steps.check.outputs.ahead != '0'
+      - name: Reconcile main with upstream
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BRANCH="sync/upstream-main-$(date +%Y%m%d)"
-          git checkout -b "$BRANCH" upstream/main
-          git push origin "$BRANCH"
-          if gh pr view "$BRANCH" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "PR already exists for $BRANCH, skipping"
+          git checkout main
+          git reset --hard origin/main
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "main is up to date with upstream/main"
             exit 0
           fi
-          gh api -X POST "repos/${{ github.repository }}/pulls" \
-            --field title="chore: sync main with upstream ($(date +%Y-%m-%d))" \
-            --field head="$BRANCH" \
-            --field base="main" \
-            --field body="Upstream has diverged from our main. This PR brings in upstream changes but could not be fast-forwarded - review for conflicts. Commits behind: ${{ steps.check.outputs.behind }}. Our unique commits: ${{ steps.check.outputs.ahead }}."
+          AHEAD=$(git rev-list --count upstream/main..HEAD)
+          echo "main is $BEHIND behind, $AHEAD ahead of upstream/main"
+          BRANCH="reconcile/main-$(date +%Y%m%d)"
+          git checkout -B "$BRANCH" origin/main
+          if git merge --no-edit upstream/main; then
+            echo "reconcile of main was clean - pushing to main"
+            git push origin "$BRANCH:main"
+          else
+            echo "main conflicts with upstream/main - opening reconcile PR"
+            git add -A
+            git commit -m "chore: reconcile main with upstream (conflicts pending)" || true
+            git push origin "$BRANCH" 2>/dev/null || true
+            if ! gh pr list --repo "${{ github.repository }}" --head "$BRANCH" --state open --json number --jq '. | length' | grep -q '^1$'; then
+              gh pr create --repo "${{ github.repository }}" \
+                --title "chore: reconcile main with upstream ($(date +%Y-%m-%d))" \
+                --body "Merging upstream/main into main hit conflicts. Resolve them in the conflict-marker files, then merge this PR into main." \
+                --base main --head "$BRANCH" || true
+            else
+              echo "reconcile PR already exists for $BRANCH, skipping"
+            fi
+          fi
+
+      - name: Reconcile fork-only work branches
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git checkout main
+          comm -23 \
+            <(git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | sed 's#origin/##' | sort) \
+            <(git for-each-ref --format='%(refname:short)' refs/remotes/upstream/ | sed 's#upstream/##' | sort) \
+            | grep -v '^main$' \
+            > /tmp/fork-only-branches.txt
+          echo "fork-only branches: $(tr '\n' ' ' < /tmp/fork-only-branches.txt)"
+          while IFS= read -r branch; do
+            [ -z "$branch" ] && continue
+            echo "=== reconciling $branch ==="
+            git reset --hard "origin/$branch" 2>/dev/null || { echo "no origin/$branch, skipping"; continue; }
+            BEHIND=$(git rev-list --count HEAD..upstream/main)
+            if [ "$BEHIND" -eq 0 ]; then
+              echo "$branch is up to date with upstream/main, skipping"
+              continue
+            fi
+            TBRANCH="reconcile/$branch-$(date +%Y%m%d)"
+            git checkout -B "$TBRANCH" "origin/$branch"
+            if git merge --no-edit upstream/main; then
+              echo "$branch reconciled cleanly - updating the work branch"
+              git push origin "$TBRANCH:$branch"
+            else
+              echo "$branch conflicts with upstream/main - opening reconcile PR"
+              git add -A
+              git commit -m "chore: reconcile $branch with upstream (conflicts pending)" || true
+              git push origin "$TBRANCH" 2>/dev/null || true
+              if ! gh pr list --repo "${{ github.repository }}" --head "$TBRANCH" --state open --json number --jq '. | length' | grep -q '^1$'; then
+                gh pr create --repo "${{ github.repository }}" \
+                  --title "chore: reconcile $branch with upstream ($(date +%Y-%m-%d))" \
+                  --body "Merging upstream/main into $branch hit conflicts. Resolve them in the conflict-marker files, then merge this PR into $branch." \
+                  --base "$branch" --head "$TBRANCH" || true
+              else
+                echo "reconcile PR already exists for $TBRANCH, skipping"
+              fi
+            fi
+          done < /tmp/fork-only-branches.txt
