@@ -7,6 +7,16 @@
 export interface HeaderConfig {
   directory?: string
   auth?: { username: string; password: string }
+  /**
+   * Identifies the app build to the server, e.g.
+   * `opencode-mobile/0.4.12 (build 29780534; android)`.
+   *
+   * Without this the server cannot tell which client build a request came
+   * from, which makes "are you on the latest build?" unanswerable during
+   * debugging — it came up for real. Passed in rather than read here so this
+   * module stays free of React Native imports.
+   */
+  clientInfo?: string
 }
 
 // `btoa` is Latin1-only and throws a range error on any character outside
@@ -33,6 +43,10 @@ export function buildRequestHeaders(config: HeaderConfig): Record<string, string
       ? encodeURIComponent(config.directory)
       : config.directory
     headers["x-opencode-directory"] = encoded
+  }
+
+  if (config.clientInfo) {
+    headers["x-opencode-client"] = config.clientInfo
   }
 
   if (config.auth) {

@@ -12,6 +12,8 @@ import {
 } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { useTranslation } from "react-i18next"
+import * as Application from "expo-application"
+import { clientInfoFrom, clientInfoLabel } from "../../src/lib/client-info"
 import { useAuth } from "../../src/stores/auth"
 import { useSettings } from "../../src/stores/settings"
 import {
@@ -68,6 +70,17 @@ function SettingSection({ title, children, isDark }: { title: string; children: 
     </View>
   )
 }
+
+// Read from the native package rather than a literal: this row said "1.0.0"
+// regardless of what was installed, so the one place a user checks to answer
+// "which build am I on?" actively misled them.
+const appVersionLabel = clientInfoLabel(
+  clientInfoFrom({
+    version: Application.nativeApplicationVersion,
+    build: Application.nativeBuildVersion,
+    platform: "",
+  }),
+)
 
 export default function SettingsScreen() {
   const colorScheme = useColorScheme()
@@ -247,7 +260,12 @@ export default function SettingsScreen() {
           onPress={handleLanguagePress}
           right={<Ionicons name="chevron-forward" size={20} color={isDark ? "#666666" : "#999999"} />}
         />
-        <SettingRow icon="information-circle" label={t("settings.about.version")} description="1.0.0" isDark={isDark} />
+        <SettingRow
+          icon="information-circle"
+          label={t("settings.about.version")}
+          description={appVersionLabel}
+          isDark={isDark}
+        />
         <SettingRow
           icon="logo-github"
           label={t("settings.about.github.label")}

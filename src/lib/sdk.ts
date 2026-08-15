@@ -4,6 +4,9 @@
 // expo/fetch provides WinterCG-compliant fetch with ReadableStream support for SSE
 import { fetch as expoFetch } from "expo/fetch"
 import { buildRequestHeaders } from "./headers"
+import { clientInfoFrom, clientInfoHeader } from "./client-info"
+import * as Application from "expo-application"
+import { Platform } from "react-native"
 import { SSEParser } from "./sse"
 import { apiErrorFor } from "./api-error"
 import { loadSessionList } from "./session-list"
@@ -197,8 +200,19 @@ export class ApiError extends Error {
   }
 }
 
+// Computed once: the native values cannot change while the app is running.
+// Lets the server identify which client build a request came from, which was
+// previously impossible even in principle.
+const CLIENT_INFO_HEADER = clientInfoHeader(
+  clientInfoFrom({
+    version: Application.nativeApplicationVersion,
+    build: Application.nativeBuildVersion,
+    platform: Platform.OS,
+  }),
+)
+
 function createHeaders(config: ClientConfig): HeadersInit {
-  return buildRequestHeaders(config)
+  return buildRequestHeaders({ ...config, clientInfo: CLIENT_INFO_HEADER })
 }
 
 // `timeoutMs` lets specific callers (e.g. the onboarding health-check) fail
