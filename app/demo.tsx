@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme, Linking } from "react-native"
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme, Linking, Alert } from "react-native"
 import { Stack, useRouter } from "expo-router"
 import { Ionicons } from "@expo/vector-icons"
 import { useTranslation } from "react-i18next"
-import { MessageBubble, PermissionPrompt } from "../src/components/chat"
+import { MessageBubble, PermissionPrompt, SelectableTextModal } from "../src/components/chat"
+import * as Clipboard from "expo-clipboard"
+import { extractCopyText, hasCopyableText } from "../src/lib/message-copy-text"
 import { buildDemoScript, buildDemoCompletionMessage, buildDemoDenialMessage } from "../src/lib/demo-script"
 import { SETUP_GUIDE_URL } from "../src/lib/links"
 import { track, AnalyticsEvent } from "../src/lib/analytics"
@@ -26,6 +28,12 @@ export default function DemoScreen() {
   const colorScheme = useColorScheme()
   const isDark = colorScheme === "dark"
   const { t } = useTranslation()
+
+  // Same copy/select affordance as the real session screen. The demo is the
+  // first thing a new user sees, and assistant prose is rendered through the
+  // markdown renderer that deliberately strips `selectable` — so without this
+  // the demo's text is just as uncopyable as a real reply was.
+  const [selectableText, setSelectableText] = useState<string | null>(null)
 
   // Built once per mount from pure, hardcoded data (src/lib/demo-script.ts).
   const script = useMemo(() => buildDemoScript(), [])
@@ -56,6 +64,33 @@ export default function DemoScreen() {
 
   const [userMessage, assistantMessage] = script.messages
 
+  // messageID -> parts, covering the scripted pair plus the optional
+  // completion message, so long-press works on every bubble on screen.
+  const partsByMessageID = useMemo(() => {
+    const map: Record<string, typeof script.parts[string]> = { ...script.parts }
+    if (completion) map[completion.message.id] = completion.parts
+    return map
+  }, [script, completion])
+
+  const handleMessageLongPress = useCallback(
+    (messageID: string) => {
+      const parts = partsByMessageID[messageID]
+      if (!hasCopyableText(parts)) return
+      const text = extractCopyText(parts)
+      Alert.alert(t("session.alerts.messageActionsTitle"), undefined, [
+        { text: t("common.cancel"), style: "cancel" },
+        {
+          text: t("session.actions.copyMessage"),
+          onPress: () => {
+            Clipboard.setStringAsync(text).catch(() => {})
+          },
+        },
+        { text: t("session.actions.selectText"), onPress: () => setSelectableText(text) },
+      ])
+    },
+    [partsByMessageID, t],
+  )
+
   return (
     <>
       <Stack.Screen options={{ title: t("demo.title"), presentation: "card" }} />
@@ -66,13 +101,28 @@ export default function DemoScreen() {
         </View>
 
         <ScrollView contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled">
-          <MessageBubble message={userMessage} parts={script.parts[userMessage.id] || []} isDark={isDark} />
-          <MessageBubble message={assistantMessage} parts={script.parts[assistantMessage.id] || []} isDark={isDark} />
+          <MessageBubble
+            message={userMessage}
+            parts={script.parts[userMessage.id] || []}
+            isDark={isDark}
+            onLongPress={handleMessageLongPress}
+          />
+          <MessageBubble
+            message={assistantMessage}
+            parts={script.parts[assistantMessage.id] || []}
+            isDark={isDark}
+            onLongPress={handleMessageLongPress}
+          />
 
           {!reply && <PermissionPrompt permission={script.permission} isDark={isDark} onReply={handleReply} />}
 
           {completion && (
-            <MessageBubble message={completion.message} parts={completion.parts} isDark={isDark} />
+            <MessageBubble
+              message={completion.message}
+              parts={completion.parts}
+              isDark={isDark}
+              onLongPress={handleMessageLongPress}
+            />
           )}
 
           <View style={[s.ctaCard, isDark && s.ctaCardDark]} testID="demo-cta-card">
@@ -101,6 +151,11 @@ export default function DemoScreen() {
             </TouchableOpacity>
           </View>
         </ScrollView>
+        <SelectableTextModal
+          visible={selectableText !== null}
+          text={selectableText ?? ""}
+          onClose={() => setSelectableText(null)}
+        />
       </View>
     </>
   )
