@@ -35,6 +35,7 @@ import {
   type Attachment,
 } from "../../src/components/chat"
 import { extractCopyText, hasCopyableText } from "../../src/lib/message-copy-text"
+import { resolveSessionModel, type ModelSelection } from "../../src/lib/swarm-model"
 import { useSessions } from "../../src/stores/sessions"
 import { useEvents, refreshPending } from "../../src/stores/events"
 import { useConnections } from "../../src/stores/connections"
@@ -313,21 +314,33 @@ export default function SessionScreen() {
     }, [id, directory]),
   )
 
-  // Sync model chip from latest assistant message
+  // Sync the model chip for this session.
+  //
+  // The conversation-derived model is only a *hint*. It must not win over a
+  // session persisted as a swarm: a swarm reply records the orchestrator's
+  // resolved execution model (e.g. openai/gpt-5.6-sol), and adopting that
+  // silently rewrote the composer's selection, so the next prompt left swarm
+  // mode and the user had to reselect the swarm before every message.
+  // resolveSessionModel() encodes the precedence; see src/lib/swarm-model.ts.
   useEffect(() => {
-    if (!messages || messages.length === 0) return
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i]
+    let fromMessages: ModelSelection | null = null
+    for (let i = (messages?.length ?? 0) - 1; i >= 0; i--) {
+      const msg = messages![i]
       if (msg.role === "assistant" && msg.providerID && msg.modelID) {
-        setModel({ providerID: msg.providerID, modelID: msg.modelID })
-        return
+        fromMessages = { providerID: msg.providerID, modelID: msg.modelID }
+        break
       }
       if (msg.role === "user" && msg.model) {
-        setModel(msg.model)
-        return
+        fromMessages = msg.model
+        break
       }
     }
-  }, [currentSession?.id, messages?.length])
+
+    const resolved = resolveSessionModel({ sessionModel: currentSession?.model, fromMessages })
+    // Null means "nothing authoritative to apply" — leave the user's current
+    // selection alone rather than clearing it.
+    if (resolved) setModel(resolved)
+  }, [currentSession?.id, currentSession?.model?.providerID, currentSession?.model?.id, messages?.length])
 
   // Slash command handler
   const handleSlashSelect = useCallback(

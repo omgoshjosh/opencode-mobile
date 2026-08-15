@@ -29,6 +29,16 @@ export interface Session {
   title: string
   version: string
   share?: { url: string }
+  // The model this session is persisted as running. Note the server uses `id`
+  // here, while messages and the catalog store use `modelID`. For a swarm this
+  // is the synthetic facade { providerID: "swarm", id: <swarmID> } — the
+  // orchestrator's real execution model appears only on assistant messages.
+  // See src/lib/swarm-model.ts.
+  model?: {
+    providerID: string
+    id: string
+    variant?: string
+  }
   time: {
     created: number
     updated: number

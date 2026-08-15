@@ -246,6 +246,59 @@ exercises prompt acceptance/persistence and realtime delivery without model timi
 
 ---
 
+## M-7 — Swarm selection does not persist; must be reselected every message `FIXED`
+
+Source: `/Users/josh/agents/OPENCODEX_MOBILE_SWARM_SELECTION_HANDOFF_2026-08-14.md`.
+
+**Symptom.** Select a swarm, send a prompt, and the next prompt has silently left
+swarm mode — the user must reselect the swarm before *every* message.
+
+**Root cause.** A swarm is a synthetic provider: the session persists
+`session.model = { providerID: "swarm", id: <swarmID> }` as a *facade*, while the
+orchestrator executes on a concrete model and each assistant message records that
+**resolved execution identity** (e.g. `openai/gpt-5.6-sol`).
+
+`app/session/[id].tsx` synced its model chip from the latest assistant message. So one
+swarm reply overwrote the `swarm/<id>` selection with `openai/gpt-5.6-sol`; the next
+prompt was sent as that concrete model, which **re-persists `session.model` server-side**
+and drops the session out of swarm mode for good.
+
+Three compounding gaps in mobile:
+1. `Session` in `src/lib/sdk.ts` had **no `model` field at all**, so there was nothing to
+   restore from.
+2. Nothing treated `swarm/<id>` as a first-class, non-overridable selection.
+3. Shape mismatch: the server persists `{ providerID, id }`, while messages and the
+   catalog store use `{ providerID, modelID }`.
+
+The desktop GUI never had this bug — it restores from persisted `session.model`
+(`packages/gui/src/renderer/src/lib/model-selection.ts`, `sessionModelDefaults`).
+
+**Fix.**
+- `src/lib/swarm-model.ts` — `SWARM_PROVIDER_ID`, `isSwarmSelection`,
+  `sessionModelSelection` (normalizes `id` → `modelID`), and `resolveSessionModel`
+  encoding the precedence: a persisted swarm always wins; otherwise the
+  conversation-derived model; otherwise the persisted model (cold open / reload);
+  otherwise null so the caller leaves the selection untouched.
+- `src/lib/sdk.ts` — added the missing `Session.model` field.
+- `app/session/[id].tsx` — the sync effect now routes through `resolveSessionModel`
+  and re-runs when the session's persisted model changes.
+
+10 unit tests, including the specific regression (swarm survives a Sol- or Terra-backed
+reply) and the conservative cases (ordinary sessions still follow the conversation; a
+deliberate switch away from a swarm is not blocked). Suite: 237 passing. Typecheck clean.
+
+**Contract verified against the live server**, confirming mobile's payload shape is
+accepted and the facade persists:
+
+```
+POST /session/:id/message  {"model":{"providerID":"swarm","modelID":"swm_0043…"}}  → 200
+GET  /session/:id          → model = {"providerID":"swarm","id":"swm_0043…"}
+```
+
+**Not yet verified on device** — needs a swarm round-trip through the picker.
+
+---
+
 ## M-5 — Messages do not auto-scroll `OPEN`
 
 **Upstream.** [`dzianisv/opencode-mobile#155`](https://github.com/dzianisv/opencode-mobile/issues/155)
