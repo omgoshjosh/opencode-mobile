@@ -65,9 +65,14 @@ the keyboard, with the agent/model toolbar above them.
 - **1.5× font scale:** pass — still fully visible and usable.
 - **Landscape:** not applicable; `app.json` sets `"orientation": "portrait"`.
 
-**Note for upstream.** This fix is worth contributing to
-[`#156`](https://github.com/dzianisv/opencode-mobile/issues/156) — it affects every
-Android user on an edge-to-edge build, not just Android 12 or the Pixel 3 XL.
+**Contributed upstream (2026‑08‑15).**
+[PR #182](https://github.com/dzianisv/opencode-mobile/pull/182), branched cleanly from
+`upstream/main` (v0.4.15) with only this fix — 3 files, no evaluation/swarm/pipeline
+work included. Typecheck clean, 291 tests pass against upstream's current suite. A
+diagnosis comment was posted on
+[#156](https://github.com/dzianisv/opencode-mobile/issues/156#issuecomment-5303044943)
+asking both reporters to confirm on hardware with a different status-bar height or
+gesture navigation — the one case an emulator cannot settle.
 
 ---
 
