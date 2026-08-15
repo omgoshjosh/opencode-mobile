@@ -1,11 +1,17 @@
 name: Distribute evaluation APK
 
 on:
-  # Auto-deploy: anything merged to the evaluation branch goes straight to the
-  # phone via App Distribution. Paths that cannot change the app are excluded so
-  # a docs-only commit doesn't push a pointless release to testers.
+  # Deploys are BATCHED, not per-commit.
+  #
+  # This used to trigger on every push to evaluation/integration, which turned
+  # each intermediate commit into a release notification. Work now accumulates
+  # on evaluation/integration and is promoted to `deploy` only when a coherent,
+  # verified batch is ready — so a release corresponds to something worth
+  # installing rather than to a commit.
+  #
+  # To ship: git push origin evaluation/integration:deploy
   push:
-    branches: [evaluation/integration]
+    branches: [deploy]
     paths-ignore:
       - "docs/**"
       - "**/*.md"
