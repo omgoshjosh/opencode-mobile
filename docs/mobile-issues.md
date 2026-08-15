@@ -548,7 +548,7 @@ surface a warning when it drops non-text parts, so the user isn't left wondering
 
 ---
 
-## M-10 — "New session" button reported broken `NEEDS REPRO`
+## M-10 — "New session" button felt broken — no in-flight feedback `FIXED`
 
 Reported 2026-08-15. **Could not reproduce on the Android 12 emulator** against the
 live server, on build 29780499:
@@ -574,9 +574,23 @@ none confirmed:
 `createSession()` sets `currentSession`/`messages` but never clears the store's `error`,
 so a stale error banner from a previous failure survives into a brand-new session.
 
-**Needed from Josh to proceed:** what "broken" looks like — nothing happens, an error
-appears, it opens then fails to send, or it opens the wrong directory. A screenshot is
-enough; images can be recovered from the DB even though the swarm path drops them.
+**Resolved 2026‑08‑15: not a failure, a missing progress state.** Josh confirmed the
+session did get created — it just felt broken because of lag.
+
+That is still a real defect. The FAB rendered a static "+" the entire time:
+`isCreating` existed but was only wired to a button *inside the new-session modal*, and
+the tap path never set it at all. On a slow round trip — which is Josh's case, over
+Wi‑Fi/Tailscale rather than the loopback the emulator uses — a working button is
+indistinguishable from a dead one.
+
+- The FAB now shows a spinner and is disabled while the create is in flight.
+- `createSession()` also cleared its stale `error`: a brand-new session used to inherit
+  the previous failure's banner, which independently makes a working session look broken
+  on entry.
+
+**Not visually captured:** the local server creates a session faster than a screenshot
+can catch, so the spinner was verified by typecheck and inspection rather than on screen.
+It should be visible on a real network.
 
 ---
 

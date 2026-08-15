@@ -233,6 +233,9 @@ export const useSessions = create<SessionsState>((set, get) => ({
         parts: {},
         hasMore: false,
         loadingMore: false,
+        // A brand-new session must not inherit a previous failure's banner,
+        // which otherwise makes a working session look broken on entry.
+        error: null,
       })
       return created
     } catch (error) {

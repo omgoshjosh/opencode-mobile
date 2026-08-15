@@ -477,6 +477,10 @@ export default function SessionsScreen() {
   const onCreateSession = async () => {
     if (creatingInFlight.current) return
     creatingInFlight.current = true
+    // Show progress on the FAB itself. Creating a session is a server round
+    // trip; without feedback a slow one is indistinguishable from a dead
+    // button, which is exactly how it was reported.
+    setIsCreating(true)
     try {
       const session = await createSession()
       if (session) {
@@ -489,6 +493,7 @@ export default function SessionsScreen() {
       }
     } finally {
       creatingInFlight.current = false
+      setIsCreating(false)
     }
   }
 
@@ -777,13 +782,18 @@ export default function SessionsScreen() {
 
       {/* FAB to create new session */}
       <TouchableOpacity
-        style={[styles.fab, isDark && styles.fabDark]}
+        style={[styles.fab, isDark && styles.fabDark, isCreating && styles.fabBusy]}
         onPress={onFabPress}
         onLongPress={onFabLongPress}
         delayLongPress={500}
+        disabled={isCreating}
         testID="new-session-fab"
       >
-        <Ionicons name="add" size={28} color={isDark ? "#0a0a0a" : "#ffffff"} />
+        {isCreating ? (
+          <ActivityIndicator size="small" color={isDark ? "#0a0a0a" : "#ffffff"} testID="new-session-fab-spinner" />
+        ) : (
+          <Ionicons name="add" size={28} color={isDark ? "#0a0a0a" : "#ffffff"} />
+        )}
       </TouchableOpacity>
 
       {/* New Session Info Modal */}
@@ -1251,6 +1261,8 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   pickerRowText: { fontSize: 16, color: "#0a0a0a" },
+
+  fabBusy: { opacity: 0.7 },
 
   groupByBar: {
     flexDirection: "row",
