@@ -59,3 +59,38 @@ jobs:
             **Our unique commits:** ${{ steps.check.outputs.ahead }}" \
             --base main \
             --head "$BRANCH"
+
+  # A pristine mirror of upstream/main, never committed to directly.
+  #
+  # Our own `main` deliberately carries fork-only commits (the evaluation
+  # distribution workflow), so it is permanently "ahead" and can never
+  # fast-forward. That makes it a poor base for upstream contributions: branching
+  # from it drags fork-only commits into any PR.
+  #
+  # `main-for-opencodex` is force-updated to match upstream exactly, giving a
+  # clean base to branch from — `git worktree add -b fix/x main-for-opencodex`
+  # produces a PR containing only the fix. Force-push is correct here precisely
+  # because nothing is ever authored on this branch; it is a mirror, not a line
+  # of development.
+  mirror-upstream:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mirror upstream/main to main-for-opencodex
+        run: |
+          git remote add upstream https://github.com/dzianisv/opencode-mobile.git 2>/dev/null || true
+          git fetch upstream --prune
+          BEFORE=$(git rev-parse --verify --quiet origin/main-for-opencodex || echo "none")
+          AFTER=$(git rev-parse upstream/main)
+          if [ "$BEFORE" = "$AFTER" ]; then
+            echo "main-for-opencodex already at $AFTER — nothing to do"
+            exit 0
+          fi
+          echo "mirroring upstream/main $BEFORE -> $AFTER"
+          git push --force origin "$AFTER:refs/heads/main-for-opencodex"
