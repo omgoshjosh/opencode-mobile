@@ -452,9 +452,29 @@ decide whether to show them, rather than filtering at fetch time.
    revisited, and so carries the regression risk. Doing it last keeps 1 and 2 shippable
    independently.
 
+### Decided 2026-08-15
+
+**Header status = deduped, non-empty status counts.** A row of small badges, one per
+status actually present, each with a count — e.g. `3 busy · 1 retry`. Statuses with a
+zero count are omitted entirely rather than rendered as `0 idle`, so a quiet group shows
+one badge (or none) instead of a row of noise. Counts come from
+`useEvents().sessionStatus` over the group's members. Pure and unit-testable:
+`statusCounts(sessions, sessionStatus) -> Array<{status, count}>`, sorted busy → retry →
+idle so the attention-worthy state reads first.
+
+**Child sessions are openable.** They render as ordinary rows and route to the same
+session screen; no read-only mode unless a concrete conflict appears.
+
+**Risk to verify before shipping that** (do not assume): opening a child is certainly
+safe, but *prompting into* a subagent session while its orchestrator is mid-run is
+untested here. The concern is two writers on one session — the orchestrator driving the
+child, and the user typing into it — and how the parent reconciles a transcript it did
+not author. Check server-side behaviour first; if it is unsafe, the fallback is to keep
+children openable but suppress the composer while the parent session is busy, which
+preserves the useful part (reading what a role is doing) without the hazard.
+
 ### Open questions
 
-- What status should a *header* show — busiest child, aggregate counts, or none?
 - Where does the picker live: header dropdown, or a segmented control under the title?
 - Should "(no swarm)" / "(no parent)" sort first or last?
 
