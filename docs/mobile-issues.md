@@ -548,6 +548,38 @@ surface a warning when it drops non-text parts, so the user isn't left wondering
 
 ---
 
+## M-10 — "New session" button reported broken `NEEDS REPRO`
+
+Reported 2026-08-15. **Could not reproduce on the Android 12 emulator** against the
+live server, on build 29780499:
+
+1. Tap the + FAB → a session is created and the app navigates into it
+2. Composer accepts text
+3. Send → assistant replies ("Pong.") and the turn is attributed to
+   "Fable Bowser Dev Team"
+
+So the happy path works. What differs on Josh's device is unknown; likely candidates,
+none confirmed:
+
+- **He is on an older build.** He has not updated App Tester since several fixes landed;
+  the behaviour may already be different.
+- **Directory/project state.** The FAB calls `createSession()` with no directory, so the
+  session lands in the active connection's directory. On the emulator that resolved to
+  `agents`. A connection with no/invalid directory may behave differently.
+- **Long-press vs tap.** Tap creates immediately; long-press opens the new-session modal
+  with a project picker (`onFabLongPress`). If the modal is what is broken, that is a
+  different code path entirely.
+
+**One real defect spotted while reading the path** (not necessarily the reported one):
+`createSession()` sets `currentSession`/`messages` but never clears the store's `error`,
+so a stale error banner from a previous failure survives into a brand-new session.
+
+**Needed from Josh to proceed:** what "broken" looks like — nothing happens, an error
+appears, it opens then fails to send, or it opens the wrong directory. A screenshot is
+enough; images can be recovered from the DB even though the swarm path drops them.
+
+---
+
 ## M-5 — Messages do not auto-scroll `OPEN`
 
 **Upstream.** [`dzianisv/opencode-mobile#155`](https://github.com/dzianisv/opencode-mobile/issues/155)
