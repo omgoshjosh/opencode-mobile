@@ -128,3 +128,56 @@ test("legacySessionQuery: builds the same query the old code sent", () => {
   assert.equal(legacySessionQuery({}), "")
   assert.equal(legacySessionQuery({ search: "x" }), "?search=x")
 })
+
+// --- includeChildren (Swarm root grouping mode) ---
+
+const s = (id: string, updated: number, parentID?: string) =>
+  ({ id, parentID, title: id, time: { created: 1, updated } }) as never
+
+test("includeChildren keeps children of the roots being shown", () => {
+  const all = [s("root1", 30), s("child1a", 20, "root1"), s("root2", 10)]
+  const out = normalizeSessions(all, { roots: true, includeChildren: true })
+  assert.deepEqual(
+    out.map((x: { id: string }) => x.id).sort(),
+    ["child1a", "root1", "root2"],
+  )
+})
+
+// The trap the roots filter exists to avoid: children must not eat the limit.
+test("limit still counts roots only, children ride along free", () => {
+  const all = [
+    s("root1", 50),
+    s("c1", 49, "root1"),
+    s("c2", 48, "root1"),
+    s("root2", 40),
+    s("c3", 39, "root2"),
+    s("root3", 30),
+  ]
+  const out = normalizeSessions(all, { roots: true, includeChildren: true, limit: 2 })
+  const ids = out.map((x: { id: string }) => x.id)
+  assert.deepEqual(ids.filter((id) => id.startsWith("root")), ["root1", "root2"])
+  assert.deepEqual(ids.filter((id) => id.startsWith("c")).sort(), ["c1", "c2", "c3"])
+})
+
+test("children of a root beyond the limit are not included", () => {
+  const all = [s("root1", 50), s("root2", 40), s("c2", 39, "root2")]
+  const out = normalizeSessions(all, { roots: true, includeChildren: true, limit: 1 })
+  assert.deepEqual(out.map((x: { id: string }) => x.id), ["root1"])
+})
+
+test("an orphaned child (parent absent) is not resurrected", () => {
+  const all = [s("root1", 50), s("orphan", 40, "missing-parent")]
+  const out = normalizeSessions(all, { roots: true, includeChildren: true })
+  assert.deepEqual(out.map((x: { id: string }) => x.id), ["root1"])
+})
+
+test("without includeChildren the previous root-only behaviour is unchanged", () => {
+  const all = [s("root1", 30), s("child1a", 20, "root1")]
+  assert.deepEqual(normalizeSessions(all, { roots: true }).map((x: { id: string }) => x.id), ["root1"])
+})
+
+test("search still applies before roots are chosen", () => {
+  const all = [s("alpha", 30), s("beta", 20), s("alpha-child", 10, "alpha")]
+  const out = normalizeSessions(all, { roots: true, includeChildren: true, search: "alpha" })
+  assert.deepEqual(out.map((x: { id: string }) => x.id).sort(), ["alpha", "alpha-child"])
+})

@@ -116,7 +116,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
       set({ isLoading: true, error: null })
       // A directory-less list includes sessions across projects. Each row carries
       // its own directory into the session route so subsequent operations stay scoped.
-      const sessions = await client.session.list({ roots: true, limit: 50 })
+      // includeChildren keeps swarm role/subagent sessions alongside their
+      // roots so the "Swarm root" grouping mode has something to nest. `limit`
+      // still counts roots only, so the visible session count is unchanged.
+      const sessions = await client.session.list({ roots: true, limit: 50, includeChildren: true })
       set({ sessions, isLoading: false })
     } catch (error) {
       set({ error: "Failed to load sessions", isLoading: false })

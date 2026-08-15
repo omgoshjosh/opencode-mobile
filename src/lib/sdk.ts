@@ -361,7 +361,7 @@ export function createClient(config: ClientConfig) {
       // loadSessionList; we fetch /experimental/session with no query params
       // because the server applies `limit` before we can filter to roots.
       // Falls back to the legacy /session path only on 404 (older servers).
-      list: (params?: { roots?: boolean; limit?: number; search?: string }): Promise<Session[]> =>
+      list: (params?: { roots?: boolean; limit?: number; search?: string; includeChildren?: boolean }): Promise<Session[]> =>
         loadSessionList(
           {
             getExperimental: async (): Promise<Session[] | null> => {
