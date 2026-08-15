@@ -5,6 +5,7 @@ import { useSettings } from "./settings"
 import { addBreadcrumb } from "../lib/sentry"
 import { AnalyticsEvent, track } from "../lib/analytics"
 import { extractPromptFromParts, type PromptFromParts } from "../lib/prompt-from-parts"
+import { mergePendingMessages } from "../lib/message-delivery"
 import { mergeIncomingMessage } from "../lib/message-merge"
 import { isColdSessionLoad, isLiveEventForSession } from "../lib/session-load-reconcile"
 
@@ -30,6 +31,9 @@ interface SessionsState {
   currentSession: Session | null
   messages: Message[]
   parts: Record<string, Part[]>
+  // Message IDs whose send failed. Kept so the transcript can show the
+  // message as failed instead of silently deleting what the user typed.
+  failedMessageIDs: Record<string, true>
   isLoading: boolean
   // Per-session optimistic sending flag — bridging gap between user tap and SSE busy
   sending: Record<string, boolean>
@@ -91,6 +95,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
   currentSession: null,
   messages: [],
   parts: {},
+  failedMessageIDs: {},
   isLoading: false,
   sending: {},
   loadingMore: false,
@@ -262,14 +267,19 @@ export const useSessions = create<SessionsState>((set, get) => ({
       return
     }
 
+    // Declared out here so the catch below can mark exactly this message
+    // failed; it is assigned as soon as the optimistic message is built.
+    let optimisticID: string | null = null
+
     try {
       set((state) => ({ sending: { ...state.sending, [session.id]: true }, error: null }))
       track(AnalyticsEvent.MessageSent)
 
       // Add user message optimistically
       const ts = Date.now()
+      optimisticID = `temp-${ts}`
       const userMessage: Message = {
-        id: `temp-${ts}`,
+        id: optimisticID,
         sessionID: session.id,
         role: "user",
         time: { created: ts },
@@ -328,6 +338,9 @@ export const useSessions = create<SessionsState>((set, get) => ({
       set((state) => ({
         ...(stillCurrent ? { error: String(err) } : {}),
         sending: { ...state.sending, [session.id]: false },
+        // Mark the optimistic message failed so it renders as such rather
+        // than vanishing on the refresh below.
+        ...(optimisticID ? { failedMessageIDs: { ...state.failedMessageIDs, [optimisticID]: true as const } } : {}),
       }))
       if (stillCurrent) get().refreshMessages()
       throw err
@@ -358,7 +371,9 @@ export const useSessions = create<SessionsState>((set, get) => ({
     try {
       const response = await client.session.messages(session.id)
       const { messages, parts } = parseMessages(response)
-      set({ messages, parts })
+      // Keep optimistic messages the server hasn't acknowledged — otherwise a
+      // refresh triggered by a failed send deletes the text the user typed.
+      set((state) => ({ messages: mergePendingMessages(messages, state.messages), parts: { ...state.parts, ...parts } }))
     } catch (error) {
       set({ error: "Failed to refresh messages" })
     }

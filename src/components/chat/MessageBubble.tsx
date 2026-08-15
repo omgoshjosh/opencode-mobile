@@ -5,6 +5,10 @@ import { Markdown } from "../markdown"
 import { ToolCallCard } from "./ToolCallCard"
 import { ReasoningBlock } from "./ReasoningBlock"
 import type { Message, Part } from "../../lib/sdk"
+import { useCatalog } from "../../stores/catalog"
+import { modelDisplayLabel } from "../../lib/model-label"
+import { deliveryState } from "../../lib/message-delivery"
+import { useSessions } from "../../stores/sessions"
 
 const SCREEN_WIDTH = Dimensions.get("window").width
 
@@ -30,6 +34,25 @@ interface Props {
 export const MessageBubble = memo(
   function MessageBubble({ message, parts, isDark, onLongPress }: Props) {
     const isUser = message.role === "user"
+
+    // Resolve display names from the provider catalog so a swarm shows its
+    // team name rather than its opaque swm_... handle. Read from the store
+    // rather than threaded through props: the label depends on *this*
+    // message's model, so a single parent-computed value would not do, and a
+    // per-bubble `providers` prop would have to join the memo comparator for
+    // every row.
+    const providers = useCatalog((c) => c.providers)
+    const failedMessageIDs = useSessions((st) => st.failedMessageIDs)
+    // "sent" is the overwhelmingly common case and needs no chrome; only the
+    // in-flight and failed states are worth a badge.
+    const delivery = deliveryState({ messageID: message.id, failedIDs: failedMessageIDs })
+    const userModelLabel = message.model
+      ? modelDisplayLabel(providers, { providerID: message.model.providerID, modelID: message.model.modelID })
+      : null
+    const assistantModelLabel =
+      !isUser && message.providerID && message.modelID
+        ? modelDisplayLabel(providers, { providerID: message.providerID, modelID: message.modelID })
+        : message.modelID || null
 
     const textParts = parts.filter((p) => p.type === "text")
     const reasoningParts = parts.filter((p) => p.type === "reasoning")
@@ -59,8 +82,15 @@ export const MessageBubble = memo(
             color={isUser ? (isDark ? "#ffffff" : "#0a0a0a") : "#8b5cf6"}
           />
           <Text style={[s.role, isUser && s.roleUser, isDark && s.textWhite]}>{isUser ? "You" : "Assistant"}</Text>
-          {message.model && <Text style={[s.modelTag, isDark && s.modelTagDark]}>{message.model.modelID}</Text>}
-          {!isUser && message.modelID && <Text style={[s.modelTag, isDark && s.modelTagDark]}>{message.modelID}</Text>}
+          {userModelLabel && <Text style={[s.modelTag, isDark && s.modelTagDark]}>{userModelLabel}</Text>}
+          {delivery !== "sent" && (
+            <Text style={[s.deliveryTag, delivery === "failed" ? s.deliveryFailed : s.deliveryQueued]}>
+              {delivery === "failed" ? "Failed" : "Queued"}
+            </Text>
+          )}
+          {!isUser && assistantModelLabel && (
+            <Text style={[s.modelTag, isDark && s.modelTagDark]}>{assistantModelLabel}</Text>
+          )}
         </View>
 
         {/* Image attachments */}
@@ -154,6 +184,17 @@ const s = StyleSheet.create({
     overflow: "hidden",
   },
   modelTagDark: { backgroundColor: "#2a2a2a", color: "#888888" },
+
+  deliveryTag: {
+    fontSize: 11,
+    fontWeight: "600",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  deliveryQueued: { backgroundColor: "#fef3c7", color: "#92400e" },
+  deliveryFailed: { backgroundColor: "#fee2e2", color: "#b91c1c" },
 
   messageText: { fontSize: 15, lineHeight: 22, color: "#0a0a0a" },
   markdownWrap: { marginHorizontal: -4 },
