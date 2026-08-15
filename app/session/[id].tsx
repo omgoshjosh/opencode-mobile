@@ -36,6 +36,7 @@ import {
 } from "../../src/components/chat"
 import { extractCopyText, hasCopyableText } from "../../src/lib/message-copy-text"
 import { resolveSessionModel, type ModelSelection } from "../../src/lib/swarm-model"
+import { keyboardVerticalOffset } from "../../src/lib/keyboard-offset"
 import { useSessions } from "../../src/stores/sessions"
 import { useEvents, refreshPending } from "../../src/stores/events"
 import { useConnections } from "../../src/stores/connections"
@@ -656,8 +657,15 @@ export default function SessionScreen() {
         // bottom toolbar + input were left completely hidden behind the
         // keyboard (#147). "padding" restores avoidance without depending
         // on native resize.
+        // ...and Android additionally needs keyboardVerticalOffset=insets.top:
+        // KeyboardAvoidingView measures its own frame in window coordinates but
+        // reads the keyboard's screenY in screen coordinates, and edge-to-edge
+        // makes those two origins differ by the status-bar inset — so the
+        // padding came up short by exactly that much and left the composer
+        // behind the keyboard (#156). See src/lib/keyboard-offset.ts for the
+        // measured numbers.
         behavior="padding"
-        keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
+        keyboardVerticalOffset={keyboardVerticalOffset(Platform.OS, insets.top)}
       >
         {/* Session info pulldown */}
         <SessionInfo

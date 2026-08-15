@@ -16,7 +16,62 @@ Status legend: `OPEN` · `FIX-IN-BUILD` (fixed upstream, present in our APK, unv
 
 ---
 
-## M-1 — Composer/keyboard hidden behind Gboard `OPEN`
+## M-1 — Composer/keyboard hidden behind Gboard `FIXED-VERIFIED`
+
+**Root cause found by measurement, 2026‑08‑15 — a coordinate-space mismatch, not a
+wrong `behavior` value.**
+
+`KeyboardAvoidingView` computes
+`padding = frame.y + frame.height − (keyboardFrame.screenY − keyboardVerticalOffset)`.
+`frame` comes from its own `onLayout`, in **window** coordinates (origin below the
+status bar). `keyboardFrame.screenY` is in **screen** coordinates (true top of the
+display). Before Expo's mandatory edge-to-edge those origins coincided; under
+edge-to-edge they differ by exactly the status-bar inset, so the padding comes up short
+by that amount.
+
+Measured on the Android 12 emulator (Pixel 3 XL profile, scale 3.5) with the keyboard
+open on the session screen:
+
+| quantity | dp |
+|---|---|
+| screen height | 845.71 |
+| **window** height | 748.86 |
+| `insets.top` / `insets.bottom` | 48.86 / 48 |
+| keyboard `screenY` / height | 511.71 / 286 |
+| computed padding | `748.86 − 511.71 = 237.14` |
+| **required** padding | **286.00** |
+| **shortfall** | **48.86 → exactly `insets.top`** |
+
+48.86 dp × 3.5 = **171 px**, which is the composer row — hence "the input box is
+invisible".
+
+**Why three previous attempts failed.** #53→PR#70, #147→PR#148 (`6c103ac`), and the
+closed PR#74 each changed only the `behavior` prop (`"height"` removed, then
+`undefined` → `"padding"`). None touched the coordinate mismatch, so the bug kept
+returning under a new issue number. **The symptom was reproduced on a build that already
+contained `6c103ac`.**
+
+**Fix.** `src/lib/keyboard-offset.ts` — `keyboardVerticalOffset(platform, insetTop)`
+returns the existing empirical 90 on iOS (which has no such mismatch) and `insets.top`
+on Android, clamped at 0 so a bogus inset can never push content *down*. Applied in
+`app/session/[id].tsx`. 5 unit tests, including one that asserts the corrected
+arithmetic lands exactly on the real keyboard height. Suite: 242 passing.
+
+**Verified on device.** Keyboard open on a real session: composer text field (with
+cursor), attachment button, clipboard button and mic are all visible and usable above
+the keyboard, with the agent/model toolbar above them.
+
+- **Portrait:** pass.
+- **1.5× font scale:** pass — still fully visible and usable.
+- **Landscape:** not applicable; `app.json` sets `"orientation": "portrait"`.
+
+**Note for upstream.** This fix is worth contributing to
+[`#156`](https://github.com/dzianisv/opencode-mobile/issues/156) — it affects every
+Android user on an edge-to-edge build, not just Android 12 or the Pixel 3 XL.
+
+---
+
+## M-1 (original triage notes) `SUPERSEDED`
 
 **Symptom.** With the keyboard open, the text field, attachment controls and send
 button are not visible. Reported on Pixel 3 XL / Android 12.
