@@ -246,7 +246,7 @@ exercises prompt acceptance/persistence and realtime delivery without model timi
 
 ---
 
-## M-7 — Swarm selection does not persist; must be reselected every message `FIXED`
+## M-7 — Swarm selection does not persist; must be reselected every message `FIXED-VERIFIED`
 
 Source: `/Users/josh/agents/OPENCODEX_MOBILE_SWARM_SELECTION_HANDOFF_2026-08-14.md`.
 
@@ -295,7 +295,33 @@ POST /session/:id/message  {"model":{"providerID":"swarm","modelID":"swm_0043…
 GET  /session/:id          → model = {"providerID":"swarm","id":"swm_0043…"}
 ```
 
-**Not yet verified on device** — needs a swarm round-trip through the picker.
+**VERIFIED on device, 2026‑08‑15.** Test session `Opencodex reliability team`
+(`ses_0010171e0ffe4FwMJ5nitsKznn`) is ideal: persisted as
+`swarm/swm_ffefa457c001emtwoJaqlAMiB1`, but **all 472 of its assistant messages record a
+concrete execution model** (`openai/gpt-5.6-luna`, `openai/gpt-5.6-sol`,
+`opencode/deepseek-v4-flash-free`) — precisely the input that used to clobber the facade.
+
+A temporary in-app diagnostic confirmed the resolution directly:
+
+```
+sessionModel=undefined  fromMessages=null                                   resolved=null
+sessionModel={"id":"swm_ffefa457…","providerID":"swarm"}
+                        fromMessages={"providerID":"opencode",
+                                      "modelID":"deepseek-v4-flash-free"}   resolved={"providerID":"swarm",…}
+```
+
+The first line also validates the null-guard: with nothing authoritative loaded yet the
+selection is left alone rather than cleared. After removing the diagnostic and
+rebuilding, the composer chip renders `swm_ffefa457c001emtwoJ…` — the swarm — while the
+visible replies are `deepseek-v4-flash-free`.
+
+**Residual risk.** One earlier observation on the same build showed `gpt-5.6-sol` in the
+chip before instrumentation was added; it did not reproduce afterwards and the logged
+resolution is unambiguous. Possibly a transient pre-load render. Worth one more look if
+the symptom is ever reported again.
+
+**Not done (acceptance criterion 6):** swarms still render as generic models in the
+picker rather than carrying a swarm/team label. Cosmetic, separable from persistence.
 
 ---
 
