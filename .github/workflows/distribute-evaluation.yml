@@ -1,11 +1,19 @@
 name: Distribute evaluation APK
 
 on:
+  # Auto-deploy: anything merged to the evaluation branch goes straight to the
+  # phone via App Distribution. Paths that cannot change the app are excluded so
+  # a docs-only commit doesn't push a pointless release to testers.
+  push:
+    branches: [evaluation/integration]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   workflow_dispatch:
     inputs:
       version_code:
-        description: Monotonically increasing Android version code
-        required: true
+        description: Monotonically increasing Android version code (defaults to Unix minutes)
+        required: false
         type: number
       release_notes:
         description: Tester-facing release notes
@@ -21,7 +29,9 @@ jobs:
     permissions:
       contents: read
     env:
-      BUILD_VERSION_CODE: ${{ inputs.version_code }}
+      # Unix minutes when not supplied (push runs): monotonically increasing and
+      # comfortably inside Android's signed 32-bit versionCode limit for decades.
+      BUILD_VERSION_CODE: ${{ inputs.version_code || '' }}
       SENTRY_DISABLE_AUTO_UPLOAD: "true"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -47,6 +57,11 @@ jobs:
 
       - name: Validate version code
         run: |
+          if [[ -z "$BUILD_VERSION_CODE" ]]; then
+            BUILD_VERSION_CODE=$(( $(date +%s) / 60 ))
+            echo "BUILD_VERSION_CODE=$BUILD_VERSION_CODE" >> "$GITHUB_ENV"
+            echo "No version code supplied; using Unix minutes: $BUILD_VERSION_CODE"
+          fi
           if (( BUILD_VERSION_CODE < 1 || BUILD_VERSION_CODE > 2100000000 )); then
             echo "version_code must be between 1 and 2100000000" >&2
             exit 1
@@ -73,6 +88,12 @@ jobs:
           # and @types/node were absent and "Verify source" failed typecheck
           # before ever reaching a build. Only the Metro bundle needs it.
           NODE_ENV: production
+          # Must match the package the Firebase app is registered for
+          # (cc.agentlabs.opencode.eval). Without it CI built the base
+          # applicationId and App Distribution rejected the upload with
+          # "There's been an error processing your upload" -- and it would also
+          # produce an APK that cannot install beside the Play-Store build.
+          EVALUATION_APP_ID_SUFFIX: ".eval"
           RELEASE_STORE_PASSWORD: ${{ secrets.EVALUATION_KEYSTORE_PASSWORD }}
           RELEASE_KEY_ALIAS: opencodex-evaluation
           RELEASE_KEY_PASSWORD: ${{ secrets.EVALUATION_KEYSTORE_PASSWORD }}
@@ -87,7 +108,7 @@ jobs:
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: opencodex-mobile-${{ inputs.version_code }}
+          name: opencodex-mobile-${{ env.BUILD_VERSION_CODE }}
           path: android/app/build/outputs/apk/release/app-release.apk
 
       - name: Distribute to Firebase testers
@@ -95,7 +116,9 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
           FIREBASE_TESTER_GROUP: ${{ secrets.FIREBASE_TESTER_GROUP }}
-          RELEASE_NOTES: ${{ inputs.release_notes }}
+          # Push runs have no input; fall back to the commit subject so testers
+          # always see what changed rather than an empty release note.
+          RELEASE_NOTES: ${{ inputs.release_notes || github.event.head_commit.message }}
         run: |
           npm install --global firebase-tools@15.26.0 --ignore-scripts
           printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/firebase-service-account.json"
