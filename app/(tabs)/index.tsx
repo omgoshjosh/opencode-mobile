@@ -21,12 +21,22 @@ import { Ionicons } from "@expo/vector-icons"
 import { useTranslation } from "react-i18next"
 import { useSessions } from "../../src/stores/sessions"
 import { useConnections } from "../../src/stores/connections"
+import AsyncStorage from "@react-native-async-storage/async-storage"
 import { useEvents } from "../../src/stores/events"
 import { useCatalog } from "../../src/stores/catalog"
 import type BottomSheet from "@gorhom/bottom-sheet"
 import type { Session, Project } from "../../src/lib/sdk"
 import { DirectorySwitcher, DirectoryBrowserSheet } from "../../src/components/chat"
 import { groupByDirectory } from "../../src/lib/session-grouping"
+import {
+  DEFAULT_GROUP_MODE,
+  GROUP_MODES,
+  UNGROUPED_KEY,
+  groupKey,
+  groupSortIndex,
+  isGroupMode,
+  type GroupMode,
+} from "../../src/lib/session-group-modes"
 import { statusCounts, type StatusCount } from "../../src/lib/session-status-counts"
 import { modelDisplayLabel } from "../../src/lib/model-label"
 import { SWARM_PROVIDER_ID } from "../../src/lib/swarm-model"
@@ -214,6 +224,38 @@ function GroupHeader({
   )
 }
 
+// Persisted grouping choice.
+const GROUP_MODE_KEY = "sessions.groupMode"
+
+const GROUP_MODE_LABELS: Record<GroupMode, string> = {
+  directory: "Project",
+  swarm: "Swarm",
+  root: "Swarm root",
+  date: "Date",
+  status: "Status",
+}
+
+// Human label for a group header under the current mode.
+function groupLabel(
+  key: string,
+  mode: GroupMode,
+  items: Session[],
+  providers: { id: string; models: { id: string; name?: string }[] }[],
+): string {
+  if (key === UNGROUPED_KEY) {
+    return mode === "swarm" ? "No swarm" : mode === "directory" ? "No project" : "Ungrouped"
+  }
+  if (mode === "swarm") return modelDisplayLabel(providers, { providerID: SWARM_PROVIDER_ID, modelID: key })
+  if (mode === "root") {
+    // Name the bucket after the root session so children read as belonging to it.
+    const root = items.find((item) => item.id === key)
+    return root?.title || items[0]?.title || key
+  }
+  if (mode === "status") return key
+  if (mode === "date") return key
+  return nameOf(key) || key
+}
+
 // Get short directory name (last folder or project name)
 function getShortPath(
   project: { path?: { cwd?: string; root?: string; absolute?: string }; name?: string } | null | undefined,
@@ -266,6 +308,29 @@ export default function SessionsScreen() {
   // Directories collapsed in the grouped session list. Empty by default —
   // all groups start expanded (#67).
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set())
+  // Single-select grouping mode. One nesting level plus this picker replaces
+  // what would otherwise be nested groups — see src/lib/session-group-modes.ts.
+  const [groupMode, setGroupMode] = useState<GroupMode>(DEFAULT_GROUP_MODE)
+  const [showGroupPicker, setShowGroupPicker] = useState(false)
+  const sessionStatusMap = useEvents((s) => s.sessionStatus)
+  const providersForLabels = useCatalog((c) => c.providers)
+
+  // Persist the choice so the list doesn't reset to Directory on every launch.
+  useEffect(() => {
+    AsyncStorage.getItem(GROUP_MODE_KEY)
+      .then((v) => {
+        if (isGroupMode(v)) setGroupMode(v)
+      })
+      .catch(() => {})
+  }, [])
+  const chooseGroupMode = useCallback((mode: GroupMode) => {
+    setGroupMode(mode)
+    setShowGroupPicker(false)
+    // Collapse state is keyed by group key, which is mode-specific — carrying
+    // it across a mode switch would collapse unrelated groups.
+    setCollapsedDirs(new Set())
+    AsyncStorage.setItem(GROUP_MODE_KEY, mode).catch(() => {})
+  }, [])
 
   const toggleGroup = useCallback((directory: string) => {
     setCollapsedDirs((prev) => {
@@ -276,30 +341,50 @@ export default function SessionsScreen() {
     })
   }, [])
 
-  // Flatten sessions into header+item rows. Skip headers entirely when
-  // everything lives in one directory — a lone header adds noise, not clarity.
+  // Flatten sessions into header+item rows under the selected grouping mode.
+  // Skip headers entirely when everything lands in one group — a lone header
+  // adds noise, not clarity.
   const rows = useMemo<ListRow[]>(() => {
-    const groups = groupByDirectory(sessions)
-    if (groups.length <= 1) {
+    const nowMs = Date.now()
+    const statusOf = (id: string) => sessionStatusMap[id]?.type
+    const buckets = new Map<string, Session[]>()
+    const order: string[] = []
+    for (const session of sessions) {
+      const key = groupKey(session as never, groupMode, { nowMs, statusOf })
+      let bucket = buckets.get(key)
+      if (!bucket) {
+        bucket = []
+        buckets.set(key, bucket)
+        order.push(key)
+      }
+      bucket.push(session)
+    }
+    if (order.length <= 1) {
       return sessions.map((session) => ({ type: "session", session }))
     }
+    // Stable sort: modes that define an order (date, status) use it; the rest
+    // keep first-seen order. Ungrouped always sinks to the bottom.
+    const sorted = order
+      .map((key, index) => ({ key, index }))
+      .sort((a, b) => groupSortIndex(a.key, groupMode) - groupSortIndex(b.key, groupMode) || a.index - b.index)
+      .map((entry) => entry.key)
+
     const out: ListRow[] = []
-    for (const group of groups) {
-      const collapsed = collapsedDirs.has(group.directory)
+    for (const key of sorted) {
+      const items = buckets.get(key) as Session[]
+      const collapsed = collapsedDirs.has(key)
       out.push({
         type: "header",
-        directory: group.directory,
-        shortName: nameOf(group.directory) || group.directory,
-        count: group.items.length,
+        directory: key,
+        shortName: groupLabel(key, groupMode, items, providersForLabels),
+        count: items.length,
         collapsed,
-        sessionIDs: group.items.map((item) => item.id),
+        sessionIDs: items.map((item) => item.id),
       })
-      if (!collapsed) {
-        for (const session of group.items) out.push({ type: "session", session })
-      }
+      if (!collapsed) for (const session of items) out.push({ type: "session", session })
     }
     return out
-  }, [sessions, collapsedDirs])
+  }, [sessions, collapsedDirs, groupMode, sessionStatusMap, providersForLabels])
 
   // Fetch server-known projects when the new session modal opens
   useEffect(() => {
@@ -617,6 +702,46 @@ export default function SessionsScreen() {
           <Text style={styles.errorText}>{error}</Text>
         </View>
       )}
+
+      {/* Group-by picker. One nesting level + this control replaces nested
+          groups; "Swarm root" is the nested-swarm view. */}
+      <TouchableOpacity
+        style={[styles.groupByBar, isDark && styles.groupByBarDark]}
+        onPress={() => setShowGroupPicker(true)}
+        activeOpacity={0.7}
+        testID="group-by-picker"
+      >
+        <Ionicons name="funnel-outline" size={14} color={isDark ? "#888888" : "#666666"} />
+        <Text style={[styles.groupByText, isDark && styles.metaDark]}>
+          Grouped by {GROUP_MODE_LABELS[groupMode]}
+        </Text>
+        <Ionicons name="chevron-down" size={14} color={isDark ? "#666666" : "#999999"} />
+      </TouchableOpacity>
+
+      {/* Android's AlertDialog caps out at three buttons, which silently hid
+          half the modes — use a real list instead. */}
+      <Modal visible={showGroupPicker} transparent animationType="fade" onRequestClose={() => setShowGroupPicker(false)}>
+        <TouchableOpacity
+          style={styles.pickerBackdrop}
+          activeOpacity={1}
+          onPress={() => setShowGroupPicker(false)}
+        >
+          <View style={[styles.pickerSheet, isDark && styles.pickerSheetDark]}>
+            <Text style={[styles.pickerTitle, isDark && styles.textDark]}>Group sessions by</Text>
+            {GROUP_MODES.map((mode) => (
+              <TouchableOpacity
+                key={mode}
+                style={styles.pickerRow}
+                onPress={() => chooseGroupMode(mode)}
+                testID={`group-mode-${mode}`}
+              >
+                <Text style={[styles.pickerRowText, isDark && styles.textDark]}>{GROUP_MODE_LABELS[mode]}</Text>
+                {mode === groupMode && <Ionicons name="checkmark" size={18} color="#8b5cf6" />}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       <FlatList
         data={rows}
@@ -1114,6 +1239,31 @@ const styles = StyleSheet.create({
     marginTop: 16,
     color: "#0a0a0a",
   },
+  pickerBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "center", padding: 32 },
+  pickerSheet: { backgroundColor: "#ffffff", borderRadius: 14, paddingVertical: 8 },
+  pickerSheetDark: { backgroundColor: "#141420" },
+  pickerTitle: { fontSize: 13, fontWeight: "700", color: "#666666", paddingHorizontal: 16, paddingVertical: 10 },
+  pickerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  pickerRowText: { fontSize: 16, color: "#0a0a0a" },
+
+  groupByBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e5e5e5",
+  },
+  groupByBarDark: { borderBottomColor: "#2a2a2a" },
+  groupByText: { fontSize: 12, color: "#666666", fontWeight: "600" },
+
   emptySubtitle: {
     fontSize: 14,
     color: "#666666",
