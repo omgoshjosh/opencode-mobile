@@ -37,6 +37,7 @@ import {
 import { extractCopyText, hasCopyableText } from "../../src/lib/message-copy-text"
 import { resolveSessionModel, type ModelSelection } from "../../src/lib/swarm-model"
 import { keyboardVerticalOffset } from "../../src/lib/keyboard-offset"
+import { modelDisplayLabel } from "../../src/lib/model-label"
 import { useSessions } from "../../src/stores/sessions"
 import { useEvents, refreshPending } from "../../src/stores/events"
 import { useConnections } from "../../src/stores/connections"
@@ -608,7 +609,9 @@ export default function SessionScreen() {
   // Current agent display
   const currentAgent = agents.find((a) => a.name === agent)
   const agentColor = currentAgent?.color || "#8b5cf6"
-  const modelLabel = model?.modelID ? model.modelID.split("/").pop() || model.modelID : "default"
+  // Prefer the catalog's display name so a swarm shows its team name rather
+  // than its opaque swm_... handle. See src/lib/model-label.ts.
+  const modelLabel = modelDisplayLabel(providers, model)
 
   // Variants for current model (for reasoning effort picker)
   const currentModelVariants = useMemo(() => {

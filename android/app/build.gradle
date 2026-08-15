@@ -100,6 +100,34 @@ android {
         }
         versionName "0.4.12"
 
+        // Default label; overridden below for side-by-side evaluation builds.
+        manifestPlaceholders = [appLabel: "@string/app_name"]
+
+        // Optional applicationId suffix for evaluation builds.
+        //
+        // Our evaluation APK is signed with a private key, so Android refuses
+        // to install it *over* a Play-Store build of the same applicationId
+        // (INSTALL_FAILED_UPDATE_INCOMPATIBLE) — the only way through would be
+        // uninstalling first, which destroys that app's local settings
+        // (server connection, credentials, preferences).
+        //
+        // Setting EVALUATION_APP_ID_SUFFIX gives the evaluation build its own
+        // applicationId, so it installs *alongside* the Play build instead of
+        // replacing it. The store build keeps its data and stays available as
+        // a known-good fallback while the evaluation build is being tested.
+        //
+        // `namespace` deliberately stays unchanged — it only controls the
+        // generated R/BuildConfig package, and changing it would break source
+        // references for no benefit.
+        //
+        // Caveat: both apps register the `opencode` URL scheme, so Android
+        // shows a chooser for `opencode://` links while both are installed.
+        if (System.getenv("EVALUATION_APP_ID_SUFFIX")) {
+            applicationIdSuffix System.getenv("EVALUATION_APP_ID_SUFFIX")
+            // Distinct launcher label, otherwise two identically named icons.
+            manifestPlaceholders = [appLabel: System.getenv("EVALUATION_APP_LABEL") ?: "OpenCode (Eval)"]
+        }
+
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
     signingConfigs {

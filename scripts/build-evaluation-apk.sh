@@ -33,7 +33,24 @@ fi
 PASSWORD=$(security find-generic-password -a "$USER" -s "$KEYCHAIN_SERVICE" -w)
 
 cd "$ROOT"
-npm ci --legacy-peer-deps
+
+# `npm ci` deletes and reinstalls the whole of node_modules. That is the right
+# thing in CI (reproducible from the lockfile) but it dominated local rebuild
+# time, re-running on every build even when only a Gradle file changed.
+#
+# Install only when the dependency state actually differs: stamp the lockfile's
+# hash after a successful install and skip when it still matches. Set
+# EVALUATION_FORCE_INSTALL=1 to reinstall regardless.
+LOCK_STAMP="$ROOT/node_modules/.evaluation-lock-hash"
+LOCK_HASH=$(shasum -a 256 "$ROOT/package-lock.json" | cut -d' ' -f1)
+if [[ -n "${EVALUATION_FORCE_INSTALL:-}" || ! -d "$ROOT/node_modules" || ! -f "$LOCK_STAMP" || "$(cat "$LOCK_STAMP" 2>/dev/null)" != "$LOCK_HASH" ]]; then
+  echo "==> installing dependencies (lockfile changed or node_modules missing)"
+  npm ci --legacy-peer-deps
+  printf '%s' "$LOCK_HASH" > "$LOCK_STAMP"
+else
+  echo "==> dependencies up to date, skipping npm ci (EVALUATION_FORCE_INSTALL=1 to override)"
+fi
+
 npm run check:versions
 npm run typecheck
 npm test
