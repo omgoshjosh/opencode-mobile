@@ -27,6 +27,9 @@ import type BottomSheet from "@gorhom/bottom-sheet"
 import type { Session, Project } from "../../src/lib/sdk"
 import { DirectorySwitcher, DirectoryBrowserSheet } from "../../src/components/chat"
 import { groupByDirectory } from "../../src/lib/session-grouping"
+import { statusCounts, type StatusCount } from "../../src/lib/session-status-counts"
+import { modelDisplayLabel } from "../../src/lib/model-label"
+import { SWARM_PROVIDER_ID } from "../../src/lib/swarm-model"
 import { nameOf } from "../../src/lib/path-utils"
 import { SETUP_GUIDE_URL } from "../../src/lib/links"
 
@@ -74,6 +77,16 @@ function SessionItem({
   // Extract short directory name from session
   const shortDir = session.directory ? session.directory.split("/").filter(Boolean).pop() : null
 
+  // Swarm sessions show their team name so the list says which team owns a
+  // session without opening it. Ordinary models aren't labelled here — the
+  // directory badge is the more useful discriminator for those.
+  const providers = useCatalog((c) => c.providers)
+  const swarmLabel =
+    session.model?.providerID === SWARM_PROVIDER_ID
+      ? modelDisplayLabel(providers, { providerID: session.model.providerID, modelID: session.model.id })
+      : null
+  const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
+
   return (
     <TouchableOpacity
       style={[styles.sessionItem, isDark && styles.sessionItemDark]}
@@ -96,6 +109,26 @@ function SessionItem({
             {session.summary && session.summary.files > 0 &&
               ` · ${t("sessionsList.filesCount", { count: session.summary.files })}`}
           </Text>
+          {swarmLabel && (
+            <View style={styles.sessionSwarmBadge}>
+              <Ionicons name="people-outline" size={12} color="#6d28d9" />
+              <Text style={styles.sessionSwarmText} numberOfLines={1}>
+                {swarmLabel}
+              </Text>
+            </View>
+          )}
+          {ownStatus !== "idle" && (
+            <View style={[styles.statusBadge, ownStatus === "busy" ? styles.statusBadgeBusy : styles.statusBadgeRetry]}>
+              <Text
+                style={[
+                  styles.statusBadgeText,
+                  ownStatus === "busy" ? styles.statusBadgeTextBusy : styles.statusBadgeTextRetry,
+                ]}
+              >
+                {ownStatus}
+              </Text>
+            </View>
+          )}
           {shortDir && (
             <View style={styles.sessionDirBadge}>
               <Ionicons name="folder-outline" size={12} color={isDark ? "#888888" : "#666666"} />
@@ -109,11 +142,44 @@ function SessionItem({
   )
 }
 
+// Deduped status counts for a group, e.g. "3 busy · 1 retry". Statuses with no
+// members are omitted entirely rather than rendered as "0 idle" — see
+// src/lib/session-status-counts.ts.
+function StatusBadges({ counts, isDark }: { counts: StatusCount[]; isDark: boolean }) {
+  if (counts.length === 0) return null
+  return (
+    <View style={styles.statusBadgeRow}>
+      {counts.map((c) => (
+        <View
+          key={c.status}
+          style={[
+            styles.statusBadge,
+            c.status === "busy" && styles.statusBadgeBusy,
+            c.status === "retry" && styles.statusBadgeRetry,
+            c.status === "idle" && (isDark ? styles.statusBadgeIdleDark : styles.statusBadgeIdle),
+          ]}
+        >
+          <Text
+            style={[
+              styles.statusBadgeText,
+              c.status === "busy" && styles.statusBadgeTextBusy,
+              c.status === "retry" && styles.statusBadgeTextRetry,
+              c.status === "idle" && styles.statusBadgeTextIdle,
+            ]}
+          >
+            {c.count} {c.status}
+          </Text>
+        </View>
+      ))}
+    </View>
+  )
+}
+
 // Flattened list row — either a collapsible group header or a session.
 // A single flat array keeps FlatList's refresh/empty-state handling as-is
 // instead of switching to SectionList.
 type ListRow =
-  | { type: "header"; directory: string; shortName: string; count: number; collapsed: boolean }
+  | { type: "header"; directory: string; shortName: string; count: number; collapsed: boolean; sessionIDs: string[] }
   | { type: "session"; session: Session }
 
 function GroupHeader({
@@ -121,10 +187,12 @@ function GroupHeader({
   isDark,
   onToggle,
 }: {
-  row: { directory: string; shortName: string; count: number; collapsed: boolean }
+  row: { directory: string; shortName: string; count: number; collapsed: boolean; sessionIDs: string[] }
   isDark: boolean
   onToggle: () => void
 }) {
+  const sessionStatus = useEvents((s) => s.sessionStatus)
+  const counts = statusCounts(row.sessionIDs, sessionStatus)
   return (
     <TouchableOpacity
       style={[styles.groupHeader, isDark && styles.groupHeaderDark]}
@@ -135,6 +203,7 @@ function GroupHeader({
       <Text style={[styles.groupHeaderText, isDark && styles.textDark]} numberOfLines={1}>
         {row.shortName}
       </Text>
+      <StatusBadges counts={counts} isDark={isDark} />
       <Text style={[styles.groupHeaderCount, isDark && styles.metaDark]}>{row.count}</Text>
       <Ionicons
         name={row.collapsed ? "chevron-forward" : "chevron-down"}
@@ -223,6 +292,7 @@ export default function SessionsScreen() {
         shortName: nameOf(group.directory) || group.directory,
         count: group.items.length,
         collapsed,
+        sessionIDs: group.items.map((item) => item.id),
       })
       if (!collapsed) {
         for (const session of group.items) out.push({ type: "session", session })
@@ -992,6 +1062,29 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
+  statusBadgeRow: { flexDirection: "row", gap: 4, marginRight: 6 },
+  statusBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: "hidden" },
+  statusBadgeBusy: { backgroundColor: "#dcfce7" },
+  statusBadgeRetry: { backgroundColor: "#fef3c7" },
+  statusBadgeIdle: { backgroundColor: "#f1f5f9" },
+  statusBadgeIdleDark: { backgroundColor: "#1f2937" },
+  statusBadgeText: { fontSize: 10, fontWeight: "600" },
+  statusBadgeTextBusy: { color: "#166534" },
+  statusBadgeTextRetry: { color: "#92400e" },
+  statusBadgeTextIdle: { color: "#64748b" },
+
+  sessionSwarmBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "#ede9fe",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    maxWidth: 160,
+  },
+  sessionSwarmText: { fontSize: 11, color: "#6d28d9", fontWeight: "600" },
+
   sessionDirBadge: {
     flexDirection: "row",
     alignItems: "center",
