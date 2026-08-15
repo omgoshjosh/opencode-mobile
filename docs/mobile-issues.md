@@ -132,12 +132,23 @@ produce the same user-visible symptom for an entirely different reason. Verify b
 
 ---
 
-## M-4 — Split live event buses (server side) `EXTERNAL` — **ACTIVE NOW**
+## M-4 — Split live event buses (server side) `RESOLVED` (2026-08-15)
 
 **Not a mobile-client bug.** Recorded here because it produces a symptom
 indistinguishable from M-3.
 
-**Verified still active on this Mac, 2026‑08‑12:**
+**Resolved.** As of 2026‑08‑15 only one process holds the port:
+
+```
+$ lsof -iTCP:4096 -sTCP:LISTEN
+opencodex 92690  TCP *:4096 (LISTEN)   # launchd hub, now authoritative
+```
+
+The TUI coordinator on `127.0.0.1:4096` is gone, so loopback and LAN/Tailscale clients
+share one event bus. Realtime results are trustworthy again. Watch for regression: the
+coordinator reappearing on 4096 silently reintroduces this.
+
+**Historical — active on this Mac, 2026‑08‑12:**
 
 ```
 $ lsof -iTCP:4096 -sTCP:LISTEN
@@ -208,11 +219,12 @@ a relatively rare event. This composes well with `616753b`: because that change 
 same-session refreshes from forcing `isLoading`, the refetch lands as a silent
 background reconcile with no spinner flash.
 
-**Not yet implemented** — flagged for a decision first, since it changes reconnect
-behavior for every user.
+**Implemented** in `reconcileOpenSession()` (`src/stores/events.ts`), invoked alongside
+`resyncBusySessions()` in the same once-per-reconnect block. Typecheck clean, 227 tests
+pass. Not yet verified end-to-end on a device.
 
-**Test dependency.** Cannot be validated end-to-end while M-4 is active. Fix the split
-bus first, or a passing test proves nothing.
+**Test dependency now cleared.** M-4 was resolved on 2026‑08‑15, so a cross-client
+realtime test finally measures the client rather than the server split.
 
 ---
 
