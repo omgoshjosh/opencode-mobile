@@ -28,7 +28,11 @@ jobs:
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 20
+          # 22, not 20: `npm test` runs `node --test 'src/**/*.test.ts'` and
+          # glob expansion inside the test runner only exists from Node 22.
+          # On 20 it fails with "Could not find .../src/**/*.test.ts", which
+          # is what the first green-typecheck dispatch of this workflow hit.
+          node-version: 22
           cache: npm
 
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
