@@ -478,6 +478,62 @@ preserves the useful part (reading what a role is doing) without the hazard.
 - Where does the picker live: header dropdown, or a segmented control under the title?
 - Should "(no swarm)" / "(no parent)" sort first or last?
 
+## M-9 — Image attachments silently dropped on swarm sessions `OPEN` — server-side (OpencodeX)
+
+Reported 2026-08-15: a screenshot attached in the mobile app appeared to send, but never
+reached the assistant.
+
+**Not a mobile bug.** The client is correct end to end: `toJpeg()` converts the picked
+image, `sendMessage` builds `{ type: "file", mime, url: "data:image/jpeg;base64,…",
+filename }`, and posts it to `/session/:id/prompt_async`. The part **persists correctly**
+— confirmed by reading the session back from the server (valid JPEG data URL, ~176 KB).
+
+**Evidence — it only fails on swarm sessions.** Every file part ever sent in the session
+`ses_00b4e09feffet9OvqhADPtYfY2`:
+
+| Sent | Session model | Reached the assistant? |
+|---|---|---|
+| 08‑12 23:30 | `opencode-go/kimi-k3` | yes |
+| 08‑13 23:57 | `openai/gpt-5.6-luna` | yes |
+| 08‑15 10:15 | `swarm/swm_0043e3dd…` | **no** |
+| 08‑15 10:44 | `swarm/swm_0043e3dd…` | **no** |
+| 08‑15 13:52 | `swarm/swm_0043e3dd…` | **no** |
+
+**Root cause.** `packages/opencode/src/session/prompt-swarm.ts` (~line 276). When the
+orchestrator is Claude Code, the user message is flattened to text and everything else is
+discarded:
+
+```ts
+const text = last.parts
+  .flatMap((part) => (part.type === "text" && part.text.trim() ? [part.text] : []))
+  .join("\n")
+  .trim()
+if (!text) return undefined
+...
+return claudeDriver.runTurn({ sessionID, parentMessageID, text, ... })
+```
+
+It is structural rather than an oversight in that filter:
+`packages/opencode/src/opencodex/claude-driver.ts` defines `runTurn` with **`text: string`
+as its only content channel** — there is no attachments field, so file parts cannot be
+carried even if the filter kept them.
+
+**Fix sketch (server-side, not mobile):**
+1. Add an attachments field to `runTurn`'s input.
+2. Stop discarding non-text parts in `prompt-swarm.ts`.
+3. Materialize each `data:` URL to a temp file in the session directory and reference it
+   in the prompt the Claude CLI receives — the CLI takes image *paths*, not inline base64,
+   so a straight pass-through will not work.
+4. Clean the temp files up after the turn.
+
+**Silent failure is the worst part.** The prompt succeeds, the part persists, the UI shows
+the image attached — and the model simply never sees it. At minimum the swarm path should
+surface a warning when it drops non-text parts, so the user isn't left wondering.
+
+**Workaround until fixed:** switch the session to a non-swarm model when sending an image.
+
+---
+
 ## M-5 — Messages do not auto-scroll `OPEN`
 
 **Upstream.** [`dzianisv/opencode-mobile#155`](https://github.com/dzianisv/opencode-mobile/issues/155)
