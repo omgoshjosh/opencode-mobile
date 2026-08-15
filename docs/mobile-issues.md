@@ -48,7 +48,7 @@ keyboard open, in portrait, landscape, and at increased display/font scaling.
 
 ---
 
-## M-2 — Assistant message text cannot be selected or copied `OPEN`
+## M-2 — Assistant message text cannot be selected or copied `FIXED-VERIFIED`
 
 **Symptom.** Text in assistant replies cannot be selected, so it cannot be copied.
 
@@ -84,7 +84,13 @@ same FlatList, so the RN bug is either not universal or is being tolerated there
 
 **Reproduced.** Android 12 emulator (`opencodex_android12`, API 31 + Play/Gboard),
 evaluation APK, demo conversation. Long-pressing assistant prose produces no selection
-handles, no context menu, no action sheet. Screenshot: `/tmp/a12_longpress.png`.
+handles, no context menu, no action sheet.
+
+**VERIFIED FIXED on device, 2026‑08‑15**, in a real session against the live hub:
+long-press an assistant message → "Message actions" sheet offers **Copy message** and
+**Select text** (and correctly omits "Edit message", which stays user-only) → Select
+text opens the modal → long-press inside it produces **selection handles plus Android's
+native Copy / Share / Select all menu**. Partial selection of assistant prose now works.
 
 **Fix implemented** (this checkout, not yet device-verified):
 
@@ -184,7 +190,7 @@ client's prompt immediately, without refetch.
 
 ---
 
-## M-6 — No transcript reconciliation after SSE reconnect `OPEN` — client-side root cause
+## M-6 — No transcript reconciliation after SSE reconnect `FIXED-VERIFIED`
 
 **This is the client-side gap the realtime contract doc predicts but does not name.**
 The server contract passes (an already-connected `/global/event` subscriber does get
@@ -221,10 +227,22 @@ background reconcile with no spinner flash.
 
 **Implemented** in `reconcileOpenSession()` (`src/stores/events.ts`), invoked alongside
 `resyncBusySessions()` in the same once-per-reconnect block. Typecheck clean, 227 tests
-pass. Not yet verified end-to-end on a device.
+pass.
 
-**Test dependency now cleared.** M-4 was resolved on 2026‑08‑15, so a cross-client
-realtime test finally measures the client rather than the server split.
+**VERIFIED end-to-end on device, 2026‑08‑15.** Android 12 emulator (API 31) running the
+evaluation APK, connected to the launchd hub at `10.0.2.2:4096`, against a throwaway
+session (`M6 reconnect test`, deleted afterwards):
+
+| Step | Action | Result |
+|---|---|---|
+| 1 | Post `SEED-BEFORE-DISCONNECT` via `POST /session/:id/message` while connected | Appeared live — baseline SSE delivery works |
+| 2 | `cmd connectivity airplane-mode enable` | Banner: "Reconnecting… (attempt 5)" |
+| 3 | Post `SENT-WHILE-MOBILE-OFFLINE` from the host while mobile is offline | **Not** shown on device — reproduces the bug's precondition |
+| 4 | `airplane-mode disable`, wait ~35s, **do not navigate** | Message **backfilled automatically**; banner cleared; no spinner |
+
+Step 4 is the regression check: before this fix the transcript stayed stale until the
+user left the session and re-entered. `noReply: true` was used throughout so the test
+exercises prompt acceptance/persistence and realtime delivery without model timing.
 
 ---
 
