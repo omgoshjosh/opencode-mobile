@@ -51,14 +51,23 @@ jobs:
           BRANCH="sync/upstream-main-$(date +%Y%m%d)"
           git checkout -b "$BRANCH" upstream/main
           git push origin "$BRANCH"
-          gh pr create \
+          # Creating a PR needs "Allow GitHub Actions to create and approve pull
+          # requests" (Settings -> Actions -> General -> Workflow permissions).
+          # Without it the API returns "Resource not accessible by integration"
+          # and this job failed every single day. The branch is already pushed
+          # and is the useful artifact, so report and succeed rather than
+          # failing a scheduled job nobody will action.
+          if ! gh pr create \
             --title "chore: sync main with upstream ($(date +%Y-%m-%d))" \
             --body "Upstream has diverged from our main. This PR brings in upstream changes but could not be fast-forwarded — review for conflicts.
 
             **Commits behind:** ${{ steps.check.outputs.behind }}
             **Our unique commits:** ${{ steps.check.outputs.ahead }}" \
             --base main \
-            --head "$BRANCH"
+            --head "$BRANCH"; then
+            echo "::warning::Could not open the sync PR automatically (Actions likely lacks PR-create permission)."
+            echo "::warning::Branch '$BRANCH' is pushed — open a PR manually, or enable Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests'."
+          fi
 
   # A pristine mirror of upstream/main, never committed to directly.
   #

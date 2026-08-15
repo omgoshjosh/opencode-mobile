@@ -11,6 +11,20 @@ Devices:
 - **Pixel 8 Pro** — modern reference, tethered to the Mac mini, kept protected.
 - **Emulator** — `system-images;android-31;google_apis_playstore;arm64-v8a` (Android 12 + Gboard).
 
+## BLOCKERS — waiting on Josh
+
+Tracked here so they stay visible. Work continues around them; none of these
+stop other progress.
+
+| # | Blocker | Why it needs you | Cost if left |
+|---|---|---|---|
+| B‑1 | **Keyboard padding polish** on Pixel 3 XL | Needs instrumentation on the physical device — notch + gesture nav differ from the emulator, and the emulator cannot reproduce it. Attempted blind twice; both broke the composer and were reverted. | Cosmetic only. Composer is visible and usable. |
+| B‑2 | **Actions cannot create PRs** | Repo setting: Settings → Actions → General → Workflow permissions → "Allow GitHub Actions to create and approve pull requests". | Daily sync pushes the branch but can't open the PR. Now warns instead of failing. |
+| B‑3 | **M‑9: swarm drops image attachments** | Server-side fix in OpencodeX (`prompt-swarm.ts` + `claude-driver.ts`), a different repo. Needs your go-ahead on scope. | Images silently never reach a Claude-orchestrated swarm. Workaround: switch off the swarm model, or ask and the image can be read from the DB. |
+| B‑4 | **Upstream PR #182 review** | Not actionable by us — waiting on the maintainer. | Three Android fixes unmerged upstream. Ours already carry them. |
+
+---
+
 Status legend: `OPEN` · `FIX-IN-BUILD` (fixed upstream, present in our APK, unverified on device) ·
 `FIXED-VERIFIED` · `WONTFIX` · `EXTERNAL`
 
