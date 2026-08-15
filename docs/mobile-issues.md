@@ -385,6 +385,58 @@ picker rather than carrying a swarm/team label. Cosmetic, separable from persist
 
 ---
 
+## M-8 — Sessions page: show swarm identity/status, nest sessions under swarms `BACKLOG`
+
+Requested 2026-08-15. Queued behind the current work; not started.
+
+**Goal.** On the Sessions list, show which swarm a session belongs to and its live
+status, and group sessions under expandable swarm headers rather than a flat list.
+
+**What already exists (reusable):**
+
+- `src/lib/session-grouping.ts` / `groupByDirectory` already flattens sessions into
+  typed rows — `{ type: "header", directory, shortName, count, collapsed }` plus session
+  rows — rendered by a single FlatList rather than a SectionList. Collapse state lives in
+  `collapsedDirs: Set<string>` in `app/(tabs)/index.tsx`, all groups expanded by default
+  (#67). **The expand/collapse mechanism is therefore already built**; this work adds a
+  second grouping dimension, it does not invent one.
+- Swarm identity is on the session row: `session.model = { providerID: "swarm", id }`
+  (see `src/lib/swarm-model.ts`), and the provider catalog carries the display name —
+  `modelDisplayLabel()` already resolves `swm_…` → "Fable Bowser Dev Team".
+- Live status per session is in `useEvents().sessionStatus`:
+  `{ type: "idle" | "busy" | "retry" }`, already SSE-driven.
+
+**The one real obstacle.** `src/lib/session-list.ts:38` currently *discards* child
+sessions outright:
+
+```ts
+if (params?.roots) out = out.filter((s) => !s.parentID)
+```
+
+Swarm role/subagent sessions are children (they carry `parentID`), so they never reach
+the list at all. Nesting them requires keeping them and grouping by `parentID` — which
+changes what that filter means and needs care not to regress the flat "recent sessions"
+view it was written for. The desktop GUI made the same choice
+(`swarmSessions()` keeps only top-level sessions), so this is a deliberate existing
+behaviour to revisit, not an oversight to delete.
+
+**Open design questions (worth settling before implementing):**
+
+1. Group by *swarm* or by *parent session*? A swarm can have many root sessions; a root
+   session has many role children. Those are two different trees.
+2. How do swarm grouping and the existing directory grouping compose — nested, or a
+   toggle between two modes? Two independent collapse dimensions could get confusing on
+   a phone screen.
+3. What status does a *swarm header* show — busiest child, aggregate count, or the root
+   session's own status?
+4. Do child sessions remain independently openable, or are they display-only?
+
+**Suggested first slice:** show swarm name + status badge on existing rows (pure
+presentation, no data-model change), then tackle nesting separately once the questions
+above are answered.
+
+---
+
 ## M-5 — Messages do not auto-scroll `OPEN`
 
 **Upstream.** [`dzianisv/opencode-mobile#155`](https://github.com/dzianisv/opencode-mobile/issues/155)
