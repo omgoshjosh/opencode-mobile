@@ -385,57 +385,78 @@ picker rather than carrying a swarm/team label. Cosmetic, separable from persist
 
 ---
 
-## M-8 — Sessions page: show swarm identity/status, nest sessions under swarms `BACKLOG`
+## M-8 — Sessions page: group-by picker (swarm, status, date, directory) `BACKLOG`
 
-Requested 2026-08-15. Queued behind the current work; not started.
+Requested 2026-08-15, design refined same day. Queued; not started.
 
-**Goal.** On the Sessions list, show which swarm a session belongs to and its live
-status, and group sessions under expandable swarm headers rather than a flat list.
+**Goal.** Show which swarm a session belongs to and its live status, and let the user
+choose how the list is grouped instead of hardcoding directory grouping.
 
-**What already exists (reusable):**
+### Design: one nesting layer + a single-select "Group by" picker
 
-- `src/lib/session-grouping.ts` / `groupByDirectory` already flattens sessions into
-  typed rows — `{ type: "header", directory, shortName, count, collapsed }` plus session
-  rows — rendered by a single FlatList rather than a SectionList. Collapse state lives in
-  `collapsedDirs: Set<string>` in `app/(tabs)/index.tsx`, all groups expanded by default
-  (#67). **The expand/collapse mechanism is therefore already built**; this work adds a
-  second grouping dimension, it does not invent one.
-- Swarm identity is on the session row: `session.model = { providerID: "swarm", id }`
-  (see `src/lib/swarm-model.ts`), and the provider catalog carries the display name —
-  `modelDisplayLabel()` already resolves `swm_…` → "Fable Bowser Dev Team".
-- Live status per session is in `useEvents().sessionStatus`:
-  `{ type: "idle" | "busy" | "retry" }`, already SSE-driven.
+Rejected double nesting. Two independent collapse dimensions on a phone is hard to read
+and hard to operate, and it doubles the state to persist. One layer plus a picker gets
+the same value.
 
-**The one real obstacle.** `src/lib/session-list.ts:38` currently *discards* child
-sessions outright:
+**The key realisation:** *grouping by swarm root session **is** the nesting.* Choosing
+"Swarm root session" puts each root's children under it — the originally requested
+nested view — without building a tree, a second collapse dimension, or recursive
+rendering. Nesting becomes a grouping mode rather than a structural change.
+
+Proposed modes:
+
+| Mode | Key | Notes |
+|---|---|---|
+| Directory / project | `session.directory` | Current behaviour; stays the default |
+| Swarm | `session.model.providerID === "swarm" ? session.model.id : "(no swarm)"` | Header shows the team name via `modelDisplayLabel()` |
+| Swarm root session | `session.parentID ?? session.id` | **This is the nested view** — children grouped under their root |
+| Date | bucketed `time.updated` | Today / Yesterday / This week / Older |
+| Status | `useEvents().sessionStatus[id].type` | Busy first — the "what's running?" view |
+
+### Implementation notes (survey done 2026-08-15)
+
+- **`src/lib/session-grouping.ts` already does the hard part.** `groupByDirectory` is a
+  pure, first-seen-order bucketer with no React Native imports. Generalize it to
+  `groupBy(items, keyFn)` and keep `groupByDirectory` as a thin wrapper — small,
+  mechanical, and existing tests keep covering the old path.
+- `app/(tabs)/index.tsx` already flattens groups into typed rows
+  (`{ type: "header", … }` + session rows) for a single FlatList, with collapse state in
+  `collapsedDirs: Set<string>`. That generalizes to `collapsedGroups` keyed by group key.
+  **The expand/collapse machinery exists; this adds a key function, not a mechanism.**
+- Swarm display names already resolve via `modelDisplayLabel()` (`swm_…` → "Fable Bowser
+  Dev Team"). Live status already lives in `useEvents().sessionStatus`.
+- Persist the chosen mode (and collapse state) so it survives app restarts.
+
+### The one real obstacle
+
+`src/lib/session-list.ts:38` currently discards child sessions outright:
 
 ```ts
 if (params?.roots) out = out.filter((s) => !s.parentID)
 ```
 
-Swarm role/subagent sessions are children (they carry `parentID`), so they never reach
-the list at all. Nesting them requires keeping them and grouping by `parentID` — which
-changes what that filter means and needs care not to regress the flat "recent sessions"
-view it was written for. The desktop GUI made the same choice
-(`swarmSessions()` keeps only top-level sessions), so this is a deliberate existing
-behaviour to revisit, not an oversight to delete.
+Swarm role/subagent sessions carry `parentID`, so they never reach the list. The
+"Swarm root session" mode needs them kept. Note the desktop GUI made the same choice
+deliberately (`swarmSessions()` keeps only top-level sessions), so this is a decision to
+revisit rather than an oversight — the flat "recent sessions" view depends on it and
+must not regress. Likely answer: keep children in the data and let the *grouping mode*
+decide whether to show them, rather than filtering at fetch time.
 
-**Open design questions (worth settling before implementing):**
+### Suggested slices
 
-1. Group by *swarm* or by *parent session*? A swarm can have many root sessions; a root
-   session has many role children. Those are two different trees.
-2. How do swarm grouping and the existing directory grouping compose — nested, or a
-   toggle between two modes? Two independent collapse dimensions could get confusing on
-   a phone screen.
-3. What status does a *swarm header* show — busiest child, aggregate count, or the root
-   session's own status?
-4. Do child sessions remain independently openable, or are they display-only?
+1. **Status + swarm badge on existing rows.** Pure presentation, no data-model change,
+   no picker. Ships the "what's running / which team" value immediately.
+2. **Generalize `groupBy` + add the picker** with Directory, Swarm, Date, Status — all
+   modes that work on already-fetched top-level sessions.
+3. **Swarm root session mode**, which is the only slice that needs the `parentID` filter
+   revisited, and so carries the regression risk. Doing it last keeps 1 and 2 shippable
+   independently.
 
-**Suggested first slice:** show swarm name + status badge on existing rows (pure
-presentation, no data-model change), then tackle nesting separately once the questions
-above are answered.
+### Open questions
 
----
+- What status should a *header* show — busiest child, aggregate counts, or none?
+- Where does the picker live: header dropdown, or a segmented control under the title?
+- Should "(no swarm)" / "(no parent)" sort first or last?
 
 ## M-5 — Messages do not auto-scroll `OPEN`
 
