@@ -15,6 +15,7 @@
 //
 // Pure, so the predicates are testable without a store.
 
+import { attentionLabel } from "./session-attention.ts"
 import type { Attention } from "./session-attention"
 
 export interface SessionFilter {
@@ -84,7 +85,9 @@ export function clearFilter(): SessionFilter {
  */
 export function filterSummary(filter: SessionFilter): string {
   const parts: string[] = []
-  if (filter.statuses.length > 0) parts.push(filter.statuses.join(", "))
+  // The human label, not the raw key: the bar was showing "needs-attention"
+  // where the badge on every row says "needs you".
+  if (filter.statuses.length > 0) parts.push(filter.statuses.map(attentionLabel).join(", "))
   if (filter.hideSubagents) parts.push("roots only")
   return parts.length > 0 ? parts.join(" · ") : "All sessions"
 }

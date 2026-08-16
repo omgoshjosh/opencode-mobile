@@ -103,6 +103,13 @@ test("the summary names the active narrowing", () => {
   assert.match(filterSummary(toggleStatus(NO_FILTER, "busy")), /busy/)
 })
 
+// The bar showed "needs-attention" where every row's badge says "needs you".
+test("the summary uses the same labels the badges use, not raw keys", () => {
+  const summary = filterSummary(toggleStatus(NO_FILTER, "needs-attention"))
+  assert.equal(summary.includes("needs-attention"), false)
+  assert.match(summary, /needs you/)
+})
+
 test("clearing resets everything", () => {
   let filter = setHideSubagents(NO_FILTER, true)
   filter = toggleStatus(filter, "busy")

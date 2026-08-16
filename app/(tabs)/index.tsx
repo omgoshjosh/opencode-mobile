@@ -982,13 +982,25 @@ export default function SessionsScreen() {
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color={isDark ? "#ffffff" : "#0a0a0a"} />
             </View>
+          ) : isFilterActive(filter) ? (
+            // "No sessions yet" is wrong when a filter is what emptied the
+            // list — it reads as data loss and gives no way out. Name the
+            // cause and offer the undo.
+            <View style={styles.emptyList}>
+              <Text style={[styles.emptyListText, isDark && styles.metaDark]}>
+                No sessions match {filterSummary(filter)}.
+              </Text>
+              <TouchableOpacity onPress={() => applyFilter(clearFilter())} testID="empty-clear-filter">
+                <Text style={styles.emptyClearFilter}>Clear filter</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <View style={styles.emptyList}>
               <Text style={[styles.emptyListText, isDark && styles.metaDark]}>{t("sessionsList.empty.noSessions")}</Text>
             </View>
           )
         }
-        contentContainerStyle={sessions.length === 0 ? styles.emptyContent : undefined}
+        contentContainerStyle={rows.length === 0 ? styles.emptyContent : undefined}
       />
 
       {/* FAB to create new session */}
@@ -1405,6 +1417,7 @@ const styles = StyleSheet.create({
   },
   // Sits between the title and the meta row: quieter than the title, but
   // still readable — it is the line that tells you whether to open the row.
+  emptyClearFilter: { fontSize: 14, fontWeight: "700", color: "#8b5cf6", marginTop: 10, textAlign: "center" },
   groupByLeft: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 },
   filterBtn: {
     flexDirection: "row",
