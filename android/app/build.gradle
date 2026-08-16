@@ -94,11 +94,14 @@ android {
         applicationId 'cc.agentlabs.opencode'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 39
+        versionCode 42
+        // Evaluation builds get a monotonic code from CI so each side-by-side
+        // install supersedes the last. Upstream release builds leave this
+        // unset and use the literal above.
         if (System.getenv("BUILD_VERSION_CODE")) {
             versionCode System.getenv("BUILD_VERSION_CODE").toInteger()
         }
-        versionName "0.4.12"
+        versionName "0.4.15"
 
         // Default label; overridden below for side-by-side evaluation builds.
         manifestPlaceholders = [appLabel: "@string/app_name"]

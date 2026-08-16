@@ -41,6 +41,7 @@ import {
 import { statusCounts, type StatusCount } from "../../src/lib/session-status-counts"
 import { modelDisplayLabel } from "../../src/lib/model-label"
 import { SWARM_PROVIDER_ID } from "../../src/lib/swarm-model"
+import { UpdateBanner } from "../../src/components/UpdateBanner"
 import { nameOf } from "../../src/lib/path-utils"
 import { SETUP_GUIDE_URL } from "../../src/lib/links"
 
@@ -715,6 +716,8 @@ export default function SessionsScreen() {
           <Text style={styles.errorText}>{error}</Text>
         </View>
       )}
+
+      <UpdateBanner isDark={isDark} />
 
       {/* Group-by picker. One nesting level + this control replaces nested
           groups; "Swarm root" is the nested-swarm view. */}
