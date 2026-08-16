@@ -18,7 +18,6 @@ stop other progress.
 
 | # | Blocker | Why it needs you | Cost if left |
 |---|---|---|---|
-| B‑1 | **Keyboard padding polish** on Pixel 3 XL | Needs instrumentation on the physical device — notch + gesture nav differ from the emulator, and the emulator cannot reproduce it. Attempted blind twice; both broke the composer and were reverted. | Cosmetic only. Composer is visible and usable. |
 | B‑2 | **Actions cannot create PRs** | Repo setting: Settings → Actions → General → Workflow permissions → "Allow GitHub Actions to create and approve pull requests". | Daily sync pushes the branch but can't open the PR. Now warns instead of failing. |
 | B‑3 | **M‑9: swarm drops image attachments** | Server-side fix in OpencodeX (`prompt-swarm.ts` + `claude-driver.ts`), a different repo. Needs your go-ahead on scope. | Images silently never reach a Claude-orchestrated swarm. Workaround: switch off the swarm model, or ask and the image can be read from the DB. |
 | B‑4 | **Upstream PR #182 review** | Not actionable by us — waiting on the maintainer. | Three Android fixes unmerged upstream. Ours already carry them. |
@@ -78,6 +77,27 @@ the keyboard, with the agent/model toolbar above them.
 - **Portrait:** pass.
 - **1.5× font scale:** pass — still fully visible and usable.
 - **Landscape:** not applicable; `app.json` sets `"orientation": "portrait"`.
+
+**Padding polished on the real device, 2026‑08‑15.** Instrumented the physical Pixel 3 XL
+(notch + gesture navigation, unlike the 3-button emulator). Measured with the keyboard
+open:
+
+```
+window 748.857   screen 845.714   insets.top 48.857   insets.bottom 48
+keyboard screenY 509.429   height 288.286
+
+computed padding = 748.857 − (509.429 − 48.857) = 288.285
+required         =                                288.286
+```
+
+The arithmetic was already **exact** on hardware — off by 0.0003 dp. But exact means the
+content's bottom edge lands precisely on the keyboard's top edge, so the composer pill sat
+flush with its rounded bottom shaved. That is the "weird padding".
+
+Fixed with `COMPOSER_KEYBOARD_GAP_DP = 12`, added to an offset that is already correct
+rather than as a fudge factor for something unmeasured. A test pins the real device
+geometry so a future change cannot silently reintroduce the flush edge. Verified on the
+device: the pill is fully visible with clear separation.
 
 **Contributed upstream (2026‑08‑15).**
 [PR #182](https://github.com/dzianisv/opencode-mobile/pull/182), branched cleanly from

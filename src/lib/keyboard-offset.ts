@@ -41,8 +41,21 @@
 
 export const IOS_KEYBOARD_VERTICAL_OFFSET = 90
 
+// Breathing room above the keyboard.
+//
+// insets.top alone makes the arithmetic exact — measured on a real Pixel 3 XL
+// (notch + gesture nav), computed padding came to 288.285dp against a keyboard
+// height of 288.286dp. But "exact" places the content's bottom edge precisely
+// at the keyboard's top edge, so the composer pill sits flush against it with
+// its rounded bottom shaved. Correct, and still uncomfortable to look at.
+//
+// A small deliberate gap fixes the appearance without touching the correctness:
+// it is added to an offset that is already right, rather than being a fudge
+// factor compensating for something unmeasured.
+export const COMPOSER_KEYBOARD_GAP_DP = 12
+
 export function keyboardVerticalOffset(platform: string, insetTop: number): number {
   if (platform === "ios") return IOS_KEYBOARD_VERTICAL_OFFSET
   // Guard against a bogus/unmeasured inset so we never push content *down*.
-  return Math.max(0, insetTop)
+  return Math.max(0, insetTop) + COMPOSER_KEYBOARD_GAP_DP
 }
