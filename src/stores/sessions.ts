@@ -10,7 +10,7 @@ import { mergeIncomingMessage } from "../lib/message-merge"
 import { isColdSessionLoad, isLiveEventForSession } from "../lib/session-load-reconcile"
 import { mergeOlderPage, mergeOlderParts, refreshWindowSize } from "../lib/message-page"
 import { canRenderFromCache, dropTranscript, getTranscript, putTranscript, type TranscriptCache } from "../lib/transcript-cache"
-import { dropPreview, previewText, putPreview, type PreviewMap } from "../lib/session-preview"
+import { dropPreview, previewFromParts, previewText, putPreview, type PreviewMap } from "../lib/session-preview"
 
 // Helper to convert API response to our internal format
 function parseMessages(response: MessageWithParts[]): { messages: Message[]; parts: Record<string, Part[]> } {
@@ -206,7 +206,13 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // Parse the API response format: array of { info, parts }
       const { messages, parts } = parseMessages(page.items)
 
-      set({
+      // Seed this session's list preview from what we just fetched. The SSE
+      // harvest only sees sessions that speak while the app is running, so
+      // without this every row stays blank until traffic happens to arrive.
+      const seed = previewFromParts(Object.values(parts).flat())
+
+      set((state) => ({
+        ...(seed ? { previews: putPreview(state.previews, sessionID, seed) } : null),
         currentSession: session,
         messages,
         parts,
@@ -217,7 +223,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
         // the follow-up fetch would come back empty.
         nextCursor: page.nextCursor,
         hasMore: Boolean(page.nextCursor),
-      })
+      }))
     } catch (err) {
       if (seq !== selectSeq) return
       console.error("Failed to load session:", err)

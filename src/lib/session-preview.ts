@@ -90,3 +90,29 @@ export function dropPreview(previews: PreviewMap, sessionID: string): PreviewMap
   delete next[sessionID]
   return next
 }
+
+/**
+ * Derive a preview from a transcript that is already loaded.
+ *
+ * The SSE harvest above only sees sessions that say something while the app is
+ * running, so on a cold start every row would be blank until traffic happened
+ * to arrive. Whenever a transcript is fetched — opening a session, restoring
+ * one from cache — its last text is free to extract, which fills the row for
+ * everything the user actually visits.
+ *
+ * Scans backwards for the newest part with usable text: the final part of a
+ * transcript is frequently a step-finish or a tool call, neither of which says
+ * anything a human wants to read in a list.
+ */
+export function previewFromParts(
+  parts: Array<{ type: string; text?: string; time?: { start?: number } }> | null | undefined,
+): { text: string; at: number } | null {
+  if (!parts || parts.length === 0) return null
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i]
+    if (part.type !== "text") continue
+    const text = previewText(part.text)
+    if (text) return { text, at: part.time?.start ?? 0 }
+  }
+  return null
+}

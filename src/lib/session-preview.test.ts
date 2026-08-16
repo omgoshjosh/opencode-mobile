@@ -4,6 +4,7 @@ import {
   MAX_TRACKED_PREVIEWS,
   PREVIEW_MAX_CHARS,
   dropPreview,
+  previewFromParts,
   previewText,
   putPreview,
   type PreviewMap,
@@ -110,4 +111,42 @@ test("dropping removes one entry", () => {
 test("dropping an absent entry is a no-op", () => {
   const map = putPreview({}, "s1", { text: "x", at: 1 })
   assert.equal(dropPreview(map, "nope"), map)
+})
+
+// --- seeding from a loaded transcript ---
+
+test("the newest text part becomes the preview", () => {
+  const got = previewFromParts([
+    { type: "text", text: "older", time: { start: 1 } },
+    { type: "text", text: "newest", time: { start: 2 } },
+  ])
+  assert.equal(got?.text, "newest")
+  assert.equal(got?.at, 2)
+})
+
+// A transcript usually ends on a step-finish or tool call, neither of which
+// says anything a human wants to read in a list row.
+test("trailing non-text parts are skipped", () => {
+  const got = previewFromParts([
+    { type: "text", text: "the answer" },
+    { type: "tool" },
+    { type: "step-finish" },
+  ])
+  assert.equal(got?.text, "the answer")
+})
+
+test("a transcript with no usable text yields null", () => {
+  assert.equal(previewFromParts([{ type: "tool" }, { type: "step-start" }]), null)
+  assert.equal(previewFromParts([{ type: "text", text: "   " }]), null)
+  assert.equal(previewFromParts([]), null)
+  assert.equal(previewFromParts(null), null)
+})
+
+test("a seeded preview is normalised like a streamed one", () => {
+  const got = previewFromParts([{ type: "text", text: "one\n\ntwo   three" }])
+  assert.equal(got?.text, "one two three")
+})
+
+test("a part with no timestamp still seeds, at the epoch", () => {
+  assert.equal(previewFromParts([{ type: "text", text: "hi" }])?.at, 0)
 })
