@@ -40,6 +40,7 @@ import { keyboardVerticalOffset } from "../../src/lib/keyboard-offset"
 import { modelDisplayLabel } from "../../src/lib/model-label"
 import { shouldAutoScroll, shouldShowScrollButton, transcriptSignature } from "../../src/lib/auto-scroll"
 import { breadcrumbFor } from "../../src/lib/session-breadcrumb"
+import { ABORT_CONFIRM_WINDOW_MS, DISARMED, abortLabel, isAbortable, isArmed, pressAbort } from "../../src/lib/abort-control"
 import { useSessions } from "../../src/stores/sessions"
 import { useEvents, refreshPending } from "../../src/stores/events"
 import { useConnections } from "../../src/stores/connections"
@@ -114,6 +115,34 @@ export default function SessionScreen() {
 
   // Derive sending state for this specific session
   const isSending = useSessions((s) => !!(currentSession && s.sending[currentSession.id]))
+  // The server's view of whether this session is running. `isSending` alone
+  // misses every run this client did not start — from the TUI, the CLI,
+  // another device, or before an app restart.
+  const serverStatus = useEvents((s) => (currentSession ? s.sessionStatus[currentSession.id]?.type : undefined))
+  const canStop = isAbortable({ status: serverStatus, sending: isSending })
+  const [stopArm, setStopArm] = useState(DISARMED)
+  const stopArmed = isArmed(stopArm, Date.now())
+
+  const onStopPress = useCallback(() => {
+    const action = pressAbort(stopArm, Date.now())
+    setStopArm(action.state)
+    if (action.type === "abort") abortSession()
+  }, [stopArm, abortSession])
+
+  // Disarm as soon as the run ends, so a stop armed against a finished run
+  // isn't still primed when the next one starts.
+  useEffect(() => {
+    if (!canStop) setStopArm(DISARMED)
+  }, [canStop])
+
+  // Nothing re-renders when the arm window merely lapses, so without this the
+  // button would keep saying "tap again" after it had stopped meaning it.
+  // pressAbort would still do the right thing; the label would be lying.
+  useEffect(() => {
+    if (!stopArm.armed) return
+    const timer = setTimeout(() => setStopArm(DISARMED), ABORT_CONFIRM_WINDOW_MS)
+    return () => clearTimeout(timer)
+  }, [stopArm.armed, stopArm.at])
 
   const { authenticateForMessage } = useAuth()
   const { client, clientForDirectory } = useConnections()
@@ -909,6 +938,23 @@ export default function SessionScreen() {
           )}
         </View>
 
+        {/* Always-available stop, sitting above the composer so a draft, an
+            attachment or an active mic can never hide it — the old inline
+            button was reachable only through a gap in four conditions. Two
+            taps, mirroring the TUI's esc-esc, because a stop is
+            unrecoverable. See src/lib/abort-control.ts. */}
+        {canStop && (
+          <TouchableOpacity
+            style={[s.stopBar, stopArmed && s.stopBarArmed]}
+            onPress={onStopPress}
+            activeOpacity={0.8}
+            testID="stop-bar"
+          >
+            <Ionicons name={stopArmed ? "alert-circle" : "stop-circle"} size={16} color="#ffffff" />
+            <Text style={s.stopBarText}>{abortLabel(stopArmed)}</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Attachment preview */}
         <ImageAttachments attachments={attachments} isDark={isDark} onRemove={removeAttachment} />
 
@@ -944,9 +990,10 @@ export default function SessionScreen() {
               maxLength={10000}
               testID="chat-message-input"
             />
-            {/* Stop button: only when busy and no input */}
-            {isSending && !input.trim() && attachments.length === 0 && !speech.listening && (
-              <TouchableOpacity style={s.stopBtn} onPress={abortSession}>
+            {/* Inline stop, when the composer is otherwise empty. The bar
+                above covers every other case — see src/lib/abort-control.ts. */}
+            {canStop && !input.trim() && attachments.length === 0 && !speech.listening && (
+              <TouchableOpacity style={s.stopBtn} onPress={onStopPress} testID="stop-inline">
                 <Ionicons name="stop" size={20} color="#ffffff" />
               </TouchableOpacity>
             )}
@@ -1168,6 +1215,21 @@ const s = StyleSheet.create({
     alignItems: "center",
     marginLeft: 8,
   },
+  // Full-width and high-contrast: this is the control you reach for when
+  // something is going wrong, so it should not need hunting.
+  stopBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginHorizontal: 12,
+    marginBottom: 6,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: "#dc2626",
+  },
+  stopBarArmed: { backgroundColor: "#991b1b" },
+  stopBarText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
   stopBtn: {
     width: 40,
     height: 40,
