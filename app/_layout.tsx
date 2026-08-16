@@ -201,6 +201,8 @@ function RootLayout() {
                   presentation: "card",
                 }}
               />
+              <Stack.Screen name="swarms/index" options={{ title: "Swarms", presentation: "card" }} />
+              <Stack.Screen name="swarms/[id]" options={{ title: "Swarm", presentation: "card" }} />
               <Stack.Screen
                 name="connection/add"
                 options={{

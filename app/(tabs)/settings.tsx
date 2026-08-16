@@ -10,6 +10,7 @@ import {
   Linking,
   Alert,
 } from "react-native"
+import { router } from "expo-router"
 import { Ionicons } from "@expo/vector-icons"
 import { useTranslation } from "react-i18next"
 import * as Application from "expo-application"
@@ -170,6 +171,20 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={[styles.container, isDark && styles.containerDark]} contentContainerStyle={styles.content}>
+      {/* Swarms are models you can pick in any session, so managing them
+          belongs with the app's own configuration rather than inside a
+          session. */}
+      <SettingSection title="Teams" isDark={isDark}>
+        <SettingRow
+          icon="people"
+          label="Swarms"
+          description="Create and edit agent teams from your skills"
+          isDark={isDark}
+          onPress={() => router.push("/swarms")}
+          right={<Ionicons name="chevron-forward" size={20} color={isDark ? "#666666" : "#999999"} />}
+        />
+      </SettingSection>
+
       <SettingSection title={t("settings.sections.security")} isDark={isDark}>
         <SettingRow
           icon="finger-print"

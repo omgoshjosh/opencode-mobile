@@ -13,6 +13,7 @@ import { loadSessionList } from "./session-list"
 import { LIVENESS_TIMEOUT_MS } from "./sse-liveness"
 import { nextCursorFrom } from "./message-page"
 import type { FileRoot } from "./file-roots"
+import type { RoleInput as SwarmRoleInput, Swarm as SwarmInfo } from "./swarm-crud"
 
 export { ApiAuthError, isAuthError } from "./api-error"
 
@@ -191,6 +192,21 @@ export interface HealthResponse {
   healthy: boolean
   version: string
 }
+
+// The OpencodeX management API lives under an experimental prefix; swarm
+// endpoints are not part of the base opencode surface.
+const OPENCODEX_ROOT = "/experimental/opencodex"
+
+export interface SkillInfo {
+  name: string
+  description?: string
+  location: string
+  content: string
+}
+
+// Re-exported so callers get the swarm types from the client module they
+// already import, while the definitions stay with the pure edit logic.
+export type { RoleInput as SwarmRoleInput, Role as SwarmRole, Swarm as SwarmInfo } from "./swarm-crud"
 
 const REQUEST_TIMEOUT_MS = 30_000
 
@@ -606,6 +622,36 @@ export function createClient(config: ClientConfig) {
 
     command: {
       list: () => request<Command[]>(config, "/command"),
+    },
+
+    skill: {
+      // Populates the role picker, so creating a swarm from a skill is a
+      // choice rather than remembering an exact name.
+      list: () => request<SkillInfo[]>(config, "/skill"),
+    },
+
+    // OpencodeX swarm management. Roles are a SET on the swarm, not
+    // individually addressable rows: update() replaces the whole array, which
+    // is how a role is removed (there is no per-role DELETE, and the GUI does
+    // the same). See src/lib/swarm-crud.ts for the guard that stops a partial
+    // array from silently deleting roles.
+    swarm: {
+      list: () => request<SwarmInfo[]>(config, `${OPENCODEX_ROOT}/swarm`),
+      get: (swarmID: string) => request<SwarmInfo>(config, `${OPENCODEX_ROOT}/swarm/${swarmID}`),
+      create: (input: { projectID?: string; title?: string; prompt?: string; roles?: SwarmRoleInput[] }) =>
+        request<SwarmInfo>(config, `${OPENCODEX_ROOT}/swarm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        }),
+      update: (swarmID: string, input: { title?: string; roles?: SwarmRoleInput[] }) =>
+        request<SwarmInfo>(config, `${OPENCODEX_ROOT}/swarm/${swarmID}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        }),
+      delete: (swarmID: string) =>
+        request<boolean>(config, `${OPENCODEX_ROOT}/swarm/${swarmID}`, { method: "DELETE" }),
     },
 
     provider: {
