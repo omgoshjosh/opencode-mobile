@@ -9,7 +9,10 @@ import {
   isFilterActive,
   matchesFilter,
   parseFilter,
+  fuzzyMatch,
   setHideSubagents,
+  setQuery,
+  setRecency,
   toggleStatus,
 } from "./session-filters.ts"
 
@@ -119,7 +122,7 @@ test("clearing resets everything", () => {
 // --- persistence ---
 
 test("a filter round-trips", () => {
-  const filter = { hideSubagents: true, statuses: ["busy" as const] }
+  const filter = { hideSubagents: true, statuses: ["busy" as const], recency: "day" as const, query: "" }
   assert.deepEqual(parseFilter(JSON.stringify(filter)), filter)
 })
 
@@ -140,4 +143,123 @@ test("corrupt persisted values degrade to no filter", () => {
 
 test("a truthy-but-not-true hideSubagents is not honoured", () => {
   assert.equal(parseFilter(JSON.stringify({ hideSubagents: "yes", statuses: [] })).hideSubagents, false)
+})
+
+// --- fuzzy name matching ---
+
+test("an empty query matches everything", () => {
+  assert.equal(fuzzyMatch("", "anything"), true)
+  assert.equal(fuzzyMatch("   ", "anything"), true)
+})
+
+// Session titles are long and generated, so remembering a contiguous
+// fragment is the hard part -- subsequence matching is what makes them
+// reachable.
+test("characters may be non-adjacent, in order", () => {
+  const title = "Release Engineer scope issue nine (@general subagent)"
+  assert.equal(fuzzyMatch("rel", title), true)
+  assert.equal(fuzzyMatch("reng", title), true)
+  assert.equal(fuzzyMatch("rsin", title), true)
+})
+
+test("out-of-order characters do not match", () => {
+  assert.equal(fuzzyMatch("engrel", "Release Engineer"), false)
+})
+
+test("matching is case-insensitive both ways", () => {
+  assert.equal(fuzzyMatch("RELEASE", "release engineer"), true)
+  assert.equal(fuzzyMatch("release", "RELEASE ENGINEER"), true)
+})
+
+test("spaces in the query do not require adjacency", () => {
+  assert.equal(fuzzyMatch("rel eng", "Release Engineer"), true)
+})
+
+test("a character absent from the target fails", () => {
+  assert.equal(fuzzyMatch("relz", "Release Engineer"), false)
+})
+
+test("a missing title fails rather than throwing", () => {
+  assert.equal(fuzzyMatch("x", ""), false)
+  assert.equal(fuzzyMatch("x", undefined as never), false)
+})
+
+test("the query filters by title through matchesFilter", () => {
+  const filter = setQuery(NO_FILTER, "reng")
+  assert.equal(matchesFilter({ depth: 0, attention: "idle", title: "Release Engineer" }, filter), true)
+  assert.equal(matchesFilter({ depth: 0, attention: "idle", title: "Security Reviewer" }, filter), false)
+})
+
+// --- recency ---
+
+const NOW = 1_000_000_000
+
+test("any recency imposes no window", () => {
+  assert.equal(matchesFilter({ depth: 0, attention: "idle", updatedAt: 1 }, NO_FILTER, NOW), true)
+})
+
+test("a session inside the window passes", () => {
+  const filter = setRecency(NO_FILTER, "hour")
+  assert.equal(matchesFilter({ depth: 0, attention: "idle", updatedAt: NOW - 60_000 }, filter, NOW), true)
+})
+
+test("a session outside the window fails", () => {
+  const filter = setRecency(NO_FILTER, "hour")
+  assert.equal(matchesFilter({ depth: 0, attention: "idle", updatedAt: NOW - 2 * 3600_000 }, filter, NOW), false)
+})
+
+test("the windows widen as expected", () => {
+  const twoDaysAgo = NOW - 2 * 24 * 3600_000
+  assert.equal(matchesFilter({ depth: 0, attention: "idle", updatedAt: twoDaysAgo }, setRecency(NO_FILTER, "day"), NOW), false)
+  assert.equal(matchesFilter({ depth: 0, attention: "idle", updatedAt: twoDaysAgo }, setRecency(NO_FILTER, "week"), NOW), true)
+})
+
+// Otherwise "past hour" silently includes sessions of unknown age.
+test("an unknown timestamp fails a recency filter rather than passing", () => {
+  const filter = setRecency(NO_FILTER, "hour")
+  assert.equal(matchesFilter({ depth: 0, attention: "idle" }, filter, NOW), false)
+})
+
+// --- combined + counting ---
+
+test("every filter composes", () => {
+  let filter = setHideSubagents(NO_FILTER, true)
+  filter = toggleStatus(filter, "idle")
+  filter = setRecency(filter, "day")
+  filter = setQuery(filter, "rel")
+  const ok = { depth: 0, attention: "idle" as const, title: "Release Engineer", updatedAt: NOW - 1000 }
+  assert.equal(matchesFilter(ok, filter, NOW), true)
+  assert.equal(matchesFilter({ ...ok, depth: 1 }, filter, NOW), false)
+  assert.equal(matchesFilter({ ...ok, title: "Something else" }, filter, NOW), false)
+  assert.equal(matchesFilter({ ...ok, updatedAt: NOW - 5 * 24 * 3600_000 }, filter, NOW), false)
+})
+
+test("each filter dimension counts once", () => {
+  let filter = setHideSubagents(NO_FILTER, true)
+  filter = toggleStatus(filter, "busy")
+  filter = setRecency(filter, "day")
+  filter = setQuery(filter, "x")
+  assert.equal(activeFilterCount(filter), 4)
+})
+
+test("a whitespace-only query is not a filter", () => {
+  assert.equal(isFilterActive(setQuery(NO_FILTER, "   ")), false)
+  assert.equal(activeFilterCount(setQuery(NO_FILTER, "   ")), 0)
+})
+
+test("the summary names recency and the query", () => {
+  assert.match(filterSummary(setRecency(NO_FILTER, "hour")), /past hour/)
+  assert.match(filterSummary(setQuery(NO_FILTER, "rel")), /"rel"/)
+})
+
+// --- persistence of the new fields ---
+
+test("recency round-trips; an unknown window degrades to any", () => {
+  assert.equal(parseFilter(JSON.stringify({ recency: "week" })).recency, "week")
+  assert.equal(parseFilter(JSON.stringify({ recency: "fortnight" })).recency, "any")
+})
+
+// A search term restored days later looks like an empty session list.
+test("the query is deliberately not persisted", () => {
+  assert.equal(parseFilter(JSON.stringify({ query: "old search" })).query, "")
 })

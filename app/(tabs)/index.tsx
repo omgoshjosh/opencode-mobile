@@ -49,7 +49,10 @@ import {
   isFilterActive,
   matchesFilter,
   parseFilter,
+  RECENCY_WINDOWS,
   setHideSubagents,
+  setQuery,
+  setRecency,
   toggleStatus,
   type SessionFilter,
 } from "../../src/lib/session-filters"
@@ -455,6 +458,8 @@ export default function SessionsScreen() {
           matchesFilter(
             {
               depth: depthOf(session, sessionsByID),
+              title: session.title,
+              updatedAt: session.time?.updated,
               attention: attentionFor({
                 status: statusOf(session.id),
                 pendingPermissions: permissionsMap[session.id]?.length ?? 0,
@@ -464,6 +469,7 @@ export default function SessionsScreen() {
               }),
             },
             filter,
+            nowMs,
           ),
         )
       : sessions
@@ -911,6 +917,39 @@ export default function SessionsScreen() {
               <Text style={[styles.pickerRowText, isDark && styles.textDark]}>Hide subagents</Text>
               {filter.hideSubagents && <Ionicons name="checkmark" size={18} color="#8b5cf6" />}
             </TouchableOpacity>
+
+            {/* Fuzzy, because titles are long and generated — remembering an
+                exact contiguous fragment is the hard part. */}
+            <Text style={[styles.filterGroupLabel, isDark && styles.metaDark]}>NAME</Text>
+            <TextInput
+              style={[styles.filterSearch, isDark && styles.filterSearchDark]}
+              value={filter.query}
+              onChangeText={(v) => applyFilter(setQuery(filter, v))}
+              placeholder="Fuzzy match, e.g. reng"
+              placeholderTextColor={isDark ? "#666" : "#999"}
+              autoCorrect={false}
+              autoCapitalize="none"
+              testID="filter-query"
+            />
+
+            <Text style={[styles.filterGroupLabel, isDark && styles.metaDark]}>UPDATED</Text>
+            <View style={styles.filterChips}>
+              {RECENCY_WINDOWS.map((window) => {
+                const on = filter.recency === window.value
+                return (
+                  <TouchableOpacity
+                    key={window.value}
+                    style={[styles.filterChip, on && styles.filterChipOn]}
+                    // Tapping the active window clears it, so the chips behave
+                    // as a toggle rather than a one-way trap.
+                    onPress={() => applyFilter(setRecency(filter, on ? "any" : window.value))}
+                    testID={`filter-recency-${window.value}`}
+                  >
+                    <Text style={[styles.filterChipText, on && styles.filterChipTextOn]}>{window.label}</Text>
+                  </TouchableOpacity>
+                )
+              })}
+            </View>
 
             <Text style={[styles.filterGroupLabel, isDark && styles.metaDark]}>STATUS</Text>
             <View style={styles.filterChips}>
@@ -1417,6 +1456,17 @@ const styles = StyleSheet.create({
   },
   // Sits between the title and the meta row: quieter than the title, but
   // still readable — it is the line that tells you whether to open the row.
+  filterSearch: {
+    borderWidth: 1,
+    borderColor: "#e5e5e5",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 14,
+    color: "#0a0a0a",
+    marginTop: 8,
+  },
+  filterSearchDark: { borderColor: "#222", color: "#ffffff" },
   emptyClearFilter: { fontSize: 14, fontWeight: "700", color: "#8b5cf6", marginTop: 10, textAlign: "center" },
   groupByLeft: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 },
   filterBtn: {
