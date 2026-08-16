@@ -8,6 +8,7 @@ import { extractPromptFromParts, type PromptFromParts } from "../lib/prompt-from
 import { mergePendingMessages } from "../lib/message-delivery"
 import { mergeIncomingMessage } from "../lib/message-merge"
 import { isColdSessionLoad, isLiveEventForSession } from "../lib/session-load-reconcile"
+import { mergeOlderPage, mergeOlderParts, refreshWindowSize } from "../lib/message-page"
 
 // Helper to convert API response to our internal format
 function parseMessages(response: MessageWithParts[]): { messages: Message[]; parts: Record<string, Part[]> } {
@@ -39,6 +40,9 @@ interface SessionsState {
   sending: Record<string, boolean>
   loadingMore: boolean
   hasMore: boolean
+  // Opaque continuation token for the open session's transcript. Absent once
+  // the server reports no more history. See src/lib/message-page.ts.
+  nextCursor?: string
   error: string | null
 
   // Actions
@@ -154,13 +158,16 @@ export const useSessions = create<SessionsState>((set, get) => ({
         isLoading: isColdLoad ? true : state.isLoading,
         error: null,
         hasMore: false,
+        // Cursors are per-session and opaque. Carrying one across a selection
+        // would page the new session from the old one's position.
+        nextCursor: undefined,
         loadingMore: false,
         sending: { ...state.sending, [sessionID]: false },
       }))
 
-      const [session, messagesResponse] = await Promise.all([
+      const [session, page] = await Promise.all([
         client.session.get(sessionID),
-        client.session.messages(sessionID, { limit: pageSize() }),
+        client.session.messagesPage(sessionID, { limit: pageSize() }),
       ])
 
       // A newer selectSession started while we were fetching — discard this
@@ -168,15 +175,19 @@ export const useSessions = create<SessionsState>((set, get) => ({
       if (seq !== selectSeq) return
 
       // Parse the API response format: array of { info, parts }
-      const { messages, parts } = parseMessages(messagesResponse)
+      const { messages, parts } = parseMessages(page.items)
 
       set({
         currentSession: session,
         messages,
         parts,
         isLoading: false,
-        // If we got exactly PAGE_SIZE messages, there are probably more
-        hasMore: messagesResponse.length >= pageSize(),
+        // The server tells us whether more history exists. Inferring it from
+        // `length >= pageSize` was wrong on the exact-multiple boundary: a
+        // session with precisely pageSize messages left would claim more, and
+        // the follow-up fetch would come back empty.
+        nextCursor: page.nextCursor,
+        hasMore: Boolean(page.nextCursor),
       })
     } catch (err) {
       if (seq !== selectSeq) return
@@ -185,31 +196,52 @@ export const useSessions = create<SessionsState>((set, get) => ({
     }
   },
 
+  // Pull ONE older page and prepend it.
+  //
+  // This used to refetch the entire session and replace the store with it,
+  // then set hasMore: false because it had, tautologically, loaded everything.
+  // On a long transcript that is a single unbounded request into a phone's
+  // memory. The server has always supported `?limit=N&before=<cursor>` with an
+  // X-Next-Cursor header; the client just never read it. See
+  // src/lib/message-page.ts.
   loadOlderMessages: async () => {
     const client = clientFor(get().currentSession?.directory)
     const session = get().currentSession
     if (!client || !session) return
     if (get().loadingMore || !get().hasMore) return
 
+    const cursor = get().nextCursor
+    // hasMore without a cursor would page from the end forever, re-fetching
+    // the newest page each time.
+    if (!cursor) {
+      set({ hasMore: false })
+      return
+    }
+
+    const seq = selectSeq
     try {
       set({ loadingMore: true })
 
-      // Fetch ALL messages for this session
-      const response = await client.session.messages(session.id)
-      const { messages: all, parts: allParts } = parseMessages(response)
-
-      // Merge: use all messages from full fetch, but keep any temp/optimistic messages
-      const existing = get().messages
-      const temp = existing.filter((m) => m.id.startsWith("temp-"))
-      const merged = [...all, ...temp]
-
-      set({
-        messages: merged,
-        parts: { ...allParts, ...Object.fromEntries(temp.map((m) => [m.id, get().parts[m.id] || []])) },
-        loadingMore: false,
-        hasMore: false, // We loaded everything
+      const { items, nextCursor } = await client.session.messagesPage(session.id, {
+        limit: pageSize(),
+        before: cursor,
       })
+
+      // The user navigated to a different session while this page was in
+      // flight — prepending it now would splice one session's history into
+      // another's transcript.
+      if (seq !== selectSeq) return
+
+      const { messages: older, parts: olderParts } = parseMessages(items)
+      set((state) => ({
+        messages: mergeOlderPage({ existing: state.messages, older }),
+        parts: mergeOlderParts(state.parts, olderParts),
+        loadingMore: false,
+        nextCursor,
+        hasMore: Boolean(nextCursor),
+      }))
     } catch (error) {
+      if (seq !== selectSeq) return
       console.error("Failed to load older messages:", error)
       set({ loadingMore: false })
     }
@@ -232,6 +264,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
         messages: [],
         parts: {},
         hasMore: false,
+        nextCursor: undefined,
         loadingMore: false,
         // A brand-new session must not inherit a previous failure's banner,
         // which otherwise makes a working session look broken on entry.
@@ -375,7 +408,13 @@ export const useSessions = create<SessionsState>((set, get) => ({
     if (!client || !session) return
 
     try {
-      const response = await client.session.messages(session.id)
+      // Refresh exactly the window the user is looking at, not the whole
+      // session. Unbounded here meant every focus/resync re-downloaded the
+      // entire transcript; refreshWindowSize keeps what they paged into
+      // without letting a long session reopen that hole.
+      const response = await client.session.messages(session.id, {
+        limit: refreshWindowSize(get().messages.length, pageSize()),
+      })
       const { messages, parts } = parseMessages(response)
       // Keep optimistic messages the server hasn't acknowledged — otherwise a
       // refresh triggered by a failed send deletes the text the user typed.

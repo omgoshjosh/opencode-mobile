@@ -11,6 +11,7 @@ import { SSEParser } from "./sse"
 import { apiErrorFor } from "./api-error"
 import { loadSessionList } from "./session-list"
 import { LIVENESS_TIMEOUT_MS } from "./sse-liveness"
+import { nextCursorFrom } from "./message-page"
 import type { FileRoot } from "./file-roots"
 
 export { ApiAuthError, isAuthError } from "./api-error"
@@ -244,6 +245,29 @@ async function request<T>(
   return response.json()
 }
 
+/**
+ * As `request`, but hands back the response headers too.
+ *
+ * Paged endpoints carry their continuation token in `X-Next-Cursor` rather
+ * than in the body, so a body-only helper cannot page.
+ */
+async function requestWithHeaders<T>(
+  config: ClientConfig,
+  path: string,
+  options: RequestInit = {},
+): Promise<{ body: T; headers: Headers }> {
+  const url = `${config.baseUrl}${path}`
+  const headers = { ...createHeaders(config), ...options.headers }
+  const response = await fetchWithTimeout(url, { ...options, headers })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw apiErrorFor(response.status, `API Error: ${response.status} - ${error}`)
+  }
+
+  return { body: (await response.json()) as T, headers: response.headers }
+}
+
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
   const parentSignal = options.signal
   if (parentSignal?.aborted) throw new Error("Request aborted")
@@ -444,6 +468,32 @@ export function createClient(config: ClientConfig) {
         if (params?.limit) query.set("limit", String(params.limit))
         const qs = query.toString()
         return request<MessageWithParts[]>(config, `/session/${sessionID}/message${qs ? `?${qs}` : ""}`)
+      },
+
+      /**
+       * One page of a transcript, newest-first from `before` (or from the end
+       * when `before` is omitted).
+       *
+       * `nextCursor` is absent once there is no more history. Prefer this over
+       * `messages()` for anything the user can keep scrolling: an unbounded
+       * `messages()` on a long session pulls the entire thing into memory —
+       * the largest session in this workspace is 1,341 messages / 5,893 parts.
+       *
+       * The server rejects `before` without `limit` (400), so `limit` is
+       * required here rather than optional.
+       */
+      messagesPage: async (
+        sessionID: string,
+        params: { limit: number; before?: string },
+      ): Promise<{ items: MessageWithParts[]; nextCursor?: string }> => {
+        const query = new URLSearchParams()
+        query.set("limit", String(params.limit))
+        if (params.before) query.set("before", params.before)
+        const { body, headers } = await requestWithHeaders<MessageWithParts[]>(
+          config,
+          `/session/${sessionID}/message?${query.toString()}`,
+        )
+        return { items: body, nextCursor: nextCursorFrom(headers) }
       },
 
       // Sends a message and returns the response
