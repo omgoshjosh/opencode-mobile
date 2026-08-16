@@ -39,7 +39,20 @@ import {
   type GroupMode,
 } from "../../src/lib/session-group-modes"
 import { statusCounts, type StatusCount } from "../../src/lib/session-status-counts"
-import { indexByID } from "../../src/lib/session-tree"
+import { depthOf, indexByID } from "../../src/lib/session-tree"
+import {
+  FILTERABLE_STATUSES,
+  NO_FILTER,
+  activeFilterCount,
+  clearFilter,
+  filterSummary,
+  isFilterActive,
+  matchesFilter,
+  parseFilter,
+  setHideSubagents,
+  toggleStatus,
+  type SessionFilter,
+} from "../../src/lib/session-filters"
 import { modelDisplayLabel } from "../../src/lib/model-label"
 import { SWARM_PROVIDER_ID } from "../../src/lib/swarm-model"
 import { UpdateBanner } from "../../src/components/UpdateBanner"
@@ -56,6 +69,10 @@ import { SETUP_GUIDE_URL } from "../../src/lib/links"
 
 // Badge palette per attention state. "needs you" is the only red — it is the
 // only state where the run is stopped waiting on the user.
+// Holds only booleans and known status strings.
+// See the allowlist in src/lib/persisted-keys.test.ts.
+const SESSION_FILTER_KEY = "sessions_filter"
+
 const ATTENTION_BADGE: Record<Attention, object> = {
   "needs-attention": { backgroundColor: "#fee2e2" },
   busy: { backgroundColor: "#dcfce7" },
@@ -367,6 +384,26 @@ export default function SessionsScreen() {
   const sessionStatusMap = useEvents((s) => s.sessionStatus)
   const transportHealthy = useEvents((s) => isHealthy(s.transport))
   const providersForLabels = useCatalog((c) => c.providers)
+  // Inputs to the attention state, hoisted here because filtering happens
+  // before rows are built — the row component computes the same thing for
+  // display, but the list has to know it to decide what to show at all.
+  const permissionsMap = useEvents((s) => s.permissions)
+  const questionsMap = useEvents((s) => s.questions)
+  const lastViewedMap = useSessions((s) => s.lastViewed)
+  const [filter, setFilter] = useState<SessionFilter>(NO_FILTER)
+  const [showFilters, setShowFilters] = useState(false)
+
+  // Persisted so a narrowed list survives a relaunch — otherwise "only what
+  // needs me" has to be re-applied every time the app is opened.
+  useEffect(() => {
+    AsyncStorage.getItem(SESSION_FILTER_KEY)
+      .then((raw) => setFilter(parseFilter(raw)))
+      .catch(() => {})
+  }, [])
+  const applyFilter = useCallback((next: SessionFilter) => {
+    setFilter(next)
+    AsyncStorage.setItem(SESSION_FILTER_KEY, JSON.stringify(next)).catch(() => {})
+  }, [])
 
   // Read-state drives the complete/idle distinction, so it has to be restored
   // before the first list render or every row briefly claims to be unread.
@@ -409,9 +446,31 @@ export default function SessionsScreen() {
     // Needed by "root" mode to walk a session up to its topmost ancestor — a
     // swarm's subagents are grandchildren, not children. See session-tree.ts.
     const sessionsByID = indexByID(sessions)
+
+    // Narrow before grouping, so an emptied group disappears rather than
+    // rendering a header over nothing. groupLabel already falls back to the
+    // first remaining item when a filter removes the root itself.
+    const visible = isFilterActive(filter)
+      ? sessions.filter((session) =>
+          matchesFilter(
+            {
+              depth: depthOf(session, sessionsByID),
+              attention: attentionFor({
+                status: statusOf(session.id),
+                pendingPermissions: permissionsMap[session.id]?.length ?? 0,
+                pendingQuestions: questionsMap[session.id]?.length ?? 0,
+                updatedAt: session.time?.updated,
+                lastViewedAt: lastViewedMap[session.id],
+              }),
+            },
+            filter,
+          ),
+        )
+      : sessions
+
     const buckets = new Map<string, Session[]>()
     const order: string[] = []
-    for (const session of sessions) {
+    for (const session of visible) {
       const key = groupKey(session as never, groupMode, { nowMs, statusOf, sessionsByID })
       let bucket = buckets.get(key)
       if (!bucket) {
@@ -422,7 +481,7 @@ export default function SessionsScreen() {
       bucket.push(session)
     }
     if (order.length <= 1) {
-      return sessions.map((session) => ({ type: "session", session }))
+      return visible.map((session) => ({ type: "session", session }))
     }
     // Stable sort: modes that define an order (date, status) use it; the rest
     // keep first-seen order. Ungrouped always sinks to the bottom.
@@ -446,7 +505,17 @@ export default function SessionsScreen() {
       if (!collapsed) for (const session of items) out.push({ type: "session", session })
     }
     return out
-  }, [sessions, collapsedDirs, groupMode, sessionStatusMap, providersForLabels])
+  }, [
+    sessions,
+    collapsedDirs,
+    groupMode,
+    sessionStatusMap,
+    providersForLabels,
+    filter,
+    permissionsMap,
+    questionsMap,
+    lastViewedMap,
+  ])
 
   // Fetch server-known projects when the new session modal opens
   useEffect(() => {
@@ -780,18 +849,90 @@ export default function SessionsScreen() {
 
       {/* Group-by picker. One nesting level + this control replaces nested
           groups; "Swarm root" is the nested-swarm view. */}
-      <TouchableOpacity
-        style={[styles.groupByBar, isDark && styles.groupByBarDark]}
-        onPress={() => setShowGroupPicker(true)}
-        activeOpacity={0.7}
-        testID="group-by-picker"
-      >
-        <Ionicons name="funnel-outline" size={14} color={isDark ? "#888888" : "#666666"} />
-        <Text style={[styles.groupByText, isDark && styles.metaDark]}>
-          Grouped by {GROUP_MODE_LABELS[groupMode]}
-        </Text>
-        <Ionicons name="chevron-down" size={14} color={isDark ? "#666666" : "#999999"} />
-      </TouchableOpacity>
+      <View style={[styles.groupByBar, isDark && styles.groupByBarDark]}>
+        <TouchableOpacity
+          style={styles.groupByLeft}
+          onPress={() => setShowGroupPicker(true)}
+          activeOpacity={0.7}
+          testID="group-by-picker"
+        >
+          <Ionicons name="albums-outline" size={14} color={isDark ? "#888888" : "#666666"} />
+          <Text style={[styles.groupByText, isDark && styles.metaDark]} numberOfLines={1}>
+            {GROUP_MODE_LABELS[groupMode]}
+          </Text>
+          <Ionicons name="chevron-down" size={14} color={isDark ? "#666666" : "#999999"} />
+        </TouchableOpacity>
+
+        {/* A narrowed list that doesn't say it is narrowed reads as missing
+            data, so the summary is always visible rather than hidden behind
+            the sheet. */}
+        <TouchableOpacity
+          style={[styles.filterBtn, isFilterActive(filter) && styles.filterBtnActive]}
+          onPress={() => setShowFilters(true)}
+          activeOpacity={0.7}
+          testID="filter-picker"
+        >
+          <Ionicons
+            name="funnel"
+            size={13}
+            color={isFilterActive(filter) ? "#6d28d9" : isDark ? "#888888" : "#666666"}
+          />
+          <Text
+            style={[styles.filterBtnText, isFilterActive(filter) && styles.filterBtnTextActive]}
+            numberOfLines={1}
+          >
+            {filterSummary(filter)}
+          </Text>
+          {activeFilterCount(filter) > 0 && (
+            <View style={styles.filterCount}>
+              <Text style={styles.filterCountText}>{activeFilterCount(filter)}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      <Modal visible={showFilters} transparent animationType="fade" onRequestClose={() => setShowFilters(false)}>
+        <TouchableOpacity style={styles.pickerBackdrop} activeOpacity={1} onPress={() => setShowFilters(false)}>
+          <View style={[styles.pickerSheet, isDark && styles.pickerSheetDark]}>
+            <View style={styles.filterSheetHeader}>
+              <Text style={[styles.pickerTitle, isDark && styles.textDark]}>Filter sessions</Text>
+              {isFilterActive(filter) && (
+                <TouchableOpacity onPress={() => applyFilter(clearFilter())} testID="filter-clear">
+                  <Text style={styles.filterClear}>Clear</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <TouchableOpacity
+              style={styles.pickerRow}
+              onPress={() => applyFilter(setHideSubagents(filter, !filter.hideSubagents))}
+              testID="filter-hide-subagents"
+            >
+              <Text style={[styles.pickerRowText, isDark && styles.textDark]}>Hide subagents</Text>
+              {filter.hideSubagents && <Ionicons name="checkmark" size={18} color="#8b5cf6" />}
+            </TouchableOpacity>
+
+            <Text style={[styles.filterGroupLabel, isDark && styles.metaDark]}>STATUS</Text>
+            <View style={styles.filterChips}>
+              {FILTERABLE_STATUSES.map((status) => {
+                const on = filter.statuses.includes(status)
+                return (
+                  <TouchableOpacity
+                    key={status}
+                    style={[styles.filterChip, on && styles.filterChipOn]}
+                    onPress={() => applyFilter(toggleStatus(filter, status))}
+                    testID={`filter-status-${status}`}
+                  >
+                    <Text style={[styles.filterChipText, on && styles.filterChipTextOn]}>
+                      {attentionLabel(status)}
+                    </Text>
+                  </TouchableOpacity>
+                )
+              })}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Android's AlertDialog caps out at three buttons, which silently hid
           half the modes — use a real list instead. */}
@@ -1264,6 +1405,44 @@ const styles = StyleSheet.create({
   },
   // Sits between the title and the meta row: quieter than the title, but
   // still readable — it is the line that tells you whether to open the row.
+  groupByLeft: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 },
+  filterBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    flex: 1,
+    justifyContent: "flex-end",
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+  },
+  filterBtnActive: { backgroundColor: "#f5f3ff" },
+  filterBtnText: { fontSize: 12, color: "#666666", flexShrink: 1 },
+  filterBtnTextActive: { color: "#6d28d9", fontWeight: "600" },
+  filterCount: {
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#8b5cf6",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  filterCountText: { color: "#ffffff", fontSize: 10, fontWeight: "700" },
+  filterSheetHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  filterClear: { fontSize: 13, fontWeight: "600", color: "#8b5cf6" },
+  filterGroupLabel: { fontSize: 11, fontWeight: "700", color: "#888888", marginTop: 14, letterSpacing: 0.5 },
+  filterChips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#d4d4d4",
+  },
+  filterChipOn: { backgroundColor: "#ede9fe", borderColor: "#8b5cf6" },
+  filterChipText: { fontSize: 13, color: "#666666" },
+  filterChipTextOn: { color: "#6d28d9", fontWeight: "700" },
   sessionPreview: { fontSize: 13, color: "#555555", marginTop: 2, marginBottom: 2 },
   sessionPreviewDark: { color: "#9a9a9a" },
   sessionMetaRow: {

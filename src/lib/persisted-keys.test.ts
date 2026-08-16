@@ -49,13 +49,20 @@ const ALLOWED_ASYNC_KEYS = new Map<string, string>([
   ["GROUP_MODE_KEY", "sessions list: chosen group-by mode"],
   ["DISMISSED_KEY", "update banner: version the user dismissed"],
   ["LAST_VIEWED_KEY", "sessionID -> last-opened timestamp; ids and numbers only, no content"],
+  ["SESSION_FILTER_KEY", "sessions list: hide-subagents flag + chosen status names"],
   // These two write through a variable rather than a literal, so the key is
   // named at the call site's own constant. Listed by the variable name their
   // helpers use; both hold queued user-submitted form data, not model output.
   ["key", "update-check / waitlist-queue: caller-supplied key, user data only"],
 ])
 
-const SRC = path.join(import.meta.dirname, "..")
+// Both source roots. `src` alone missed every write in `app/` — the screens,
+// which are exactly where a "remember what the user was looking at" cache
+// gets added. GROUP_MODE_KEY and SESSION_FILTER_KEY both live there and were
+// unscanned until this was widened.
+const ROOTS = [path.join(import.meta.dirname, ".."), path.join(import.meta.dirname, "..", "..", "app")].filter((dir) =>
+  fs.existsSync(dir),
+)
 
 function sourceFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -70,13 +77,11 @@ function sourceFiles(dir: string): string[] {
 test("every on-device write uses a reviewed key, never model-generated content", () => {
   const unknown: string[] = []
 
-  for (const file of sourceFiles(SRC)) {
+  for (const file of allSourceFiles()) {
     const code = fs.readFileSync(file, "utf8")
     for (const match of code.matchAll(/SecureStore\.setItemAsync\(\s*([^,]+?)\s*,/g)) {
       const key = match[1].trim()
-      if (!ALLOWED_PERSISTED_KEYS.has(key)) {
-        unknown.push(`${path.relative(SRC, file)}: ${key}`)
-      }
+      if (!ALLOWED_PERSISTED_KEYS.has(key)) unknown.push(`${file}: ${key}`)
     }
   }
 
@@ -92,11 +97,11 @@ test("every on-device write uses a reviewed key, never model-generated content",
 test("every AsyncStorage write uses a reviewed key too", () => {
   const unknown: string[] = []
 
-  for (const file of sourceFiles(SRC)) {
+  for (const file of allSourceFiles()) {
     const code = fs.readFileSync(file, "utf8")
     for (const match of code.matchAll(/AsyncStorage\.setItem\(\s*([^,]+?)\s*,/g)) {
       const key = match[1].trim()
-      if (!ALLOWED_ASYNC_KEYS.has(key)) unknown.push(`${path.relative(SRC, file)}: ${key}`)
+      if (!ALLOWED_ASYNC_KEYS.has(key)) unknown.push(`${file}: ${key}`)
     }
   }
 
@@ -109,8 +114,12 @@ test("every AsyncStorage write uses a reviewed key too", () => {
   )
 })
 
+function allSourceFiles(): string[] {
+  return ROOTS.flatMap(sourceFiles)
+}
+
 test("the allowlist itself stays live (no keys left behind after a refactor)", () => {
-  const code = sourceFiles(SRC)
+  const code = allSourceFiles()
     .map((file) => fs.readFileSync(file, "utf8"))
     .join("\n")
   const used = new Set(
