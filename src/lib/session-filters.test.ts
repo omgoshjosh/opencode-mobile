@@ -9,7 +9,9 @@ import {
   isFilterActive,
   matchesFilter,
   parseFilter,
+  bestMatchSpan,
   fuzzyMatch,
+  matchSpanLimit,
   setHideSubagents,
   setQuery,
   setRecency,
@@ -159,7 +161,9 @@ test("characters may be non-adjacent, in order", () => {
   const title = "Release Engineer scope issue nine (@general subagent)"
   assert.equal(fuzzyMatch("rel", title), true)
   assert.equal(fuzzyMatch("reng", title), true)
-  assert.equal(fuzzyMatch("rsin", title), true)
+  // "rsin" is a subsequence too, but spread across the whole title — the
+  // compactness bound rejects it, which is the point.
+  assert.equal(fuzzyMatch("rsin", title), false)
 })
 
 test("out-of-order characters do not match", () => {
@@ -262,4 +266,49 @@ test("recency round-trips; an unknown window degrades to any", () => {
 // A search term restored days later looks like an empty session list.
 test("the query is deliberately not persisted", () => {
   assert.equal(parseFilter(JSON.stringify({ query: "old search" })).query, "")
+})
+
+// --- match compactness ---
+//
+// Measured against real session titles: intent produces a local match,
+// accidents sprawl across the string.
+
+const REAL_TITLES = {
+  releaseEngineer: "Release Engineer scope issue nine (@general subagent)",
+  animalGame: "Realistic animal journey anthology game",
+  securityReviewer: "Security Reviewer audit sync (@general subagent)",
+  reliability: "Opencodex reliability team",
+  yondi: "Yondi Dev",
+}
+
+test("a query matches the title it was meant for", () => {
+  assert.equal(fuzzyMatch("reng", REAL_TITLES.releaseEngineer), true)
+  assert.equal(fuzzyMatch("sec", REAL_TITLES.securityReviewer), true)
+  assert.equal(fuzzyMatch("yond", REAL_TITLES.yondi), true)
+  assert.equal(fuzzyMatch("rel", REAL_TITLES.reliability), true)
+})
+
+// The bug this bound fixes: subsequence alone matched nearly everything.
+test("a sprawling accidental subsequence is rejected", () => {
+  assert.equal(fuzzyMatch("reng", REAL_TITLES.animalGame), false)
+  assert.equal(fuzzyMatch("reng", REAL_TITLES.securityReviewer), false)
+  assert.equal(fuzzyMatch("sec", REAL_TITLES.releaseEngineer), false)
+  assert.equal(fuzzyMatch("rel", REAL_TITLES.securityReviewer), false)
+})
+
+test("the span limit is generous for short queries", () => {
+  assert.ok(matchSpanLimit(2) >= 8)
+  assert.ok(matchSpanLimit(10) >= 30)
+})
+
+// Greedy leftmost matching failed this: it takes the "a" of "Realistic" and
+// drags the match across 32 chars, so the compactness check rejected a title
+// that literally contains the word.
+test("the tightest match is found, not the leftmost", () => {
+  assert.equal(bestMatchSpan("anthology", "realistic animal journey anthology game"), 9)
+})
+
+test("an exact substring always matches", () => {
+  assert.equal(fuzzyMatch("Release Engineer", REAL_TITLES.releaseEngineer), true)
+  assert.equal(fuzzyMatch("anthology", REAL_TITLES.animalGame), true)
 })

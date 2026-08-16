@@ -77,20 +77,56 @@ export function isFilterActive(filter: SessionFilter): boolean {
  * grouping the user picked.
  */
 export function fuzzyMatch(query: string, text: string): boolean {
-  const q = query.trim().toLowerCase()
+  const q = query.trim().toLowerCase().replace(/\s+/g, "")
   if (!q) return true
   const target = (text ?? "").toLowerCase()
+  const span = bestMatchSpan(q, target)
+  return span !== null && span <= matchSpanLimit(q.length)
+}
 
-  let index = 0
-  for (const char of q) {
-    // Spaces in the query are treated as "anything may follow", so typing
-    // multiple words does not require them to be adjacent in the title.
-    if (char === " ") continue
-    const found = target.indexOf(char, index)
-    if (found === -1) return false
-    index = found + 1
+/**
+ * The tightest span in which `q` appears as a subsequence of `target`, or null.
+ *
+ * Every start position is tried rather than just the first. Greedy leftmost
+ * matching looks equivalent and is not: searching "anthology" against
+ * "Realistic animal journey anthology game" greedily takes the `a` of
+ * "Realistic" at index 2 and drags the match across 32 characters, so the
+ * compactness check below rejects a title that literally contains the word.
+ * Taking the best start finds the real span of 9.
+ *
+ * O(n*m) on strings this short is not worth optimising away.
+ */
+export function bestMatchSpan(q: string, target: string): number | null {
+  if (!q) return 0
+  let best: number | null = null
+
+  for (let start = 0; start < target.length; start++) {
+    if (target[start] !== q[0]) continue
+    let index = start
+    let last = start
+    let ok = true
+    for (let i = 1; i < q.length; i++) {
+      const found = target.indexOf(q[i], index + 1)
+      if (found === -1) {
+        ok = false
+        break
+      }
+      index = found
+      last = found
+    }
+    if (!ok) continue
+    const span = last - start + 1
+    if (best === null || span < best) best = span
+    // Cannot do better than an exact contiguous run.
+    if (best === q.length) break
   }
-  return true
+
+  return best
+}
+
+/** Generous for short queries, where a couple of skipped characters is normal. */
+export function matchSpanLimit(queryLength: number): number {
+  return Math.max(queryLength * 3, queryLength + 6)
 }
 
 /**
