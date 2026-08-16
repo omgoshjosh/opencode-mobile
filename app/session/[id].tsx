@@ -39,6 +39,7 @@ import { resolveSessionModel, type ModelSelection } from "../../src/lib/swarm-mo
 import { keyboardVerticalOffset } from "../../src/lib/keyboard-offset"
 import { modelDisplayLabel } from "../../src/lib/model-label"
 import { shouldAutoScroll, shouldShowScrollButton, transcriptSignature } from "../../src/lib/auto-scroll"
+import { breadcrumbFor } from "../../src/lib/session-breadcrumb"
 import { useSessions } from "../../src/stores/sessions"
 import { useEvents, refreshPending } from "../../src/stores/events"
 import { useConnections } from "../../src/stores/connections"
@@ -141,6 +142,9 @@ export default function SessionScreen() {
   const questions = useEvents((s) => (sessionID ? s.questions[sessionID] : undefined)) || []
 
   const shortDir = getShortDir(currentSession?.directory)
+  // Non-null only inside a subagent session — see src/lib/session-breadcrumb.ts.
+  const sessionList = useSessions((st) => st.sessions)
+  const breadcrumb = useMemo(() => breadcrumbFor(currentSession, sessionList), [currentSession?.parentID, sessionList])
   const [showScrollButton, setShowScrollButton] = useState(false)
 
   // SSE reconnect banner
@@ -764,6 +768,29 @@ export default function SessionScreen() {
           </View>
         )}
 
+        {/* Subagent sessions look identical to top-level ones, so without
+            this there is nothing to say you are inside one. Tapping goes to
+            the parent rather than popping, so it also works when the child
+            was deep-linked and there is no parent on the stack. */}
+        {breadcrumb && (
+          <TouchableOpacity
+            style={[s.breadcrumb, isDark && s.breadcrumbDark]}
+            onPress={() =>
+              router.push({
+                pathname: "/session/[id]",
+                params: { id: breadcrumb.parentID, ...(currentSession?.directory ? { directory: currentSession.directory } : {}) },
+              })
+            }
+            activeOpacity={0.7}
+            testID="subagent-breadcrumb"
+          >
+            <Ionicons name="arrow-up-outline" size={13} color="#6d28d9" />
+            <Text style={s.breadcrumbText} numberOfLines={1}>
+              Subagent of {breadcrumb.label}
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {isLoading ? (
           <View style={s.loading}>
             <ActivityIndicator size="large" color={isDark ? "#ffffff" : "#0a0a0a"} />
@@ -971,6 +998,20 @@ const s = StyleSheet.create({
   containerDark: { backgroundColor: "#0a0a0a" },
   loading: { flex: 1, justifyContent: "center", alignItems: "center" },
   listWrap: { flex: 1, position: "relative" },
+  // Purple throughout means "another agent's work" — same accent as the
+  // swarm badges on session rows and the subagent link in tool cards.
+  breadcrumb: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: "#f5f3ff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#ddd6fe",
+  },
+  breadcrumbDark: { backgroundColor: "#2e1065", borderBottomColor: "#4c1d95" },
+  breadcrumbText: { flex: 1, fontSize: 12, fontWeight: "600", color: "#6d28d9" },
 
   // Messages
   messageList: { padding: 16, paddingBottom: 8 },

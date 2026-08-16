@@ -125,6 +125,10 @@ export interface Part {
     title?: string
     error?: { message: string }
     time?: { start?: number; end?: number }
+    // Tool-specific. For `task` this carries { sessionId, parentSessionId,
+    // model, runID } — the link to the subagent's own session. See
+    // src/lib/subagent-link.ts.
+    metadata?: unknown
   }
   // Timing
   time?: { start?: number; end?: number }

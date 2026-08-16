@@ -2,8 +2,11 @@ import { useState, useCallback } from "react"
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView, Platform } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { useTranslation } from "react-i18next"
+import { router } from "expo-router"
 import type { Part } from "../../lib/sdk"
 import { DiffView } from "./DiffView"
+import { isSubagentOpenable, subagentBadge, subagentLinkFrom } from "../../lib/subagent-link"
+import { useSessions } from "../../stores/sessions"
 
 const TOOL_ICONS: Record<string, string> = {
   read: "glasses-outline",
@@ -189,13 +192,63 @@ function WebfetchDetail({ input, isDark }: { input: unknown; isDark: boolean }) 
   )
 }
 
-function TaskDetail({ input, isDark }: { input: unknown; isDark: boolean }) {
+function TaskDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
+  const input = tool.state?.input
   const description =
     typeof input === "object" && input !== null ? (input as Record<string, unknown>).description : undefined
   const prompt = typeof input === "object" && input !== null ? (input as Record<string, unknown>).prompt : undefined
+
+  // A `task` call spawns a real session on the server. Until now the
+  // transcript showed the prompt and stopped, leaving the subagent's actual
+  // work unreachable — see src/lib/subagent-link.ts.
+  const link = subagentLinkFrom(tool)
+  const badge = link ? subagentBadge(link) : undefined
+  const directory = useSessions((st) => st.currentSession?.directory)
+
+  const openSubagent = useCallback(() => {
+    if (!link) return
+    router.push({
+      pathname: "/session/[id]",
+      // The child runs in the parent's directory; passing it keeps the child
+      // screen on the same connection instead of falling back to the active
+      // one, which may point elsewhere.
+      params: { id: link.sessionID, ...(directory ? { directory } : {}) },
+    })
+  }, [link?.sessionID, directory])
+
   return (
     <View style={s.detailSection}>
       {typeof description === "string" && <Text style={[s.detailMeta, isDark && s.detailMetaDark]}>{description}</Text>}
+
+      {link && isSubagentOpenable(link) && (
+        <TouchableOpacity
+          style={[s.subagentLink, isDark && s.subagentLinkDark]}
+          onPress={openSubagent}
+          activeOpacity={0.7}
+          testID={`open-subagent-${link.sessionID}`}
+        >
+          <Ionicons name="git-branch-outline" size={14} color="#8b5cf6" />
+          <Text style={s.subagentLinkText} numberOfLines={1}>
+            {link.status === "running" ? "Watch subagent" : "Open subagent"}
+          </Text>
+          {badge && (
+            <View style={s.subagentBadge}>
+              <Text style={s.subagentBadgeText} numberOfLines={1}>
+                {badge}
+              </Text>
+            </View>
+          )}
+          {/* The swarm facade hides which model actually ran; this is the
+              only place it surfaces. */}
+          {link.modelID && (
+            <Text style={[s.subagentModel, isDark && s.detailMetaDark]} numberOfLines={1}>
+              {link.modelID}
+            </Text>
+          )}
+          <Ionicons name="chevron-forward" size={14} color="#8b5cf6" />
+        </TouchableOpacity>
+      )}
+
       {typeof prompt === "string" && prompt.length > 0 && (
         <View style={[s.codeBlock, isDark && s.codeBlockDark, { marginTop: 6 }]}>
           <Text style={[s.codePre, isDark && s.codePteDark]} selectable numberOfLines={20}>
@@ -278,7 +331,7 @@ function ToolDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
     case "websearch":
       return <WebfetchDetail input={input} isDark={isDark} />
     case "task":
-      return <TaskDetail input={input} isDark={isDark} />
+      return <TaskDetail tool={tool} isDark={isDark} />
     case "todowrite":
       return <TodoDetail input={input} isDark={isDark} />
     default:
@@ -428,6 +481,25 @@ const s = StyleSheet.create({
   detailFileDark: { color: "#a78bfa", backgroundColor: "#1a1a2e" },
   detailMeta: { fontSize: 12, color: "#666666", lineHeight: 18 },
   detailMetaDark: { color: "#888888" },
+  // Subagent entry point. Purple matches the swarm accent used on session
+  // rows, so "this leads to another agent's work" reads consistently.
+  subagentLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: "#f5f3ff",
+    borderWidth: 1,
+    borderColor: "#ddd6fe",
+  },
+  subagentLinkDark: { backgroundColor: "#2e1065", borderColor: "#4c1d95" },
+  subagentLinkText: { fontSize: 12, fontWeight: "600", color: "#6d28d9" },
+  subagentBadge: { backgroundColor: "#ede9fe", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
+  subagentBadgeText: { fontSize: 10, fontWeight: "600", color: "#6d28d9" },
+  subagentModel: { flex: 1, textAlign: "right", fontSize: 10, color: "#666666" },
 
   // Code block
   codeBlock: {
