@@ -9,6 +9,8 @@ import { mergePendingMessages } from "../lib/message-delivery"
 import { mergeIncomingMessage } from "../lib/message-merge"
 import { isColdSessionLoad, isLiveEventForSession } from "../lib/session-load-reconcile"
 import { mergeOlderPage, mergeOlderParts, refreshWindowSize } from "../lib/message-page"
+import { canRenderFromCache, dropTranscript, getTranscript, putTranscript, type TranscriptCache } from "../lib/transcript-cache"
+import { dropPreview, previewText, putPreview, type PreviewMap } from "../lib/session-preview"
 
 // Helper to convert API response to our internal format
 function parseMessages(response: MessageWithParts[]): { messages: Message[]; parts: Record<string, Part[]> } {
@@ -43,6 +45,12 @@ interface SessionsState {
   // Opaque continuation token for the open session's transcript. Absent once
   // the server reports no more history. See src/lib/message-page.ts.
   nextCursor?: string
+  // Recently-viewed transcripts, so switching back doesn't cost a cold fetch.
+  // Bounded in both dimensions — see src/lib/transcript-cache.ts.
+  transcriptCache: TranscriptCache
+  // Last line of text seen per session, harvested from the global SSE stream.
+  // A label, not a cache — see src/lib/session-preview.ts.
+  previews: PreviewMap
   error: string | null
 
   // Actions
@@ -104,6 +112,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
   sending: {},
   loadingMore: false,
   hasMore: false,
+  transcriptCache: {},
+  previews: {},
   error: null,
 
   loadSessions: async () => {
@@ -153,14 +163,33 @@ export const useSessions = create<SessionsState>((set, get) => ({
     // genuinely new/different session needs the blocking spinner.
     const isColdLoad = isColdSessionLoad(get().currentSession?.id, sessionID)
     try {
+      // Park the outgoing session's transcript so switching back is free.
+      // Done before the new session's state lands, since the store keeps only
+      // one transcript at a time and it is about to be overwritten.
+      const outgoing = get().currentSession
+      if (outgoing && outgoing.id !== sessionID) {
+        set((state) => ({
+          transcriptCache: putTranscript(state.transcriptCache, outgoing.id, {
+            messages: state.messages,
+            parts: state.parts,
+            nextCursor: state.nextCursor,
+          }),
+        }))
+      }
+
+      // A transcript we already hold renders immediately and reconciles
+      // underneath, instead of showing a spinner over content the client had
+      // moments ago. Only the cold path (nothing cached) still blocks.
+      const cached = getTranscript(get().transcriptCache, sessionID)
+      const canWarmStart = isColdLoad && canRenderFromCache(cached)
+
       // Reset optimistic sending — SSE sessionStatus is the source of truth
       set((state) => ({
-        isLoading: isColdLoad ? true : state.isLoading,
+        isLoading: isColdLoad && !canWarmStart ? true : state.isLoading,
         error: null,
-        hasMore: false,
-        // Cursors are per-session and opaque. Carrying one across a selection
-        // would page the new session from the old one's position.
-        nextCursor: undefined,
+        ...(canWarmStart
+          ? { messages: cached!.messages, parts: cached!.parts, nextCursor: cached!.nextCursor, hasMore: Boolean(cached!.nextCursor) }
+          : { hasMore: false, nextCursor: undefined }),
         loadingMore: false,
         sending: { ...state.sending, [sessionID]: false },
       }))
@@ -292,6 +321,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
         currentSession: state.currentSession?.id === sessionID ? null : state.currentSession,
         messages: state.currentSession?.id === sessionID ? [] : state.messages,
         parts: state.currentSession?.id === sessionID ? {} : state.parts,
+        // Otherwise a deleted session's transcript stays warm and would be
+        // rendered from cache if anything navigated back to its id.
+        transcriptCache: dropTranscript(state.transcriptCache, sessionID),
+        previews: dropPreview(state.previews, sessionID),
       }))
     } catch (error) {
       set({ error: "Failed to delete session" })
@@ -473,10 +506,30 @@ export const useSessions = create<SessionsState>((set, get) => ({
   },
 
   handleEvent: (event) => {
+    const props = (event as any).properties || {}
+
+    // Capture the list preview BEFORE any current-session filtering below.
+    // Every part of every session crosses this stream; the client was
+    // discarding everything not belonging to the open session, which is why
+    // the list could never say what a session was about without an extra
+    // request per row. See src/lib/session-preview.ts.
+    if (event.type === "message.part.updated") {
+      const part = props.part as Part | undefined
+      if (part?.sessionID && part.type === "text") {
+        const text = previewText(part.text)
+        if (text) {
+          set((state) => ({
+            previews: putPreview(state.previews, part.sessionID!, {
+              text,
+              at: part.time?.start ?? Date.now(),
+            }),
+          }))
+        }
+      }
+    }
+
     const { currentSession } = get()
     if (!currentSession) return
-
-    const props = (event as any).properties || {}
 
     switch (event.type) {
       case "message.updated": {

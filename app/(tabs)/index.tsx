@@ -98,6 +98,7 @@ function SessionItem({
       ? modelDisplayLabel(providers, { providerID: session.model.providerID, modelID: session.model.id })
       : null
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
+  const preview = useSessions((s) => s.previews[session.id]?.text)
 
   return (
     <TouchableOpacity
@@ -112,6 +113,14 @@ function SessionItem({
             {session.title || t("sessionsList.untitledSession")}
           </Text>
         </View>
+        {/* What the session is actually talking about. Harvested from the SSE
+            stream the client was already receiving, so this costs no requests
+            — see src/lib/session-preview.ts. */}
+        {preview && (
+          <Text style={[styles.sessionPreview, isDark && styles.sessionPreviewDark]} numberOfLines={1}>
+            {preview}
+          </Text>
+        )}
         <View style={styles.sessionMetaRow}>
           <Text style={[styles.sessionMeta, isDark && styles.metaDark]}>
             {formatTime(session.time.updated, t)}
@@ -1203,6 +1212,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#666666",
   },
+  // Sits between the title and the meta row: quieter than the title, but
+  // still readable — it is the line that tells you whether to open the row.
+  sessionPreview: { fontSize: 13, color: "#555555", marginTop: 2, marginBottom: 2 },
+  sessionPreviewDark: { color: "#9a9a9a" },
   sessionMetaRow: {
     flexDirection: "row",
     alignItems: "center",
