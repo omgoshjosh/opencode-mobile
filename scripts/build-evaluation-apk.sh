@@ -55,9 +55,18 @@ npm run check:versions
 npm run typecheck
 npm test
 
+# Must match distribute-evaluation.yml. Without it a local build produces
+# `cc.agentlabs.opencode` while CI produces `cc.agentlabs.opencode.eval` —
+# two different packages that install side by side. `adb install` then
+# reports Success while the app you go on to launch is still the CI build,
+# so a local change appears to have silently done nothing. Every symptom of
+# that looks like a bug in the feature rather than in the build.
+EVALUATION_APP_ID_SUFFIX="${EVALUATION_APP_ID_SUFFIX:-.eval}"
+
 cd android
 NODE_ENV=production \
 SENTRY_DISABLE_AUTO_UPLOAD=true \
+EVALUATION_APP_ID_SUFFIX="$EVALUATION_APP_ID_SUFFIX" \
 BUILD_VERSION_CODE="$BUILD_VERSION_CODE" \
 RELEASE_STORE_FILE="$KEYSTORE" \
 RELEASE_STORE_PASSWORD="$PASSWORD" \
@@ -68,4 +77,16 @@ RELEASE_KEY_PASSWORD="$PASSWORD" \
 APK="$ROOT/android/app/build/outputs/apk/release/app-release.apk"
 APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
 "$APKSIGNER" verify --verbose --print-certs "$APK"
-echo "Built $APK (version code $BUILD_VERSION_CODE)"
+
+# Report the package the APK actually declares, not the one this script
+# intended. The two diverging silently is exactly the failure above.
+AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)
+if [[ -n "$AAPT" ]]; then
+  PKG=$("$AAPT" dump badging "$APK" 2>/dev/null | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+  echo "Built $APK"
+  echo "  package:     ${PKG:-unknown}"
+  echo "  versionCode: $BUILD_VERSION_CODE"
+  echo "  install:     adb install -r -d \"$APK\" && adb shell am start -n ${PKG:-<pkg>}/cc.agentlabs.opencode.MainActivity"
+else
+  echo "Built $APK (version code $BUILD_VERSION_CODE)"
+fi
