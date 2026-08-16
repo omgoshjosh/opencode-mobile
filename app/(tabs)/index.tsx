@@ -42,6 +42,7 @@ import { statusCounts, type StatusCount } from "../../src/lib/session-status-cou
 import { modelDisplayLabel } from "../../src/lib/model-label"
 import { SWARM_PROVIDER_ID } from "../../src/lib/swarm-model"
 import { UpdateBanner } from "../../src/components/UpdateBanner"
+import { PulsingDot } from "../../src/components/PulsingDot"
 import { nameOf } from "../../src/lib/path-utils"
 import { SETUP_GUIDE_URL } from "../../src/lib/links"
 
@@ -140,6 +141,14 @@ function SessionItem({
           )}
           {ownStatus !== "idle" && (
             <View style={[styles.statusBadge, ownStatus === "busy" ? styles.statusBadgeBusy : styles.statusBadgeRetry]}>
+              {/* A static badge says what state a session is in but not
+                  whether it is still moving; a stalled run looks identical to
+                  a progressing one across 30 rows. */}
+              <PulsingDot
+                color={ownStatus === "busy" ? "#16a34a" : "#b45309"}
+                size={5}
+                active={ownStatus === "busy"}
+              />
               <Text
                 style={[
                   styles.statusBadgeText,
@@ -1222,7 +1231,15 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   statusBadgeRow: { flexDirection: "row", gap: 4, marginRight: 6 },
-  statusBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: "hidden" },
+  statusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: "hidden",
+  },
   statusBadgeBusy: { backgroundColor: "#dcfce7" },
   statusBadgeRetry: { backgroundColor: "#fef3c7" },
   statusBadgeIdle: { backgroundColor: "#f1f5f9" },
