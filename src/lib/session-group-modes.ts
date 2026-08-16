@@ -10,10 +10,18 @@
 // to read and doubles the state to persist, for little gain.
 //
 // The important consequence: grouping by *swarm root session* IS the nested
-// swarm view — each root's children appear under it — without a tree, recursive
-// rendering, or a second collapse dimension. Nesting becomes a grouping mode.
+// swarm view — each root's whole task graph appears under it — without
+// recursive rendering or a second collapse dimension. Nesting becomes a
+// grouping mode.
 //
-// Dependency-free so it's testable under plain `node --test`.
+// "One level of nesting" refers to the RENDERED depth, not the data: a swarm's
+// descendants are a tree of arbitrary depth, and every one of them groups under
+// the same root header. Reading it as a data constraint is what produced the
+// depth-1 bug this module used to have.
+//
+// Dependency-free apart from the sibling tree helper, so it stays testable
+// under plain `node --test`.
+import { rootIDOf } from "./session-tree.ts"
 
 // Mirrors SWARM_PROVIDER_ID in ./swarm-model. Duplicated deliberately: the
 // pure helpers in this directory avoid runtime imports so they stay testable
@@ -66,7 +74,16 @@ export function dateBucket(updatedMs: number | undefined, nowMs: number): string
 export function groupKey(
   session: GroupableSession,
   mode: GroupMode,
-  context: { nowMs: number; statusOf?: (id: string) => string | undefined },
+  context: {
+    nowMs: number
+    statusOf?: (id: string) => string | undefined
+    /**
+     * All loaded sessions, indexed. Required for "root" mode to resolve a
+     * session's topmost ancestor; omitting it falls back to the old
+     * single-level behaviour rather than throwing.
+     */
+    sessionsByID?: Map<string, { id: string; parentID?: string }>
+  },
 ): string {
   switch (mode) {
     case "directory":
@@ -76,9 +93,12 @@ export function groupKey(
         ? session.model.id
         : UNGROUPED_KEY
     case "root":
-      // A child groups under its parent; a root groups under itself, so a root
-      // and its children land in one bucket. This is the nested swarm view.
-      return session.parentID || session.id
+      // Everything in a tree groups under its topmost ancestor, so a swarm and
+      // its whole task graph land in one bucket. This used to return
+      // `parentID || id`, which is only correct at depth 1: a grandchild
+      // grouped under its parent role and appeared as a separate top-level
+      // group beside the swarm that spawned it. See src/lib/session-tree.ts.
+      return context.sessionsByID ? rootIDOf(session, context.sessionsByID) : session.parentID || session.id
     case "date":
       return dateBucket(session.time?.updated, context.nowMs)
     case "status":

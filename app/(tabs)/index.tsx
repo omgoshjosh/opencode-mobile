@@ -39,6 +39,7 @@ import {
   type GroupMode,
 } from "../../src/lib/session-group-modes"
 import { statusCounts, type StatusCount } from "../../src/lib/session-status-counts"
+import { indexByID } from "../../src/lib/session-tree"
 import { modelDisplayLabel } from "../../src/lib/model-label"
 import { SWARM_PROVIDER_ID } from "../../src/lib/swarm-model"
 import { UpdateBanner } from "../../src/components/UpdateBanner"
@@ -405,10 +406,13 @@ export default function SessionsScreen() {
   const rows = useMemo<ListRow[]>(() => {
     const nowMs = Date.now()
     const statusOf = (id: string) => sessionStatusMap[id]?.type
+    // Needed by "root" mode to walk a session up to its topmost ancestor — a
+    // swarm's subagents are grandchildren, not children. See session-tree.ts.
+    const sessionsByID = indexByID(sessions)
     const buckets = new Map<string, Session[]>()
     const order: string[] = []
     for (const session of sessions) {
-      const key = groupKey(session as never, groupMode, { nowMs, statusOf })
+      const key = groupKey(session as never, groupMode, { nowMs, statusOf, sessionsByID })
       let bucket = buckets.get(key)
       if (!bucket) {
         bucket = []

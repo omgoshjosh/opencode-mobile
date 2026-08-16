@@ -2,6 +2,12 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    // Lets the pure modules in src/lib runtime-import each other. They are run
+    // directly by `node --test`, whose type-stripping needs an explicit
+    // extension; test files already rely on this and are excluded from tsc,
+    // which is why only source files hit TS5097. Metro resolves the literal
+    // path, so the bundler is unaffected.
+    "allowImportingTsExtensions": true,
     "paths": {
       "@/*": ["./src/*"]
     }

@@ -8,6 +8,7 @@
 // global `GET /experimental/session` returns EVERY session across ALL
 // directories. We prefer it, and fall back to the legacy directory path only on
 // 404 (older servers without the experimental route).
+import { descendantsOf } from "./session-tree.ts"
 import type { Session } from "./sdk"
 
 export interface SessionListParams {
@@ -59,12 +60,16 @@ export function normalizeSessions(all: Session[], params?: SessionListParams): S
   const visibleRoots = params.limit != null ? roots.slice(0, params.limit) : roots
   if (!params.includeChildren) return visibleRoots
 
-  // Children of the roots we're showing, so the "Swarm root" grouping mode has
-  // something to nest. Charged against nothing: the limit above already fixed
-  // how many roots are visible.
+  // Descendants of the roots we're showing, so the "Swarm root" grouping mode
+  // has something to nest. Charged against nothing: the limit above already
+  // fixed how many roots are visible.
+  //
+  // This tests the *ancestor*, not the direct parent. A swarm's task graph is
+  // a tree — roles spawn their own subagents — so a direct-parent test dropped
+  // every grandchild, and the deeper the graph went the more of it was
+  // invisible. See src/lib/session-tree.ts.
   const rootIDs = new Set(visibleRoots.map((s) => s.id))
-  const children = out.filter((s) => s.parentID && rootIDs.has(s.parentID))
-  return [...visibleRoots, ...children]
+  return [...visibleRoots, ...descendantsOf(out, rootIDs)]
 }
 
 // Build the query string for the legacy directory-scoped /session fallback,
