@@ -43,8 +43,33 @@ import { modelDisplayLabel } from "../../src/lib/model-label"
 import { SWARM_PROVIDER_ID } from "../../src/lib/swarm-model"
 import { UpdateBanner } from "../../src/components/UpdateBanner"
 import { PulsingDot } from "../../src/components/PulsingDot"
+import {
+  attentionFor,
+  attentionLabel,
+  isActionable,
+  isAttentionWorthShowing,
+  type Attention,
+} from "../../src/lib/session-attention"
 import { nameOf } from "../../src/lib/path-utils"
 import { SETUP_GUIDE_URL } from "../../src/lib/links"
+
+// Badge palette per attention state. "needs you" is the only red — it is the
+// only state where the run is stopped waiting on the user.
+const ATTENTION_BADGE: Record<Attention, object> = {
+  "needs-attention": { backgroundColor: "#fee2e2" },
+  busy: { backgroundColor: "#dcfce7" },
+  retry: { backgroundColor: "#fef3c7" },
+  complete: { backgroundColor: "#dbeafe" },
+  idle: {},
+}
+
+const ATTENTION_TEXT: Record<Attention, object> = {
+  "needs-attention": { color: "#b91c1c", fontWeight: "700" },
+  busy: { color: "#166534" },
+  retry: { color: "#b45309" },
+  complete: { color: "#1d4ed8" },
+  idle: {},
+}
 
 function formatTime(timestamp: number, t: (key: string, opts?: Record<string, unknown>) => string): string {
   const date = new Date(timestamp)
@@ -100,6 +125,18 @@ function SessionItem({
       : null
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
   const preview = useSessions((s) => s.previews[session.id]?.text)
+  // "idle" used to cover three different situations — blocked on you, finished
+  // and unread, and genuinely quiet. See src/lib/session-attention.ts.
+  const pendingPermissions = useEvents((s) => s.permissions[session.id]?.length ?? 0)
+  const pendingQuestions = useEvents((s) => s.questions[session.id]?.length ?? 0)
+  const lastViewedAt = useSessions((s) => s.lastViewed[session.id])
+  const attention = attentionFor({
+    status: ownStatus,
+    pendingPermissions,
+    pendingQuestions,
+    updatedAt: session.time.updated,
+    lastViewedAt,
+  })
 
   return (
     <TouchableOpacity
@@ -139,24 +176,18 @@ function SessionItem({
               </Text>
             </View>
           )}
-          {ownStatus !== "idle" && (
-            <View style={[styles.statusBadge, ownStatus === "busy" ? styles.statusBadgeBusy : styles.statusBadgeRetry]}>
+          {isAttentionWorthShowing(attention) && (
+            <View style={[styles.statusBadge, ATTENTION_BADGE[attention]]}>
+              {/* Icon as well as colour: "needs you" must not depend on hue
+                  alone to be distinguishable. */}
+              {isActionable(attention) && <Ionicons name="hand-left" size={11} color="#b91c1c" />}
               {/* A static badge says what state a session is in but not
                   whether it is still moving; a stalled run looks identical to
                   a progressing one across 30 rows. */}
-              <PulsingDot
-                color={ownStatus === "busy" ? "#16a34a" : "#b45309"}
-                size={5}
-                active={ownStatus === "busy"}
-              />
-              <Text
-                style={[
-                  styles.statusBadgeText,
-                  ownStatus === "busy" ? styles.statusBadgeTextBusy : styles.statusBadgeTextRetry,
-                ]}
-              >
-                {ownStatus}
-              </Text>
+              {(attention === "busy" || attention === "retry") && (
+                <PulsingDot color={attention === "busy" ? "#16a34a" : "#b45309"} size={5} active />
+              )}
+              <Text style={[styles.statusBadgeText, ATTENTION_TEXT[attention]]}>{attentionLabel(attention)}</Text>
             </View>
           )}
           {shortDir && (
@@ -335,6 +366,12 @@ export default function SessionsScreen() {
   const sessionStatusMap = useEvents((s) => s.sessionStatus)
   const transportHealthy = useEvents((s) => isHealthy(s.transport))
   const providersForLabels = useCatalog((c) => c.providers)
+
+  // Read-state drives the complete/idle distinction, so it has to be restored
+  // before the first list render or every row briefly claims to be unread.
+  useEffect(() => {
+    useSessions.getState().loadLastViewed()
+  }, [])
 
   // Persist the choice so the list doesn't reset to Directory on every launch.
   useEffect(() => {

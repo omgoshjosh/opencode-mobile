@@ -11,6 +11,8 @@ import { isColdSessionLoad, isLiveEventForSession } from "../lib/session-load-re
 import { mergeOlderPage, mergeOlderParts, refreshWindowSize } from "../lib/message-page"
 import { canRenderFromCache, dropTranscript, getTranscript, putTranscript, type TranscriptCache } from "../lib/transcript-cache"
 import { dropPreview, previewFromParts, previewText, putPreview, type PreviewMap } from "../lib/session-preview"
+import { markViewed, parseLastViewed, type LastViewedMap } from "../lib/session-attention"
+import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Helper to convert API response to our internal format
 function parseMessages(response: MessageWithParts[]): { messages: Message[]; parts: Record<string, Part[]> } {
@@ -24,6 +26,10 @@ function parseMessages(response: MessageWithParts[]): { messages: Message[]; par
 
   return { messages, parts }
 }
+
+// Holds only session ids and timestamps -- no message text, titles or tool
+// output. See the allowlist in src/lib/persisted-keys.test.ts.
+const LAST_VIEWED_KEY = "session_last_viewed"
 
 function pageSize(): number {
   return useSettings.getState().pageSize
@@ -51,10 +57,15 @@ interface SessionsState {
   // Last line of text seen per session, harvested from the global SSE stream.
   // A label, not a cache — see src/lib/session-preview.ts.
   previews: PreviewMap
+  // sessionID -> when this client last opened it. Turns "session was updated"
+  // into "updated since you looked", which is what separates a finished run
+  // you still need to read from one you're done with.
+  lastViewed: LastViewedMap
   error: string | null
 
   // Actions
   loadSessions: () => Promise<void>
+  loadLastViewed: () => Promise<void>
   selectSession: (sessionID: string, directory?: string) => Promise<void>
   loadOlderMessages: () => Promise<void>
   createSession: (title?: string) => Promise<Session | null>
@@ -114,7 +125,17 @@ export const useSessions = create<SessionsState>((set, get) => ({
   hasMore: false,
   transcriptCache: {},
   previews: {},
+  lastViewed: {},
   error: null,
+
+  loadLastViewed: async () => {
+    try {
+      set({ lastViewed: parseLastViewed(await AsyncStorage.getItem(LAST_VIEWED_KEY)) })
+    } catch {
+      // Read state is a convenience; failing to restore it must not block the
+      // session list from rendering.
+    }
+  },
 
   loadSessions: async () => {
     const connState = useConnections.getState()
@@ -211,7 +232,16 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // without this every row stays blank until traffic happens to arrive.
       const seed = previewFromParts(Object.values(parts).flat())
 
+      // Mark it read. Stamped from the session's own updated time rather than
+      // `Date.now()`: anything the server writes *after* this fetch is content
+      // the user has genuinely not seen, and a wall-clock stamp would mark it
+      // read anyway.
+      const viewedAt = Math.max(session.time?.updated ?? 0, get().lastViewed[sessionID] ?? 0)
+      const nextViewed = markViewed(get().lastViewed, sessionID, viewedAt)
+      AsyncStorage.setItem(LAST_VIEWED_KEY, JSON.stringify(nextViewed)).catch(() => {})
+
       set((state) => ({
+        lastViewed: nextViewed,
         ...(seed ? { previews: putPreview(state.previews, sessionID, seed) } : null),
         currentSession: session,
         messages,

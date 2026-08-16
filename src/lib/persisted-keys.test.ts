@@ -37,6 +37,24 @@ const ALLOWED_PERSISTED_KEYS = new Map<string, string>([
   ["CHATWOOT_SOURCE_KEY", "support contact id issued by Chatwoot"],
 ])
 
+/**
+ * The same rule for AsyncStorage.
+ *
+ * This half was missing: the scan below only ever looked at SecureStore, so
+ * every AsyncStorage write — the larger and less guarded of the two APIs —
+ * went unreviewed. Anything cached there is exactly as replayable into next
+ * launch's context as a SecureStore value, so it needs the same enumeration.
+ */
+const ALLOWED_ASYNC_KEYS = new Map<string, string>([
+  ["GROUP_MODE_KEY", "sessions list: chosen group-by mode"],
+  ["DISMISSED_KEY", "update banner: version the user dismissed"],
+  ["LAST_VIEWED_KEY", "sessionID -> last-opened timestamp; ids and numbers only, no content"],
+  // These two write through a variable rather than a literal, so the key is
+  // named at the call site's own constant. Listed by the variable name their
+  // helpers use; both hold queued user-submitted form data, not model output.
+  ["key", "update-check / waitlist-queue: caller-supplied key, user data only"],
+])
+
 const SRC = path.join(import.meta.dirname, "..")
 
 function sourceFiles(dir: string): string[] {
@@ -68,6 +86,26 @@ test("every on-device write uses a reviewed key, never model-generated content",
     `New persistent write(s) found. If the value is user config, add the key to ALLOWED_PERSISTED_KEYS ` +
       `with a note. If it is model or tool output, don't persist it — it comes back as context next launch:\n` +
       unknown.join("\n"),
+  )
+})
+
+test("every AsyncStorage write uses a reviewed key too", () => {
+  const unknown: string[] = []
+
+  for (const file of sourceFiles(SRC)) {
+    const code = fs.readFileSync(file, "utf8")
+    for (const match of code.matchAll(/AsyncStorage\.setItem\(\s*([^,]+?)\s*,/g)) {
+      const key = match[1].trim()
+      if (!ALLOWED_ASYNC_KEYS.has(key)) unknown.push(`${path.relative(SRC, file)}: ${key}`)
+    }
+  }
+
+  assert.deepEqual(
+    unknown,
+    [],
+    `New AsyncStorage write(s) found. Same rule as SecureStore: user config, consent flags and ` +
+      `counters are fine; message text, titles and tool output are not — they come back as context ` +
+      `next launch:\n` + unknown.join("\n"),
   )
 })
 
