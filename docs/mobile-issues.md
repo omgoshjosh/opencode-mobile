@@ -16,11 +16,19 @@ Devices:
 Tracked here so they stay visible. Work continues around them; none of these
 stop other progress.
 
+**Scope boundary (2026‑08‑15):** OpencodeX itself — server, GUI, TUI — is out of
+scope for this agent. Anything needed there gets handed to the server agent's
+queue as a paste block, not implemented here. See B‑3.
+
 | # | Blocker | Why it needs you | Cost if left |
 |---|---|---|---|
-| B‑2 | **Actions cannot create PRs** | Repo setting: Settings → Actions → General → Workflow permissions → "Allow GitHub Actions to create and approve pull requests". | Daily sync pushes the branch but can't open the PR. Now warns instead of failing. |
-| B‑3 | **M‑9: swarm drops image attachments** | Server-side fix in OpencodeX (`prompt-swarm.ts` + `claude-driver.ts`), a different repo. Needs your go-ahead on scope. | Images silently never reach a Claude-orchestrated swarm. Workaround: switch off the swarm model, or ask and the image can be read from the DB. |
-| B‑4 | **Upstream PR #182 review** | Not actionable by us — waiting on the maintainer. | Three Android fixes unmerged upstream. Ours already carry them. |
+| B‑3 | **M‑9: swarm drops image attachments** | Server-side. PR #16 to `ecgreen/OpencodeX` already exists but was written *before* the scope boundary above — it needs to be adopted by the server agent or closed. | Images silently never reach a Claude-orchestrated swarm. Workaround: switch off the swarm model. |
+| B‑4 | **Upstream PR #182 review** | Not actionable by us — waiting on the maintainer. | Five Android fixes unmerged upstream. Ours already carry them. |
+| B‑5 | **#186: Wi‑Fi↔cellular handover untested** | Needs the Pixel 3 XL off Wi‑Fi on real cellular, mid-session. Emulator airplane-mode toggle can't reproduce a true half-open interface migration. | The 35s liveness timeout is validated against a hard drop, not a genuine handover. |
+
+**Cleared:** B‑1 (Firebase app-id suffix), B‑2 (Actions PR permission — verified
+`default_workflow_permissions: write` on 2026‑08‑15; the PR-creation path itself
+stays unexercised until upstream next moves).
 
 ---
 
