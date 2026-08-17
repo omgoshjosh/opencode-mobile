@@ -23,7 +23,7 @@ function SwarmRow({ swarm, isDark, onDelete }: { swarm: Swarm; isDark: boolean; 
   return (
     <TouchableOpacity
       style={[s.row, isDark && s.rowDark]}
-      onPress={() => router.push({ pathname: "/swarms/[id]", params: { id: swarm.id } })}
+      onPress={() => router.push({ pathname: "/swarms/home/[id]", params: { id: swarm.id } })}
       onLongPress={onDelete}
       testID={`swarm-${swarm.id}`}
     >

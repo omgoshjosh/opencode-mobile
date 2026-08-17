@@ -6,6 +6,8 @@ import { router } from "expo-router"
 import type { Part } from "../../lib/sdk"
 import { DiffView } from "./DiffView"
 import { isSubagentOpenable, subagentBadge, subagentLinkFrom } from "../../lib/subagent-link"
+import { toolCallTitle } from "../../lib/tool-titles"
+import { useViewer } from "../../stores/viewer"
 import { useSessions } from "../../stores/sessions"
 
 const TOOL_ICONS: Record<string, string> = {
@@ -339,6 +341,20 @@ function ToolDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
   }
 }
 
+function openFullOutput(tool: Part) {
+  const input = tool.state?.input
+  const inputText =
+    typeof input === "object" && input !== null && typeof (input as Record<string, unknown>).command === "string"
+      ? ((input as Record<string, unknown>).command as string)
+      : null
+  useViewer.getState().showToolOutput({
+    title: toolCallTitle(tool),
+    input: inputText,
+    output: typeof tool.state?.output === "string" ? tool.state.output : JSON.stringify(tool.state?.output, null, 2),
+  })
+  router.push("/tool-output")
+}
+
 // --- Error display ---
 function ErrorBanner({ message, isDark }: { message: string; isDark: boolean }) {
   return (
@@ -394,8 +410,10 @@ export function ToolCallCard({ tool, isDark }: Props) {
       <View style={s.header}>
         <View style={s.headerLeft}>
           <Ionicons name={icon as any} size={16} color={color} />
+          {/* What the call is FOR, not just which tool ran — "git status
+              --porcelain" instead of a thirteenth card reading "bash". */}
           <Text style={[s.name, isDark && s.nameDark]} numberOfLines={1}>
-            {tool.state?.title || tool.tool || t("chat.toolCallCard.fallbackTitle")}
+            {toolCallTitle(tool) || t("chat.toolCallCard.fallbackTitle")}
           </Text>
           {elapsed && <Text style={[s.elapsed, isDark && s.elapsedDark]}>{elapsed}</Text>}
         </View>
@@ -421,6 +439,15 @@ export function ToolCallCard({ tool, isDark }: Props) {
         <ScrollView style={s.detailScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
           {error && <ErrorBanner message={error} isDark={isDark} />}
           <ToolDetail tool={tool} isDark={isDark} />
+          {/* Long output in a nested scroll-inside-scroll card is miserable
+              to read; push it to a full screen with selectable mono text and
+              extracted links instead. */}
+          {typeof tool.state?.output === "string" && tool.state.output.length > 280 && (
+            <TouchableOpacity style={s.openOutput} onPress={() => openFullOutput(tool)} testID="open-full-output">
+              <Ionicons name="expand-outline" size={13} color="#6d28d9" />
+              <Text style={s.openOutputText}>Open full output</Text>
+            </TouchableOpacity>
+          )}
         </ScrollView>
       )}
     </TouchableOpacity>
@@ -479,6 +506,17 @@ const s = StyleSheet.create({
     overflow: "hidden",
   },
   detailFileDark: { color: "#a78bfa", backgroundColor: "#1a1a2e" },
+  openOutput: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 8,
+    marginTop: 4,
+    borderRadius: 6,
+    backgroundColor: "#f5f3ff",
+  },
+  openOutputText: { fontSize: 12, fontWeight: "600", color: "#6d28d9" },
   detailMeta: { fontSize: 12, color: "#666666", lineHeight: 18 },
   detailMetaDark: { color: "#888888" },
   // Subagent entry point. Purple matches the swarm accent used on session

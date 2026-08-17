@@ -202,6 +202,10 @@ function RootLayout() {
                 }}
               />
               <Stack.Screen name="swarms/index" options={{ title: "Swarms", presentation: "card" }} />
+              <Stack.Screen name="tool-run/[messageID]" options={{ title: "Tool calls", presentation: "card" }} />
+              <Stack.Screen name="tool-output" options={{ title: "Tool output", presentation: "card" }} />
+              <Stack.Screen name="session-hub/[id]" options={{ title: "Session", presentation: "card" }} />
+              <Stack.Screen name="swarms/home/[id]" options={{ title: "Swarm", presentation: "card" }} />
               <Stack.Screen name="swarms/[id]" options={{ title: "Swarm", presentation: "card" }} />
               <Stack.Screen
                 name="connection/add"

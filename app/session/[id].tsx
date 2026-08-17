@@ -702,12 +702,15 @@ export default function SessionScreen() {
                   <Text style={[s.dirText, isDark && s.dirTextDark]}>{shortDir}</Text>
                 </View>
               )}
-              <TouchableOpacity onPress={() => setShowInfo((v) => !v)} hitSlop={8}>
-                <Ionicons
-                  name={showInfo ? "stats-chart" : "stats-chart-outline"}
-                  size={20}
-                  color={showInfo ? "#3b82f6" : isDark ? "#888888" : "#666666"}
-                />
+              {/* The stats overlay grew into a screen: cost, tokens, models
+                  and the subagent tree live in the hub now, one tap deeper
+                  instead of floating over the transcript. */}
+              <TouchableOpacity
+                onPress={() => currentSession && router.push({ pathname: "/session-hub/[id]", params: { id: currentSession.id } })}
+                hitSlop={8}
+                testID="open-session-hub"
+              >
+                <Ionicons name="information-circle-outline" size={22} color={isDark ? "#888888" : "#666666"} />
               </TouchableOpacity>
             </View>
           ),

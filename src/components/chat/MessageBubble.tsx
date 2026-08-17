@@ -6,6 +6,8 @@ import { ToolCallCard } from "./ToolCallCard"
 import { ReasoningBlock } from "./ReasoningBlock"
 import { SelectableTextModal } from "./SelectableTextModal"
 import { splitSwarmBriefing } from "../../lib/swarm-briefing"
+import { router } from "expo-router"
+import { shouldCollapseToolRun, summarizeToolRun } from "../../lib/tool-titles"
 import type { Message, Part } from "../../lib/sdk"
 import { useCatalog } from "../../stores/catalog"
 import { modelDisplayLabel } from "../../lib/model-label"
@@ -157,10 +159,43 @@ export const MessageBubble = memo(
           <SelectableTextModal visible={showBriefing} text={briefing} onClose={() => setShowBriefing(false)} />
         )}
 
-        {/* Tool calls */}
-        {toolParts.map((tool) => (
-          <ToolCallCard key={tool.id} tool={tool} isDark={isDark} />
-        ))}
+        {/* Tool calls. A long run collapses to one row that pushes its own
+            screen — thirteen consecutive cards is a wall, not a transcript.
+            Short runs stay inline, one tap cheaper. */}
+        {shouldCollapseToolRun(toolParts.length) ? (
+          (() => {
+            const run = summarizeToolRun(toolParts)
+            return (
+              <TouchableOpacity
+                style={[s.toolRunRow, isDark && s.toolRunRowDark]}
+                onPress={() => router.push({ pathname: "/tool-run/[messageID]", params: { messageID: message.id } })}
+                activeOpacity={0.7}
+                testID={`tool-run-${message.id}`}
+              >
+                <Ionicons
+                  name={run.failed ? "alert-circle" : run.running ? "sync-outline" : "construct-outline"}
+                  size={15}
+                  color={run.failed ? "#ef4444" : run.running ? "#f59e0b" : "#8b5cf6"}
+                />
+                <View style={s.toolRunText}>
+                  <Text style={[s.toolRunTitle, isDark && s.textWhite]}>
+                    {run.count} tool calls
+                    {run.failed ? ` · ${run.failed} failed` : ""}
+                    {run.running ? ` · ${run.running} running` : ""}
+                  </Text>
+                  {run.preview.length > 0 && (
+                    <Text style={[s.toolRunPreview, isDark && s.toolRunPreviewDark]} numberOfLines={1}>
+                      {run.preview.join(" · ")}…
+                    </Text>
+                  )}
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={isDark ? "#666666" : "#999999"} />
+              </TouchableOpacity>
+            )
+          })()
+        ) : (
+          toolParts.map((tool) => <ToolCallCard key={tool.id} tool={tool} isDark={isDark} />)
+        )}
 
         {/* Tokens/cost for assistant messages */}
         {!isUser && message.tokens && (
@@ -191,6 +226,23 @@ export const MessageBubble = memo(
 )
 
 const s = StyleSheet.create({
+  toolRunRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#faf9ff",
+    borderWidth: 1,
+    borderColor: "#e9e5f8",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 6,
+  },
+  toolRunRowDark: { backgroundColor: "#151321", borderColor: "#2a2440" },
+  toolRunText: { flex: 1, gap: 1 },
+  toolRunTitle: { fontSize: 13, fontWeight: "600", color: "#0a0a0a" },
+  toolRunPreview: { fontSize: 11, color: "#888888" },
+  toolRunPreviewDark: { color: "#777777" },
   briefingChip: {
     flexDirection: "row",
     alignItems: "center",
