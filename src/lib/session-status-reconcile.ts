@@ -29,3 +29,28 @@ export function isSessionActuallyIdle(messages: Message[] | null | undefined): b
   if (last.role !== "assistant") return false
   return Boolean(last.time?.completed) || Boolean(last.error)
 }
+
+/**
+ * The inverse inference: does the message tail say a run is in progress?
+ *
+ * Why (the missing stop button): `sessionStatus` is populated ONLY by live
+ * SSE `session.status` events. A run started before this client connected —
+ * from the TUI, the CLI, or while the app was backgrounded (Android drops
+ * the stream) — never delivers its "busy" event here, so the session shows
+ * no stop control while the TUI happily offers esc-esc. The status the
+ * server would have sent is recoverable from the fetched transcript: a
+ * trailing user prompt with no reply, or an assistant message that never
+ * terminated, is a run the server considers in progress.
+ *
+ * Deliberately NOT `!isSessionActuallyIdle`: that helper returns false for
+ * an empty transcript ("may be busy" — correct for its only-ever-clear
+ * caller), but seeding busy for a brand-new empty session would invent a
+ * run that never existed. This one requires positive evidence.
+ */
+export function inferBusyFromMessages(messages: Message[] | null | undefined): boolean {
+  if (!messages || messages.length === 0) return false
+  const last = messages[messages.length - 1]
+  if (last.role === "user") return true
+  if (last.role === "assistant") return !last.time?.completed && !last.error
+  return false
+}

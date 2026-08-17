@@ -13,7 +13,8 @@
       "security": "Security",
       "notifications": "Notifications",
       "privacy": "Privacy",
-      "about": "About"
+      "about": "About",
+      "experiments": "Experiments"
     },
     "security": {
       "biometricOpen": {
@@ -77,6 +78,12 @@
       "privacyNotSavedMessage": "Crash reporting is off for this session, but your choice could not be saved. Please try again.",
       "notificationsDisabledTitle": "Notifications Disabled",
       "notificationsDisabledMessage": "Enable notifications for OpenCode in your device settings to receive alerts."
+    },
+    "experiments": {
+      "sessionsListV2": {
+        "label": "New sessions list",
+        "description": "Triage-first redesign: status dot, no chips. Switch back anytime."
+      }
     }
   },
   "session": {

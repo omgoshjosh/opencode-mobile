@@ -41,6 +41,7 @@ import { modelDisplayLabel } from "../../src/lib/model-label"
 import { shouldAutoScroll, shouldShowScrollButton, transcriptSignature } from "../../src/lib/auto-scroll"
 import { breadcrumbFor } from "../../src/lib/session-breadcrumb"
 import { ABORT_CONFIRM_WINDOW_MS, DISARMED, abortLabel, isAbortable, isArmed, pressAbort } from "../../src/lib/abort-control"
+import { inferBusyFromMessages } from "../../src/lib/session-status-reconcile"
 import { useSessions } from "../../src/stores/sessions"
 import { useEvents, refreshPending } from "../../src/stores/events"
 import { useConnections } from "../../src/stores/connections"
@@ -120,6 +121,22 @@ export default function SessionScreen() {
   // another device, or before an app restart.
   const serverStatus = useEvents((s) => (currentSession ? s.sessionStatus[currentSession.id]?.type : undefined))
   const canStop = isAbortable({ status: serverStatus, sending: isSending })
+
+  // Seed busy state for runs this client never saw start. sessionStatus is
+  // SSE-only: a run started from the TUI/CLI, or before the app (re)connected,
+  // never delivered its "busy" event here — so a session visibly hung on a
+  // tool call offered no stop button while the TUI offered esc-esc. The
+  // fetched transcript carries the evidence (see inferBusyFromMessages).
+  // Only fills a VOID (undefined status): a value the SSE stream actually
+  // sent is authoritative and is never overridden by inference.
+  useEffect(() => {
+    if (!currentSession || serverStatus !== undefined) return
+    if (!inferBusyFromMessages(messages)) return
+    const id = currentSession.id
+    useEvents.setState((state) => ({
+      sessionStatus: { ...state.sessionStatus, [id]: { type: "busy" } },
+    }))
+  }, [currentSession, serverStatus, messages])
   const [stopArm, setStopArm] = useState(DISARMED)
   const stopArmed = isArmed(stopArm, Date.now())
 

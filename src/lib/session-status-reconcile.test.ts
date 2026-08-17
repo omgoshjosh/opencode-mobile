@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { isSessionActuallyIdle } from "./session-status-reconcile.ts"
+import { inferBusyFromMessages, isSessionActuallyIdle } from "./session-status-reconcile.ts"
 import type { Message } from "./sdk.ts"
 
 const userMsg = (id: string, overrides: Partial<Message> = {}): Message => ({
@@ -54,4 +54,34 @@ test("a follow-up user prompt after a completed assistant reply -> still busy ag
     userMsg("u2"),
   ]
   assert.equal(isSessionActuallyIdle(messages), false)
+})
+
+// --- inferBusyFromMessages (the missing stop button) ---
+
+test("a hung tool run infers busy: assistant message never terminated", () => {
+  assert.equal(
+    inferBusyFromMessages([{ role: "assistant", time: { created: 1 } } as never]),
+    true,
+  )
+})
+
+test("a trailing user prompt with no reply infers busy", () => {
+  assert.equal(inferBusyFromMessages([{ role: "user" } as never]), true)
+})
+
+test("a completed or errored assistant tail infers not busy", () => {
+  assert.equal(
+    inferBusyFromMessages([{ role: "assistant", time: { created: 1, completed: 2 } } as never]),
+    false,
+  )
+  assert.equal(
+    inferBusyFromMessages([{ role: "assistant", error: { name: "x" } } as never]),
+    false,
+  )
+})
+
+test("an empty transcript never invents a run", () => {
+  assert.equal(inferBusyFromMessages([]), false)
+  assert.equal(inferBusyFromMessages(null), false)
+  assert.equal(inferBusyFromMessages(undefined), false)
 })

@@ -67,6 +67,8 @@ import {
   isAttentionWorthShowing,
   type Attention,
 } from "../../src/lib/session-attention"
+import { rowSubtitle, triageDot } from "../../src/lib/session-triage"
+import { useSettings } from "../../src/stores/settings"
 import { nameOf } from "../../src/lib/path-utils"
 import { SETUP_GUIDE_URL } from "../../src/lib/links"
 
@@ -224,6 +226,92 @@ function SessionItem({
   )
 }
 
+// --- Sessions list V2 (experiment, Settings > Experiments) ---
+//
+// Triage-first two-line row: a status dot leads, the title flexes, the
+// timestamp never truncates, and the swarm/preview get a full line instead
+// of chips fighting for width. See src/lib/session-triage.ts for the
+// vocabulary and the list-redesign review for the rationale.
+function SessionRowV2({
+  session,
+  isDark,
+  onRename,
+  onDelete,
+}: {
+  session: Session
+  isDark: boolean
+  onRename: () => void
+  onDelete: () => void
+}) {
+  const { t } = useTranslation()
+  const providers = useCatalog((c) => c.providers)
+  const preview = useSessions((s) => s.previews[session.id]?.text)
+  const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
+  const pendingPermissions = useEvents((s) => s.permissions[session.id]?.length ?? 0)
+  const pendingQuestions = useEvents((s) => s.questions[session.id]?.length ?? 0)
+  const lastViewedAt = useSessions((s) => s.lastViewed[session.id])
+
+  const attention = attentionFor({
+    status: ownStatus,
+    pendingPermissions,
+    pendingQuestions,
+    updatedAt: session.time.updated,
+    lastViewedAt,
+  })
+  const dot = triageDot(attention)
+
+  const swarmLabel =
+    session.model?.providerID === SWARM_PROVIDER_ID
+      ? modelDisplayLabel(providers, { providerID: session.model.providerID, modelID: session.model.id })
+      : null
+  const subtitle = rowSubtitle(swarmLabel, preview)
+
+  return (
+    <TouchableOpacity
+      style={[styles.rowV2, isDark && styles.rowV2Dark]}
+      onPress={() =>
+        router.push({
+          pathname: `/session/[id]`,
+          params: { id: session.id, ...(session.directory ? { directory: session.directory } : {}) },
+        })
+      }
+      onLongPress={() =>
+        Alert.alert(session.title || t("sessionsList.untitledSession"), undefined, [
+          { text: t("common.cancel"), style: "cancel" },
+          { text: t("sessionsList.actions.rename"), onPress: onRename },
+          { text: t("common.delete"), style: "destructive", onPress: onDelete },
+        ])
+      }
+      testID={`session-item-${session.id}`}
+    >
+      <View style={styles.rowV2Line}>
+        {dot.pulse ? (
+          <PulsingDot color={dot.color} size={8} active />
+        ) : (
+          <View
+            style={[
+              styles.rowV2Dot,
+              dot.hollow
+                ? { borderWidth: 1.5, borderColor: dot.color, backgroundColor: "transparent" }
+                : { backgroundColor: dot.color },
+            ]}
+          />
+        )}
+        <Text style={[styles.rowV2Title, isDark && styles.textDark]} numberOfLines={1}>
+          {session.title || t("sessionsList.untitledSession")}
+        </Text>
+        {dot.label && <Text style={[styles.rowV2StateLabel, { color: dot.color }]}>{dot.label}</Text>}
+        <Text style={[styles.rowV2Time, isDark && styles.metaDark]}>{formatTime(session.time.updated, t)}</Text>
+      </View>
+      {subtitle && (
+        <Text style={[styles.rowV2Subtitle, isDark && styles.rowV2SubtitleDark]} numberOfLines={1}>
+          {subtitle}
+        </Text>
+      )}
+    </TouchableOpacity>
+  )
+}
+
 // Deduped status counts for a group, e.g. "3 busy · 1 retry". Statuses with no
 // members are omitted entirely rather than rendered as "0 idle" — see
 // src/lib/session-status-counts.ts.
@@ -343,6 +431,8 @@ export default function SessionsScreen() {
   const colorScheme = useColorScheme()
   const isDark = colorScheme === "dark"
   const { t } = useTranslation()
+  // Experiment flag: triage-first list (Settings > Experiments).
+  const listV2 = useSettings((s) => s.sessionsListV2)
   const [showNewSession, setShowNewSession] = useState(false)
   const [customDir, setCustomDir] = useState("")
   const [isCreating, setIsCreating] = useState(false)
@@ -500,15 +590,20 @@ export default function SessionsScreen() {
     for (const key of sorted) {
       const items = buckets.get(key) as Session[]
       const collapsed = collapsedDirs.has(key)
-      out.push({
-        type: "header",
-        directory: key,
-        shortName: groupLabel(key, groupMode, items, providersForLabels),
-        count: items.length,
-        collapsed,
-        sessionIDs: items.map((item) => item.id),
-      })
-      if (!collapsed) for (const session of items) out.push({ type: "session", session })
+      // V2: a header over exactly one session repeats the name the row is
+      // about to show — the duplicated pairs that dominated the screenshot
+      // review. Headers only earn their row when they actually group.
+      if (!(listV2 && items.length === 1)) {
+        out.push({
+          type: "header",
+          directory: key,
+          shortName: groupLabel(key, groupMode, items, providersForLabels),
+          count: items.length,
+          collapsed,
+          sessionIDs: items.map((item) => item.id),
+        })
+      }
+      if (!collapsed || (listV2 && items.length === 1)) for (const session of items) out.push({ type: "session", session })
     }
     return out
   }, [
@@ -521,6 +616,7 @@ export default function SessionsScreen() {
     permissionsMap,
     questionsMap,
     lastViewedMap,
+    listV2,
   ])
 
   // Fetch server-known projects when the new session modal opens
@@ -1028,6 +1124,13 @@ export default function SessionsScreen() {
         renderItem={({ item: row }) =>
           row.type === "header" ? (
             <GroupHeader row={row} isDark={isDark} onToggle={() => toggleGroup(row.directory)} />
+          ) : listV2 ? (
+            <SessionRowV2
+              session={row.session}
+              isDark={isDark}
+              onRename={() => handleRename(row.session)}
+              onDelete={() => handleDelete(row.session)}
+            />
           ) : (
             <SessionItem
               session={row.session}
@@ -1456,6 +1559,26 @@ const styles = StyleSheet.create({
   sessionItemDark: {
     borderBottomColor: "#1a1a1a",
   },
+
+  // --- V2 experiment row ---
+  rowV2: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e5e5e5",
+    gap: 3,
+  },
+  rowV2Dark: { borderBottomColor: "#1f1f1f" },
+  rowV2Line: { flexDirection: "row", alignItems: "center", gap: 8 },
+  rowV2Dot: { width: 8, height: 8, borderRadius: 4 },
+  rowV2Title: { flex: 1, fontSize: 15, fontWeight: "600", color: "#0a0a0a" },
+  // The timestamp never truncates — it was the first casualty of the chip
+  // pileup in the classic row.
+  rowV2Time: { fontSize: 12, color: "#999999", flexShrink: 0 },
+  rowV2StateLabel: { fontSize: 12, fontWeight: "700", flexShrink: 0 },
+  // Indented past the dot so title and subtitle align.
+  rowV2Subtitle: { fontSize: 12, color: "#888888", marginLeft: 16 },
+  rowV2SubtitleDark: { color: "#9a9a9a" },
   sessionContent: {
     flex: 1,
   },
@@ -1561,10 +1684,15 @@ const styles = StyleSheet.create({
   filterChipTextOn: { color: "#6d28d9", fontWeight: "700" },
   sessionPreview: { fontSize: 13, color: "#555555", marginTop: 2, marginBottom: 2 },
   sessionPreviewDark: { color: "#9a9a9a" },
+  // flexWrap is the no-redesign fix for the chip pileup: when the swarm chip
+  // + status + directory can't fit beside the timestamp, they wrap to their
+  // own line instead of colliding with it (the circled screenshot bug).
   sessionMetaRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    flexWrap: "wrap",
+    rowGap: 4,
   },
   statusBadgeRow: { flexDirection: "row", gap: 4, marginRight: 6 },
   statusBadge: {
@@ -1595,7 +1723,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     maxWidth: 160,
   },
-  sessionSwarmText: { fontSize: 11, color: "#6d28d9", fontWeight: "600" },
+  sessionSwarmText: { fontSize: 11, color: "#6d28d9", fontWeight: "600", flexShrink: 1 },
 
   sessionDirBadge: {
     flexDirection: "row",

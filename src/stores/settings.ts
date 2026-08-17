@@ -14,6 +14,8 @@ interface Settings {
   notifications: Record<Category, boolean>
   locale: LocalePreference
   theme: ThemePreference
+  /** Experiment: triage-first sessions list. Off = the classic list. */
+  sessionsListV2: boolean
 }
 
 const DEFAULTS: Settings = {
@@ -21,6 +23,7 @@ const DEFAULTS: Settings = {
   notifications: { ...defaultPreferences },
   locale: "system",
   theme: "system",
+  sessionsListV2: false,
 }
 
 interface SettingsState extends Settings {
@@ -30,6 +33,7 @@ interface SettingsState extends Settings {
   setNotification: (category: Category, enabled: boolean) => Promise<void>
   setLocale: (locale: LocalePreference) => Promise<void>
   setTheme: (theme: ThemePreference) => Promise<void>
+  setSessionsListV2: (enabled: boolean) => Promise<void>
 }
 
 function snapshot(get: () => SettingsState): Settings {
@@ -38,6 +42,7 @@ function snapshot(get: () => SettingsState): Settings {
     notifications: get().notifications,
     locale: get().locale,
     theme: get().theme,
+    sessionsListV2: get().sessionsListV2,
   }
 }
 
@@ -90,5 +95,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
     set({ theme })
     applyTheme(theme) // applies immediately
     await persist({ ...snapshot(get), theme })
+  },
+
+  setSessionsListV2: async (sessionsListV2) => {
+    set({ sessionsListV2 })
+    await persist({ ...snapshot(get), sessionsListV2 })
   },
 }))

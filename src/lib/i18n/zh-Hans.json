@@ -13,7 +13,8 @@
       "security": "安全",
       "notifications": "通知",
       "privacy": "隐私",
-      "about": "关于"
+      "about": "关于",
+      "experiments": "实验功能"
     },
     "security": {
       "biometricOpen": {
@@ -77,6 +78,12 @@
       "privacyNotSavedMessage": "本次会话已关闭崩溃报告，但您的选择未能保存。请重试。",
       "notificationsDisabledTitle": "通知已关闭",
       "notificationsDisabledMessage": "请在设备设置中为 OpenCode 启用通知以接收提醒。"
+    },
+    "experiments": {
+      "sessionsListV2": {
+        "label": "新版会话列表",
+        "description": "以分诊为先的重新设计：状态圆点，无标签块。可随时切回。"
+      }
     }
   },
   "session": {

@@ -90,7 +90,8 @@ export default function SettingsScreen() {
   const { t } = useTranslation()
 
   const { settings, hasBiometrics, updateSettings, lock } = useAuth()
-  const { notifications, setNotification, locale, setLocale, theme, setTheme } = useSettings()
+  const { notifications, setNotification, locale, setLocale, theme, setTheme, sessionsListV2, setSessionsListV2 } =
+    useSettings()
   const [osGranted, setOsGranted] = useState<boolean | null>(null)
   const [telemetryUpdating, setTelemetryUpdating] = useState(false)
 
@@ -296,6 +297,25 @@ export default function SettingsScreen() {
           isDark={isDark}
           onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
           right={<Ionicons name="open-outline" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
+        />
+      </SettingSection>
+
+      {/* Experiments: redesigns you can try and back out of with one switch.
+          Nothing here migrates data — off always restores the classic UI. */}
+      <SettingSection title={t("settings.sections.experiments")} isDark={isDark}>
+        <SettingRow
+          icon="flask"
+          label={t("settings.experiments.sessionsListV2.label")}
+          description={t("settings.experiments.sessionsListV2.description")}
+          isDark={isDark}
+          right={
+            <Switch
+              value={sessionsListV2}
+              onValueChange={setSessionsListV2}
+              trackColor={{ false: "#767577", true: "#22c55e" }}
+              testID="toggle-sessions-list-v2"
+            />
+          }
         />
       </SettingSection>
 
