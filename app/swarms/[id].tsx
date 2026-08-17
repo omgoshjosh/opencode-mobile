@@ -18,6 +18,8 @@ import { Ionicons } from "@expo/vector-icons"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useSwarms } from "../../src/stores/swarms"
 import { useCatalog } from "../../src/stores/catalog"
+import { modelDisplayLabel } from "../../src/lib/model-label"
+import { SWARM_PROVIDER_ID } from "../../src/lib/swarm-model"
 import { ModelPicker } from "../../src/components/chat"
 import { keyboardVerticalOffset } from "../../src/lib/keyboard-offset"
 import {
@@ -39,7 +41,15 @@ export default function SwarmEditorScreen() {
   const insets = useSafeAreaInsets()
 
   const { swarms, skills, isSaving, error, save, loadSkills, clearError } = useSwarms()
-  const providers = useCatalog((c) => c.providers)
+  const allProviders = useCatalog((c) => c.providers)
+  // A role runs on a real model. Offering the synthetic `swarm` provider in
+  // the PICKER would let a swarm be chosen as a role inside a swarm —
+  // recursive, and the orchestrator route would resolve to another facade
+  // rather than a model.
+  const pickableProviders = useMemo(
+    () => (allProviders ?? []).filter((p) => p.id !== SWARM_PROVIDER_ID),
+    [allProviders],
+  )
   const existing = useMemo(() => swarms.find((s) => s.id === id), [swarms, id])
 
   const [title, setTitle] = useState("")
@@ -194,7 +204,12 @@ export default function SwarmEditorScreen() {
               >
                 <Ionicons name="hardware-chip-outline" size={14} color={role.modelID ? "#6d28d9" : "#b45309"} />
                 <Text style={[s.modelBtnText, !role.modelID && s.modelBtnTextEmpty]} numberOfLines={1}>
-                  {role.modelID ?? "Pick a model"}
+                  {role.modelID
+                    // Labels resolve against the FULL catalog: a role already
+                    // pointed at a swarm by another client still deserves its
+                    // name rather than a raw swm_ handle.
+                    ? modelDisplayLabel(allProviders, { providerID: role.providerID ?? "", modelID: role.modelID })
+                    : "Pick a model"}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -255,7 +270,7 @@ export default function SwarmEditorScreen() {
           chosen exactly the way a session's is. */}
       <ModelPicker
         sheetRef={modelSheetRef}
-        providers={providers}
+        providers={pickableProviders}
         selected={
           modelForIndex !== null && roles[modelForIndex]?.providerID && roles[modelForIndex]?.modelID
             ? { providerID: roles[modelForIndex].providerID!, modelID: roles[modelForIndex].modelID! }
