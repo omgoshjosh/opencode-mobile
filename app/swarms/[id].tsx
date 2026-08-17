@@ -109,7 +109,10 @@ export default function SwarmEditorScreen() {
         behavior="padding"
         keyboardVerticalOffset={keyboardVerticalOffset(Platform.OS, insets.top)}
       >
-        <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={[s.content, { paddingBottom: insets.bottom + 48 }]}
+          keyboardShouldPersistTaps="handled"
+        >
           {error && (
             <TouchableOpacity style={s.errorBar} onPress={clearError}>
               <Text style={s.errorText}>{error}</Text>
@@ -213,7 +216,11 @@ export default function SwarmEditorScreen() {
       {/* Skill picker */}
       <Modal visible={showSkills} transparent animationType="fade" onRequestClose={() => setShowSkills(false)}>
         <TouchableOpacity style={s.backdrop} activeOpacity={1} onPress={() => setShowSkills(false)}>
-          <View style={[s.sheet, isDark && s.sheetDark]}>
+          {/* Bottom inset applied here, not in the stylesheet: without it the
+              last row renders underneath the system navigation bar, clipped
+              mid-sentence. */}
+          <View style={[s.sheet, isDark && s.sheetDark, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={s.sheetGrabber} />
             <Text style={[s.sheetTitle, isDark && s.textDark]}>Add a role from a skill</Text>
             <ScrollView style={s.sheetScroll}>
               {available.length === 0 && (
@@ -264,7 +271,7 @@ export default function SwarmEditorScreen() {
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#ffffff" },
   containerDark: { backgroundColor: "#0a0a0a" },
-  content: { padding: 16, paddingBottom: 48, gap: 8 },
+  content: { padding: 16, gap: 8 },
   label: { fontSize: 11, fontWeight: "700", color: "#888888", letterSpacing: 0.5 },
   labelDark: { color: "#777777" },
   textDark: { color: "#ffffff" },
@@ -345,11 +352,28 @@ const s = StyleSheet.create({
   errorBar: { backgroundColor: "#fee2e2", padding: 10, borderRadius: 8 },
   errorText: { color: "#b91c1c", fontSize: 13 },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
-  sheet: { backgroundColor: "#ffffff", borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: "70%" },
+  sheet: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    maxHeight: "75%",
+  },
+  // A sheet that slides from the bottom needs to look draggable, or it reads
+  // as content that happens to be cut off.
+  sheetGrabber: {
+    alignSelf: "center",
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#d4d4d4",
+    marginBottom: 12,
+  },
   sheetDark: { backgroundColor: "#111111" },
-  sheetTitle: { fontSize: 16, fontWeight: "700", color: "#0a0a0a", marginBottom: 8 },
+  sheetTitle: { fontSize: 17, fontWeight: "700", color: "#0a0a0a", marginBottom: 4 },
   sheetScroll: { flexGrow: 0 },
-  sheetRow: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e5e5e5" },
+  sheetRow: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e5e5e5" },
   sheetRowTitle: { fontSize: 15, fontWeight: "600", color: "#0a0a0a" },
-  sheetRowBody: { fontSize: 12, color: "#666666", marginTop: 2 },
+  sheetRowBody: { fontSize: 13, color: "#666666", marginTop: 3, lineHeight: 18 },
 })

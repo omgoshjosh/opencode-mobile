@@ -990,13 +990,10 @@ export default function SessionScreen() {
               maxLength={10000}
               testID="chat-message-input"
             />
-            {/* Inline stop, when the composer is otherwise empty. The bar
-                above covers every other case — see src/lib/abort-control.ts. */}
-            {canStop && !input.trim() && attachments.length === 0 && !speech.listening && (
-              <TouchableOpacity style={s.stopBtn} onPress={onStopPress} testID="stop-inline">
-                <Ionicons name="stop" size={20} color="#ffffff" />
-              </TouchableOpacity>
-            )}
+            {/* No inline stop button: the bar above is the single stop
+                control. Keeping both meant two stop buttons on screen at once
+                whenever the composer was empty — which is the common case
+                while a run is going. */}
             {/* Mic button: when no input, not sending, and not listening */}
             {!isSending && !input.trim() && attachments.length === 0 && !speech.listening && (
               <TouchableOpacity style={s.micBtn} onPress={speech.start}>
@@ -1230,16 +1227,6 @@ const s = StyleSheet.create({
   },
   stopBarArmed: { backgroundColor: "#991b1b" },
   stopBarText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
-  stopBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#ef4444",
-    justifyContent: "center",
-    alignItems: "center",
-    marginLeft: 8,
-  },
-
   // Header
   headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
   dirBadge: {

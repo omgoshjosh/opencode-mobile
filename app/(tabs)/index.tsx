@@ -899,9 +899,9 @@ export default function SessionsScreen() {
 
       <Modal visible={showFilters} transparent animationType="fade" onRequestClose={() => setShowFilters(false)}>
         <TouchableOpacity style={styles.pickerBackdrop} activeOpacity={1} onPress={() => setShowFilters(false)}>
-          <View style={[styles.pickerSheet, isDark && styles.pickerSheetDark]}>
+          <View style={[styles.filterSheet, isDark && styles.pickerSheetDark]}>
             <View style={styles.filterSheetHeader}>
-              <Text style={[styles.pickerTitle, isDark && styles.textDark]}>Filter sessions</Text>
+              <Text style={[styles.filterSheetTitle, isDark && styles.textDark]}>Filter sessions</Text>
               {isFilterActive(filter) && (
                 <TouchableOpacity onPress={() => applyFilter(clearFilter())} testID="filter-clear">
                   <Text style={styles.filterClear}>Clear</Text>
@@ -910,12 +910,21 @@ export default function SessionsScreen() {
             </View>
 
             <TouchableOpacity
-              style={styles.pickerRow}
+              style={styles.filterToggleRow}
               onPress={() => applyFilter(setHideSubagents(filter, !filter.hideSubagents))}
               testID="filter-hide-subagents"
             >
-              <Text style={[styles.pickerRowText, isDark && styles.textDark]}>Hide subagents</Text>
-              {filter.hideSubagents && <Ionicons name="checkmark" size={18} color="#8b5cf6" />}
+              <View style={styles.filterToggleText}>
+                <Text style={[styles.filterToggleTitle, isDark && styles.textDark]}>Hide subagents</Text>
+                <Text style={[styles.filterToggleHint, isDark && styles.metaDark]}>
+                  Show only sessions you started
+                </Text>
+              </View>
+              <Ionicons
+                name={filter.hideSubagents ? "checkbox" : "square-outline"}
+                size={22}
+                color={filter.hideSubagents ? "#8b5cf6" : isDark ? "#555" : "#c4c4c4"}
+              />
             </TouchableOpacity>
 
             {/* Fuzzy, because titles are long and generated — remembering an
@@ -926,6 +935,7 @@ export default function SessionsScreen() {
               value={filter.query}
               onChangeText={(v) => applyFilter(setQuery(filter, v))}
               placeholder="Fuzzy match, e.g. reng"
+              returnKeyType="search"
               placeholderTextColor={isDark ? "#666" : "#999"}
               autoCorrect={false}
               autoCapitalize="none"
@@ -1492,10 +1502,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   filterCountText: { color: "#ffffff", fontSize: 10, fontWeight: "700" },
-  filterSheetHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  filterClear: { fontSize: 13, fontWeight: "600", color: "#8b5cf6" },
-  filterGroupLabel: { fontSize: 11, fontWeight: "700", color: "#888888", marginTop: 14, letterSpacing: 0.5 },
-  filterChips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
+  // Its own sheet rather than reusing pickerSheet: that one has no horizontal
+  // padding at all — its rows each carry their own — so every control added to
+  // it sat flush against the edge.
+  filterSheet: {
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 22,
+  },
+  filterSheetHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  filterClear: { fontSize: 14, fontWeight: "600", color: "#8b5cf6", paddingVertical: 4, paddingLeft: 12 },
+  filterToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingVertical: 12,
+  },
+  filterToggleText: { flex: 1, gap: 2 },
+  filterToggleTitle: { fontSize: 16, color: "#0a0a0a" },
+  filterToggleHint: { fontSize: 12, color: "#888888" },
+  filterGroupLabel: { fontSize: 11, fontWeight: "700", color: "#888888", marginTop: 18, letterSpacing: 0.6 },
+  filterChips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
   filterChip: {
     paddingHorizontal: 12,
     paddingVertical: 7,
@@ -1577,6 +1612,9 @@ const styles = StyleSheet.create({
   pickerSheet: { backgroundColor: "#ffffff", borderRadius: 14, paddingVertical: 8 },
   pickerSheetDark: { backgroundColor: "#141420" },
   pickerTitle: { fontSize: 13, fontWeight: "700", color: "#666666", paddingHorizontal: 16, paddingVertical: 10 },
+  // The filter sheet supplies its own padding, so its title must not add the
+  // picker's horizontal inset on top.
+  filterSheetTitle: { fontSize: 17, fontWeight: "700", color: "#0a0a0a", paddingHorizontal: 0, paddingVertical: 0 },
   pickerRow: {
     flexDirection: "row",
     alignItems: "center",

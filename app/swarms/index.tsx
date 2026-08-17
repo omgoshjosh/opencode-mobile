@@ -12,6 +12,7 @@ import {
 } from "react-native"
 import { router, useFocusEffect } from "expo-router"
 import { Ionicons } from "@expo/vector-icons"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useSwarms } from "../../src/stores/swarms"
 import { isSwarmReady, type Swarm } from "../../src/lib/swarm-crud"
 
@@ -61,6 +62,7 @@ function SwarmRow({ swarm, isDark, onDelete }: { swarm: Swarm; isDark: boolean; 
 
 export default function SwarmsScreen() {
   const isDark = useColorScheme() === "dark"
+  const insets = useSafeAreaInsets()
   const { swarms, isLoading, error, load, loadSkills, remove, clearError } = useSwarms()
 
   useFocusEffect(
@@ -102,6 +104,9 @@ export default function SwarmsScreen() {
         keyExtractor={(item) => item.id}
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={load} tintColor={isDark ? "#fff" : "#000"} />}
         renderItem={({ item }) => <SwarmRow swarm={item} isDark={isDark} onDelete={() => confirmDelete(item)} />}
+        // Clear the FAB and the system navigation bar, so the last row is
+        // reachable rather than sitting under both.
+        contentContainerStyle={{ paddingBottom: insets.bottom + 96 }}
         ListEmptyComponent={
           isLoading ? (
             <ActivityIndicator style={s.empty} color={isDark ? "#fff" : "#000"} />
@@ -118,7 +123,7 @@ export default function SwarmsScreen() {
       />
 
       <TouchableOpacity
-        style={s.fab}
+        style={[s.fab, { bottom: insets.bottom + 24 }]}
         onPress={() => router.push("/swarms/new")}
         testID="new-swarm"
         accessibilityLabel="New swarm"
@@ -160,7 +165,6 @@ const s = StyleSheet.create({
   fab: {
     position: "absolute",
     right: 20,
-    bottom: 28,
     width: 56,
     height: 56,
     borderRadius: 28,
