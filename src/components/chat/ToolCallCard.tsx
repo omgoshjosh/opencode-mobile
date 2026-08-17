@@ -439,16 +439,18 @@ export function ToolCallCard({ tool, isDark }: Props) {
         <ScrollView style={s.detailScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
           {error && <ErrorBanner message={error} isDark={isDark} />}
           <ToolDetail tool={tool} isDark={isDark} />
-          {/* Long output in a nested scroll-inside-scroll card is miserable
-              to read; push it to a full screen with selectable mono text and
-              extracted links instead. */}
-          {typeof tool.state?.output === "string" && tool.state.output.length > 280 && (
-            <TouchableOpacity style={s.openOutput} onPress={() => openFullOutput(tool)} testID="open-full-output">
-              <Ionicons name="expand-outline" size={13} color="#6d28d9" />
-              <Text style={s.openOutputText}>Open full output</Text>
-            </TouchableOpacity>
-          )}
         </ScrollView>
+      )}
+      {/* OUTSIDE the nested ScrollView: a Touchable inside it never received
+          taps (the scroll view claimed the gesture — observed on device, the
+          button rendered but presses did nothing). Long output in a
+          scroll-inside-scroll card is miserable anyway; this pushes a full
+          screen with selectable mono text and extracted links. */}
+      {expanded && typeof tool.state?.output === "string" && tool.state.output.length > 280 && (
+        <TouchableOpacity style={s.openOutput} onPress={() => openFullOutput(tool)} testID="open-full-output">
+          <Ionicons name="expand-outline" size={13} color="#6d28d9" />
+          <Text style={s.openOutputText}>Open full output</Text>
+        </TouchableOpacity>
       )}
     </TouchableOpacity>
   )
