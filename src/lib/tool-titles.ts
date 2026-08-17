@@ -42,8 +42,14 @@ function firstLine(text: string, max = 60): string {
  * is exactly what every card showed before.
  */
 export function toolCallTitle(part: ToolLike): string {
+  const tool0 = part.tool ?? ""
   const serverTitle = str(part.state?.title)
-  if (serverTitle) return serverTitle
+  // The server stamps a PLACEHOLDER title equal to the tool name when the
+  // call starts ("bash"), replacing it with a description later or never.
+  // Verified against the live API: recent parts return title "bash" while
+  // input.command carries the real intent. A title that just repeats the
+  // tool name adds nothing, so it falls through to input derivation.
+  if (serverTitle && serverTitle.toLowerCase() !== tool0.toLowerCase()) return serverTitle
 
   const tool = part.tool ?? ""
   const input = record(part.state?.input)

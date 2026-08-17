@@ -92,3 +92,14 @@ test("small runs stay inline; big runs collapse", () => {
   assert.equal(shouldCollapseToolRun(TOOL_RUN_COLLAPSE_THRESHOLD), true)
   assert.equal(shouldCollapseToolRun(13), true)
 })
+
+// The server stamps title="bash" as a placeholder when the call starts —
+// verified against the live API. Preferring it verbatim reintroduced the
+// wall of cards all reading "bash".
+test("a server title that just repeats the tool name is treated as absent", () => {
+  assert.equal(
+    toolCallTitle({ tool: "bash", state: { title: "bash", input: { command: "npm test" } } }),
+    "npm test",
+  )
+  assert.equal(toolCallTitle({ tool: "write", state: { title: "write", input: {} } }), "write")
+})
