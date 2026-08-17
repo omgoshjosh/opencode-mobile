@@ -1,9 +1,11 @@
-import { memo } from "react"
+import { memo, useState } from "react"
 import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Dimensions } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Markdown } from "../markdown"
 import { ToolCallCard } from "./ToolCallCard"
 import { ReasoningBlock } from "./ReasoningBlock"
+import { SelectableTextModal } from "./SelectableTextModal"
+import { splitSwarmBriefing } from "../../lib/swarm-briefing"
 import type { Message, Part } from "../../lib/sdk"
 import { useCatalog } from "../../stores/catalog"
 import { modelDisplayLabel } from "../../lib/model-label"
@@ -58,7 +60,13 @@ export const MessageBubble = memo(
     const reasoningParts = parts.filter((p) => p.type === "reasoning")
     const toolParts = parts.filter((p) => p.type === "tool")
     const fileParts = parts.filter((p) => p.type === "file" && isImageMime(p.mime))
-    const text = textParts.map((p) => p.text).join("\n") || ""
+    const joined = textParts.map((p) => p.text).join("\n") || ""
+    // Swarm sessions attach the orchestrator briefing (~4.5KB of roster and
+    // rules) to the user's message as a text part. It is context for the
+    // model, not for the human rereading their own message — collapse it to a
+    // small indicator, expandable on demand. See src/lib/swarm-briefing.ts.
+    const { visibleText: text, briefing, swarmName } = splitSwarmBriefing(joined)
+    const [showBriefing, setShowBriefing] = useState(false)
     const reasoning = reasoningParts.map((p) => p.text).join("\n") || ""
 
     return (
@@ -129,6 +137,26 @@ export const MessageBubble = memo(
             </View>
           ))}
 
+        {/* Collapsed swarm briefing. Indicated, not shown: the name says
+            where the message went; the tap keeps the detail reachable. */}
+        {briefing && (
+          <TouchableOpacity
+            style={[s.briefingChip, isDark && s.briefingChipDark]}
+            onPress={() => setShowBriefing(true)}
+            activeOpacity={0.7}
+            testID="swarm-briefing-chip"
+          >
+            <Ionicons name="people-outline" size={12} color="#6d28d9" />
+            <Text style={s.briefingChipText} numberOfLines={1}>
+              Swarm briefing{swarmName ? ` · ${swarmName}` : ""}
+            </Text>
+            <Ionicons name="chevron-forward" size={12} color="#8b5cf6" />
+          </TouchableOpacity>
+        )}
+        {briefing && (
+          <SelectableTextModal visible={showBriefing} text={briefing} onClose={() => setShowBriefing(false)} />
+        )}
+
         {/* Tool calls */}
         {toolParts.map((tool) => (
           <ToolCallCard key={tool.id} tool={tool} isDark={isDark} />
@@ -163,6 +191,19 @@ export const MessageBubble = memo(
 )
 
 const s = StyleSheet.create({
+  briefingChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    alignSelf: "flex-start",
+    backgroundColor: "#f5f3ff",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 6,
+  },
+  briefingChipDark: { backgroundColor: "#2e1065" },
+  briefingChipText: { fontSize: 11, fontWeight: "600", color: "#6d28d9", flexShrink: 1 },
   bubble: { marginBottom: 16, padding: 12, borderRadius: 12, maxWidth: "100%" },
   user: { backgroundColor: "#f5f5f5", marginLeft: 32 },
   userDark: { backgroundColor: "#1a1a1a" },

@@ -12,16 +12,21 @@
 // Rather than re-enabling `selectable` inside the FlatList row (which is what
 // the RN bug punishes), the copy path reads the source text straight from the
 // parts. Kept dependency-free so it's testable under plain `node --test`.
+import { splitSwarmBriefing } from "./swarm-briefing.ts"
 import type { Part } from "./sdk"
 
 // Text and reasoning are the two part types rendered as prose. Reasoning is
 // visually collapsible (ReasoningBlock) and is not what someone means by
 // "copy this message", so it is excluded by default and offered separately.
 export function extractCopyText(parts: Part[] | undefined): string {
-  return (parts || [])
+  const joined = (parts || [])
     .filter((p) => p.type === "text" && p.text)
     .map((p) => p.text)
     .join("\n")
+  // Copying your own message should yield what you wrote, not what you wrote
+  // plus ~4.5KB of swarm roster the server attached for the model. The
+  // briefing stays copyable from its own expanded view.
+  return splitSwarmBriefing(joined).visibleText
 }
 
 export function extractReasoningText(parts: Part[] | undefined): string {

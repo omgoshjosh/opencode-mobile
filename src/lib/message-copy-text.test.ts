@@ -62,3 +62,18 @@ test("hasCopyableText: true when any text part has content", () => {
   ]
   assert.equal(hasCopyableText(parts), true)
 })
+
+// Copying your own message must yield what you wrote, not the swarm roster
+// the server attached for the model.
+test("extractCopyText strips an attached swarm briefing", () => {
+  const parts = [
+    { id: "1", messageID: "m", type: "text" as const, text: "Fix the keyboard" },
+    {
+      id: "2",
+      messageID: "m",
+      type: "text" as const,
+      text: '<swarm-briefing swarm="Team">\nroster and rules\n</swarm-briefing>',
+    },
+  ]
+  assert.equal(extractCopyText(parts), "Fix the keyboard")
+})
