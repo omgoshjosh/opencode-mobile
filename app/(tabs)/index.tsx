@@ -949,13 +949,21 @@ export default function SessionsScreen() {
                 return (
                   <TouchableOpacity
                     key={window.value}
-                    style={[styles.filterChip, on && styles.filterChipOn]}
+                    style={[styles.filterChip, isDark && styles.filterChipDark, on && styles.filterChipOn]}
                     // Tapping the active window clears it, so the chips behave
                     // as a toggle rather than a one-way trap.
                     onPress={() => applyFilter(setRecency(filter, on ? "any" : window.value))}
                     testID={`filter-recency-${window.value}`}
                   >
-                    <Text style={[styles.filterChipText, on && styles.filterChipTextOn]}>{window.label}</Text>
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        isDark && styles.filterChipTextDark,
+                        on && styles.filterChipTextOn,
+                      ]}
+                    >
+                      {window.label}
+                    </Text>
                   </TouchableOpacity>
                 )
               })}
@@ -968,11 +976,17 @@ export default function SessionsScreen() {
                 return (
                   <TouchableOpacity
                     key={status}
-                    style={[styles.filterChip, on && styles.filterChipOn]}
+                    style={[styles.filterChip, isDark && styles.filterChipDark, on && styles.filterChipOn]}
                     onPress={() => applyFilter(toggleStatus(filter, status))}
                     testID={`filter-status-${status}`}
                   >
-                    <Text style={[styles.filterChipText, on && styles.filterChipTextOn]}>
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        isDark && styles.filterChipTextDark,
+                        on && styles.filterChipTextOn,
+                      ]}
+                    >
                       {attentionLabel(status)}
                     </Text>
                   </TouchableOpacity>
@@ -1528,7 +1542,7 @@ const styles = StyleSheet.create({
   },
   filterToggleText: { flex: 1, gap: 2 },
   filterToggleTitle: { fontSize: 16, color: "#0a0a0a" },
-  filterToggleHint: { fontSize: 12, color: "#888888" },
+  filterToggleHint: { fontSize: 12, color: "#777777" },
   filterGroupLabel: { fontSize: 11, fontWeight: "700", color: "#888888", marginTop: 18, letterSpacing: 0.6 },
   filterChips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
   filterChip: {
@@ -1538,8 +1552,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#d4d4d4",
   },
+  // #666 on the dark sheet was barely legible — an unselected chip has to read
+  // as a choice, not as disabled.
+  filterChipDark: { borderColor: "#3f3f46" },
   filterChipOn: { backgroundColor: "#ede9fe", borderColor: "#8b5cf6" },
   filterChipText: { fontSize: 13, color: "#666666" },
+  filterChipTextDark: { color: "#d4d4d8" },
   filterChipTextOn: { color: "#6d28d9", fontWeight: "700" },
   sessionPreview: { fontSize: 13, color: "#555555", marginTop: 2, marginBottom: 2 },
   sessionPreviewDark: { color: "#9a9a9a" },
