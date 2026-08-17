@@ -3,8 +3,13 @@
 Working record for the OpencodeX mobile evaluation. Private to this checkout —
 nothing here has been filed publicly unless an entry says so.
 
-Base checkout: `dzianisv/opencode-mobile` @ `a750e1b` (local clone, not a GitHub fork).
-Evaluation APK: `cc.agentlabs.opencode`, versionName `0.4.12`, custom evaluation signing key.
+Fork: `omgoshjosh/opencode-mobile`, branch `evaluation/integration`; `deploy` triggers
+the Firebase distribution workflow. `main-for-opencodex` mirrors upstream main daily.
+Evaluation APK: **`cc.agentlabs.opencode.eval`**, versionName `0.4.15`, custom
+evaluation signing key. The `.eval` suffix is set by both CI and
+`scripts/build-evaluation-apk.sh` — a local build that omits it produces a
+SECOND, side-by-side package, and then `adb install` succeeds while the app you
+launch is still the old one.
 
 Devices:
 - **Pixel 3 XL** — Android 12, daily carry, EOL. Primary compatibility target.
@@ -22,11 +27,15 @@ queue as a paste block, not implemented here. See B‑3.
 
 | # | Blocker | Why it needs you | Cost if left |
 |---|---|---|---|
-| B‑3 | **M‑9: swarm drops image attachments** | Server-side. PR #16 to `ecgreen/OpencodeX` already exists but was written *before* the scope boundary above — it needs to be adopted by the server agent or closed. | Images silently never reach a Claude-orchestrated swarm. Workaround: switch off the swarm model. |
-| B‑4 | **Upstream PR #182 review** | Not actionable by us — waiting on the maintainer. | Five Android fixes unmerged upstream. Ours already carry them. |
-| B‑5 | **#186: Wi‑Fi↔cellular handover untested** | Needs the Pixel 3 XL off Wi‑Fi on real cellular, mid-session. Emulator airplane-mode toggle can't reproduce a true half-open interface migration. | The 35s liveness timeout is validated against a hard drop, not a genuine handover. |
+| B‑4 | **Upstream PR #182 review** | Not actionable by us — waiting on the maintainer. Open, zero reviews, zero comments as of 2026‑08‑16. | Five Android fixes unmerged upstream (#156, #155, #186 + two unfiled). Ours already carry them. |
+| B‑5 | **#186: Wi‑Fi↔cellular handover untested** | Needs the Pixel 3 XL off Wi‑Fi on real cellular, mid-session. Emulator airplane-mode toggle can't reproduce a true half-open interface migration. **Josh marked this low priority.** | The 35s liveness timeout is validated against a hard drop, not a genuine handover. |
+| B‑6 | **Nothing verified on the Pixel 3 XL** | It has not been reachable over adb this session. Everything since the keyboard fix is emulator-verified only. | The densest new screen (swarm editor) is untested at that screen size on 2018 hardware. |
+| B‑7 | **Decision: file the `connections.ts` SSE-startup issue upstream?** | Asked twice, still undecided. SSE startup is blocked behind the `/project/current` and `/path` metadata fetches, so slow metadata means the stream never starts. Separate from #186. | A real defect stays unreported. |
 
-**Cleared:** B‑1 (Firebase app-id suffix), B‑2 (Actions PR permission — verified
+**Cleared:** B‑3 (M‑9 swarm image attachments — PR #16 adopted by the OpenCodeX
+Reliability Team on 2026‑08‑16, remediated to native Claude Agent SDK image
+blocks, open and mergeable pending the fork owner). B‑1 (Firebase app-id
+suffix), B‑2 (Actions PR permission — verified
 `default_workflow_permissions: write` on 2026‑08‑15; the PR-creation path itself
 stays unexercised until upstream next moves).
 
