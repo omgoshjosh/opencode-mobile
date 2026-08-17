@@ -985,7 +985,7 @@ export default function SessionScreen() {
                     ? t("session.input.placeholderFollowUp")
                     : t("session.input.placeholderDefault")
               }
-              placeholderTextColor={speech.listening ? "#ef4444" : isDark ? "#666666" : "#999999"}
+              placeholderTextColor={speech.listening ? "#ef4444" : isDark ? "#9a9a9a" : "#999999"}
               value={speech.listening ? speech.transcript : input}
               onChangeText={speech.listening ? undefined : setInput}
               editable={!speech.listening}
@@ -1105,7 +1105,7 @@ const s = StyleSheet.create({
   empty: { flex: 1, justifyContent: "center", alignItems: "center", paddingVertical: 64 },
   emptyText: { fontSize: 16, color: "#999999", marginTop: 12 },
   emptyHint: { fontSize: 13, color: "#bbbbbb", marginTop: 4 },
-  metaDark: { color: "#666666" },
+  metaDark: { color: "#9a9a9a" },
   textWhite: { color: "#ffffff" },
 
   // Toolbar
@@ -1140,7 +1140,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  modelChipDark: { backgroundColor: "#1a1a1a" },
+  modelChipDark: { backgroundColor: "#232323" },
   modelLabel: { fontSize: 12, color: "#666666", maxWidth: 160 },
 
   // Variant (reasoning effort) chip
@@ -1153,7 +1153,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  variantChipDark: { backgroundColor: "#1a1a1a" },
+  variantChipDark: { backgroundColor: "#232323" },
   variantChipActive: { backgroundColor: "#f5f3ff" },
   variantLabel: { fontSize: 12, color: "#666666" },
   variantLabelActive: { color: "#8b5cf6" },

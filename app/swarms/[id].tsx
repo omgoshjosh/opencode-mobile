@@ -288,7 +288,7 @@ const s = StyleSheet.create({
   containerDark: { backgroundColor: "#0a0a0a" },
   content: { padding: 16, gap: 8 },
   label: { fontSize: 11, fontWeight: "700", color: "#888888", letterSpacing: 0.5 },
-  labelDark: { color: "#777777" },
+  labelDark: { color: "#9a9a9a" },
   textDark: { color: "#ffffff" },
   input: {
     borderWidth: 1,

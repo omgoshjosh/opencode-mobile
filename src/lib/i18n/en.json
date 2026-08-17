@@ -54,6 +54,13 @@
         "description": "Learn how to use OpenCode"
       }
     },
+    "theme": {
+      "label": "Theme",
+      "title": "Choose Theme",
+      "system": "System Default",
+      "light": "Light",
+      "dark": "Dark"
+    },
     "language": {
       "label": "Language",
       "title": "Choose Language",

@@ -55,7 +55,7 @@ function SwarmRow({ swarm, isDark, onDelete }: { swarm: Swarm; isDark: boolean; 
           {roleCount > 3 && <Text style={[s.meta, isDark && s.metaDark]}>+{roleCount - 3}</Text>}
         </View>
       </View>
-      <Ionicons name="chevron-forward" size={20} color={isDark ? "#666666" : "#999999"} />
+      <Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />
     </TouchableOpacity>
   )
 }

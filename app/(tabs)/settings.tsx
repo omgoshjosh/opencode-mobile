@@ -90,7 +90,7 @@ export default function SettingsScreen() {
   const { t } = useTranslation()
 
   const { settings, hasBiometrics, updateSettings, lock } = useAuth()
-  const { notifications, setNotification, locale, setLocale } = useSettings()
+  const { notifications, setNotification, locale, setLocale, theme, setTheme } = useSettings()
   const [osGranted, setOsGranted] = useState<boolean | null>(null)
   const [telemetryUpdating, setTelemetryUpdating] = useState(false)
 
@@ -169,6 +169,21 @@ export default function SettingsScreen() {
     ])
   }, [t, setLocale, localeLabels])
 
+  const themeLabels: Record<typeof theme, string> = {
+    system: t("settings.theme.system"),
+    light: t("settings.theme.light"),
+    dark: t("settings.theme.dark"),
+  }
+
+  const handleThemePress = useCallback(() => {
+    Alert.alert(t("settings.theme.title"), undefined, [
+      { text: themeLabels.system, onPress: () => setTheme("system") },
+      { text: themeLabels.light, onPress: () => setTheme("light") },
+      { text: themeLabels.dark, onPress: () => setTheme("dark") },
+      { text: t("common.cancel"), style: "cancel" },
+    ])
+  }, [t, setTheme, themeLabels])
+
   return (
     <ScrollView style={[styles.container, isDark && styles.containerDark]} contentContainerStyle={styles.content}>
       {/* Swarms are models you can pick in any session, so managing them
@@ -181,7 +196,7 @@ export default function SettingsScreen() {
           description="Create and edit agent teams from your skills"
           isDark={isDark}
           onPress={() => router.push("/swarms")}
-          right={<Ionicons name="chevron-forward" size={20} color={isDark ? "#666666" : "#999999"} />}
+          right={<Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
         />
       </SettingSection>
 
@@ -225,7 +240,7 @@ export default function SettingsScreen() {
             description={t("settings.security.lockNow.description")}
             isDark={isDark}
             onPress={lock}
-            right={<Ionicons name="chevron-forward" size={20} color={isDark ? "#666666" : "#999999"} />}
+            right={<Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
           />
         )}
       </SettingSection>
@@ -280,18 +295,26 @@ export default function SettingsScreen() {
           description={t("settings.privacy.privacyPolicy.description")}
           isDark={isDark}
           onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
-          right={<Ionicons name="open-outline" size={20} color={isDark ? "#666666" : "#999999"} />}
+          right={<Ionicons name="open-outline" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
         />
       </SettingSection>
 
       <SettingSection title={t("settings.sections.about")} isDark={isDark}>
+        <SettingRow
+          icon="moon"
+          label={t("settings.theme.label")}
+          description={themeLabels[theme]}
+          isDark={isDark}
+          onPress={handleThemePress}
+          right={<Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
+        />
         <SettingRow
           icon="language"
           label={t("settings.language.label")}
           description={localeLabels[locale]}
           isDark={isDark}
           onPress={handleLanguagePress}
-          right={<Ionicons name="chevron-forward" size={20} color={isDark ? "#666666" : "#999999"} />}
+          right={<Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
         />
         <SettingRow
           icon="information-circle"
@@ -322,7 +345,7 @@ export default function SettingsScreen() {
           description={t("settings.about.github.description")}
           isDark={isDark}
           onPress={() => Linking.openURL("https://github.com/anomalyco/opencode")}
-          right={<Ionicons name="open-outline" size={20} color={isDark ? "#666666" : "#999999"} />}
+          right={<Ionicons name="open-outline" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
         />
         <SettingRow
           icon="document-text"
@@ -330,7 +353,7 @@ export default function SettingsScreen() {
           description={t("settings.about.docs.description")}
           isDark={isDark}
           onPress={() => Linking.openURL("https://opencode.ai/docs")}
-          right={<Ionicons name="open-outline" size={20} color={isDark ? "#666666" : "#999999"} />}
+          right={<Ionicons name="open-outline" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
         />
       </SettingSection>
 

@@ -54,6 +54,13 @@
         "description": "了解如何使用 OpenCode"
       }
     },
+    "theme": {
+      "label": "主题",
+      "title": "选择主题",
+      "system": "跟随系统",
+      "light": "浅色",
+      "dark": "深色"
+    },
     "language": {
       "label": "语言",
       "title": "选择语言",

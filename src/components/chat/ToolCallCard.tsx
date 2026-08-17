@@ -275,7 +275,7 @@ function TodoDetail({ input, isDark }: { input: unknown; isDark: boolean }) {
             <Ionicons
               name={done ? "checkbox" : "square-outline"}
               size={16}
-              color={done ? "#22c55e" : isDark ? "#666666" : "#999999"}
+              color={done ? "#22c55e" : isDark ? "#9a9a9a" : "#999999"}
             />
             <Text style={[s.todoText, isDark && s.todoTextDark, done && s.todoDone]} numberOfLines={2}>
               {String(item.content || item.title || "")}
@@ -425,7 +425,7 @@ export function ToolCallCard({ tool, isDark }: Props) {
             <Ionicons
               name={expanded ? "chevron-up" : "chevron-down"}
               size={16}
-              color={isDark ? "#666666" : "#999999"}
+              color={isDark ? "#9a9a9a" : "#999999"}
             />
           )}
         </View>
@@ -479,7 +479,7 @@ const s = StyleSheet.create({
   name: { fontSize: 13, fontWeight: "500", color: "#0a0a0a", flex: 1 },
   nameDark: { color: "#e5e5e5" },
   elapsed: { fontSize: 11, color: "#999999" },
-  elapsedDark: { color: "#666666" },
+  elapsedDark: { color: "#9a9a9a" },
 
   // Error
   errorBanner: {

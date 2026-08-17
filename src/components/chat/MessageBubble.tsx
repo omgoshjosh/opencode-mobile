@@ -189,7 +189,7 @@ export const MessageBubble = memo(
                     </Text>
                   )}
                 </View>
-                <Ionicons name="chevron-forward" size={16} color={isDark ? "#666666" : "#999999"} />
+                <Ionicons name="chevron-forward" size={16} color={isDark ? "#9a9a9a" : "#999999"} />
               </TouchableOpacity>
             )
           })()
@@ -242,7 +242,7 @@ const s = StyleSheet.create({
   toolRunText: { flex: 1, gap: 1 },
   toolRunTitle: { fontSize: 13, fontWeight: "600", color: "#0a0a0a" },
   toolRunPreview: { fontSize: 11, color: "#888888" },
-  toolRunPreviewDark: { color: "#777777" },
+  toolRunPreviewDark: { color: "#9a9a9a" },
   briefingChip: {
     flexDirection: "row",
     alignItems: "center",
@@ -276,7 +276,9 @@ const s = StyleSheet.create({
     borderRadius: 4,
     overflow: "hidden",
   },
-  modelTagDark: { backgroundColor: "#2a2a2a", color: "#888888" },
+  // 11px text needs more headroom than body copy: #888 on the #2a2a2a chip
+  // was ~4.4:1, marginal at this size — the "hard to see message label".
+  modelTagDark: { backgroundColor: "#2a2a2a", color: "#b0b0b0" },
 
   deliveryTag: {
     fontSize: 11,
@@ -293,7 +295,7 @@ const s = StyleSheet.create({
   markdownWrap: { marginHorizontal: -4 },
 
   tokens: { fontSize: 11, color: "#999999", marginTop: 8 },
-  tokensDark: { color: "#666666" },
+  tokensDark: { color: "#9a9a9a" },
 
   // Images
   imageScroll: { marginBottom: 8 },
