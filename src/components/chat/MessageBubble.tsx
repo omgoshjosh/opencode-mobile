@@ -6,6 +6,7 @@ import { ReasoningBlock } from "./ReasoningBlock"
 import { SelectableTextModal } from "./SelectableTextModal"
 import { splitSwarmBriefing } from "../../lib/swarm-briefing"
 import { segmentParts } from "../../lib/message-segments"
+import { ToolCallCard } from "./ToolCallCard"
 import { shouldCollapseToolRun, summarizeToolRun } from "../../lib/tool-titles"
 import { router } from "expo-router"
 import type { Message, Part } from "../../lib/sdk"
@@ -187,29 +188,19 @@ export const MessageBubble = memo(
                   )
                 })()
               ) : (
-                <View key={`l${index}`} style={s.toolLinks}>
-                  {segment.tools.map((tool) => {
-                    const status = tool.state?.status
-                    return (
-                      <Text
-                        key={tool.id}
-                        style={[
-                          s.toolLink,
-                          status === "error" && s.toolLinkFailed,
-                          (status === "running" || status === "pending") && s.toolLinkRunning,
-                        ]}
-                        onPress={() =>
-                          router.push({
-                            pathname: "/tool-run/[messageID]",
-                            params: { messageID: message.id, focus: tool.id },
-                          })
-                        }
-                        testID={`tool-link-${tool.id}`}
-                      >
-                        {tool.tool || "tool"}
-                      </Text>
-                    )
-                  })}
+                // A short run keeps the full expandable cards inline — tap to
+                // expand in place, with the live timer, call time and
+                // open-full-output drill-down. The summary row above is only
+                // for runs long enough to wall the transcript.
+                <View key={`c${index}`}>
+                  {segment.tools.map((tool) => (
+                    <ToolCallCard
+                      key={tool.id}
+                      tool={tool}
+                      isDark={isDark}
+                      fallbackStartTime={message.time?.created}
+                    />
+                  ))}
                 </View>
               ),
             )}
@@ -263,7 +254,6 @@ export const MessageBubble = memo(
 )
 
 const s = StyleSheet.create({
-  toolLinks: { flexDirection: "row", flexWrap: "wrap", columnGap: 10, rowGap: 4, marginVertical: 4 },
   // Summary row for a long consecutive run — one line, sits between prose
   // blocks where the run actually happened.
   toolRunRow: {
@@ -281,9 +271,6 @@ const s = StyleSheet.create({
   toolRunRowDark: { backgroundColor: "#151321", borderColor: "#2a2440" },
   toolRunText: { flex: 1, fontSize: 12, fontWeight: "600", color: "#6d28d9" },
   toolRunTextDark: { color: "#a78bfa" },
-  toolLink: { fontSize: 12, fontWeight: "600", color: "#8b5cf6", textDecorationLine: "underline" },
-  toolLinkFailed: { color: "#ef4444" },
-  toolLinkRunning: { color: "#f59e0b" },
   briefingChip: {
     flexDirection: "row",
     alignItems: "center",
