@@ -69,6 +69,7 @@ import {
 } from "../../src/lib/session-attention"
 import { rowSubtitle, triageDot } from "../../src/lib/session-triage"
 import { SESSION_SORTS, parseSessionSort, sortSessions, type SessionSort } from "../../src/lib/session-sort"
+import { useDrafts } from "../../src/stores/drafts"
 import { useSettings } from "../../src/stores/settings"
 import { nameOf } from "../../src/lib/path-utils"
 import { SETUP_GUIDE_URL } from "../../src/lib/links"
@@ -152,6 +153,9 @@ function SessionItem({
       : null
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
   const preview = useSessions((s) => s.previews[session.id]?.text)
+  // An unsent draft is YOUR unfinished work in this session — worth a badge
+  // distinct from the run status (which is the AGENT's state).
+  const draft = useDrafts((d) => d.drafts[session.id]?.text)
   // "idle" used to cover three different situations — blocked on you, finished
   // and unread, and genuinely quiet. See src/lib/session-attention.ts.
   const pendingPermissions = useEvents((s) => s.permissions[session.id]?.length ?? 0)
@@ -201,6 +205,12 @@ function SessionItem({
               <Text style={styles.sessionSwarmText} numberOfLines={1}>
                 {swarmLabel}
               </Text>
+            </View>
+          )}
+          {draft && (
+            <View style={styles.draftBadge} testID={`draft-badge-${session.id}`}>
+              <Ionicons name="pencil" size={11} color="#b45309" />
+              <Text style={styles.draftBadgeText}>draft</Text>
             </View>
           )}
           {isAttentionWorthShowing(attention) && (
@@ -268,7 +278,10 @@ function SessionRowV2({
     session.model?.providerID === SWARM_PROVIDER_ID
       ? modelDisplayLabel(providers, { providerID: session.model.providerID, modelID: session.model.id })
       : null
-  const subtitle = rowSubtitle(swarmLabel, preview)
+  // Your own unsent words beat the agent's last line: a draft is the thing
+  // you were mid-doing here, which is exactly what the second line is for.
+  const draft = useDrafts((d) => d.drafts[session.id]?.text)
+  const subtitle = draft ? `✏️ ${draft}` : rowSubtitle(swarmLabel, preview)
 
   return (
     <TouchableOpacity
@@ -308,7 +321,10 @@ function SessionRowV2({
         <Text style={[styles.rowV2Time, isDark && styles.metaDark]}>{formatTime(session.time.updated, t)}</Text>
       </View>
       {subtitle && (
-        <Text style={[styles.rowV2Subtitle, isDark && styles.rowV2SubtitleDark]} numberOfLines={1}>
+        <Text
+          style={[styles.rowV2Subtitle, isDark && styles.rowV2SubtitleDark, !!draft && styles.rowV2Draft]}
+          numberOfLines={1}
+        >
           {subtitle}
         </Text>
       )}
@@ -999,6 +1015,25 @@ export default function SessionsScreen() {
             size={13}
             color={isFilterActive(filter) ? "#6d28d9" : isDark ? "#888888" : "#666666"}
           />
+          {/* The selected statuses' own dots, so the pill shows WHAT it is
+              narrowing to, in the same vocabulary as the rows — pulsing
+              exactly where the rows pulse. */}
+          {filter.statuses.map((status) => {
+            const dot = triageDot(status)
+            return dot.pulse ? (
+              <PulsingDot key={status} color={dot.color} size={6} active />
+            ) : (
+              <View
+                key={status}
+                style={[
+                  styles.filterStatusDot,
+                  dot.hollow
+                    ? { borderWidth: 1, borderColor: dot.color, backgroundColor: "transparent" }
+                    : { backgroundColor: dot.color },
+                ]}
+              />
+            )
+          })}
           <Text
             style={[styles.filterBtnText, isFilterActive(filter) && styles.filterBtnTextActive]}
             numberOfLines={1}
@@ -1636,6 +1671,18 @@ const styles = StyleSheet.create({
   // Indented past the dot so title and subtitle align.
   rowV2Subtitle: { fontSize: 12, color: "#888888", marginLeft: 16 },
   rowV2SubtitleDark: { color: "#9a9a9a" },
+  // Amber: your unfinished words, not the agent's.
+  rowV2Draft: { color: "#b45309", fontWeight: "600" },
+  draftBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "#fef3c7",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+  },
+  draftBadgeText: { fontSize: 11, fontWeight: "600", color: "#b45309" },
   sessionContent: {
     flex: 1,
   },
@@ -1689,6 +1736,7 @@ const styles = StyleSheet.create({
   },
   filterBtnActive: { backgroundColor: "#f5f3ff" },
   filterBtnText: { fontSize: 12, color: "#666666", flexShrink: 1 },
+  filterStatusDot: { width: 6, height: 6, borderRadius: 3 },
   filterBtnTextActive: { color: "#6d28d9", fontWeight: "600" },
   filterCount: {
     minWidth: 16,

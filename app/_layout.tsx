@@ -10,6 +10,7 @@ import i18n from "../src/lib/i18n/config"
 import { useAuth } from "../src/stores/auth"
 import { useConnections } from "../src/stores/connections"
 import { useEvents, restoreStatusCache } from "../src/stores/events"
+import { useDrafts } from "../src/stores/drafts"
 import { useCatalog } from "../src/stores/catalog"
 import { useSettings } from "../src/stores/settings"
 import { AuthGate } from "../src/components/AuthGate"
@@ -44,6 +45,9 @@ function RootLayout() {
     // start instead of guessing "all idle". Validated against the server on
     // first stream liveness — see restoreStatusCache/resyncBusySessions.
     restoreStatusCache()
+    // Drafts feed the session list's draft badges, so they load at boot,
+    // not lazily on first session open.
+    useDrafts.getState().load()
 
     // Connect notification preferences to the notification module
     notifications.configure(() => useSettings.getState().notifications)
