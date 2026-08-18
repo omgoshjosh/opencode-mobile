@@ -180,7 +180,14 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // includeChildren keeps swarm role/subagent sessions alongside their
       // roots so the "Swarm root" grouping mode has something to nest. `limit`
       // still counts roots only, so the visible session count is unchanged.
-      const sessions = await client.session.list({ roots: true, limit: 50, includeChildren: true })
+      // No limit. The transport already downloads the FULL global session
+      // list (GET /experimental/session takes no params — see
+      // src/lib/session-list.ts); `limit: 50` here just sliced away every
+      // root past the newest fifty AFTER paying for the download. That slice
+      // was the "I feel like I'm missing sessions" bug: front-end filters
+      // (recency, search) can only surface what survived it. FlatList
+      // virtualizes, so row count is not a render concern.
+      const sessions = await client.session.list({ roots: true, includeChildren: true })
       set({ sessions, isLoading: false })
     } catch (error) {
       set({ error: "Failed to load sessions", isLoading: false })

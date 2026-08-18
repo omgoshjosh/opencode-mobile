@@ -998,6 +998,15 @@ export default function SessionsScreen() {
           <View style={[styles.filterSheet, isDark && styles.pickerSheetDark]}>
             <View style={styles.filterSheetHeader}>
               <Text style={[styles.filterSheetTitle, isDark && styles.textDark]}>Filter sessions</Text>
+              {/* One-tap sane baseline: everything from the past week, no
+                  other narrowing. Cheaper than remembering which of four
+                  controls is hiding your sessions. */}
+              <TouchableOpacity
+                onPress={() => applyFilter(setRecency(clearFilter(), "week"))}
+                testID="filter-reset-week"
+              >
+                <Text style={styles.filterClear}>This week</Text>
+              </TouchableOpacity>
               {isFilterActive(filter) && (
                 <TouchableOpacity onPress={() => applyFilter(clearFilter())} testID="filter-clear">
                   <Text style={styles.filterClear}>Clear</Text>
