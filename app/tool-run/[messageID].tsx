@@ -29,6 +29,11 @@ export default function ToolRunScreen() {
   const parts = useSessions((s) => (messageID ? s.parts[messageID] : undefined))
   const toolParts = useMemo(() => (parts ?? []).filter((p) => p.type === "tool"), [parts])
   const summary = useMemo(() => summarizeToolRun(toolParts), [toolParts])
+  // For calls whose state carries no start time: the owning message's
+  // created time is the honest approximation.
+  const messageCreated = useSessions(
+    (s) => s.messages.find((m) => m.id === messageID)?.time?.created,
+  )
 
   return (
     <>
@@ -61,7 +66,12 @@ export default function ToolRunScreen() {
                 }
               }}
             >
-              <ToolCallCard tool={item} isDark={isDark} initiallyExpanded={item.id === focus} />
+              <ToolCallCard
+                tool={item}
+                isDark={isDark}
+                initiallyExpanded={item.id === focus}
+                fallbackStartTime={messageCreated}
+              />
             </View>
           ))
         )}

@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect } from "react"
 import { LIVE_TICK_MS, formatElapsed } from "../../lib/elapsed-format"
+import { shorthandTimestamp } from "../../lib/timestamp-shorthand"
+import { useSettings } from "../../stores/settings"
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView, Platform } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { useTranslation } from "react-i18next"
@@ -391,9 +393,14 @@ interface Props {
   isDark: boolean
   /** Open already expanded — used when a deep link lands on this exact call. */
   initiallyExpanded?: boolean
+  /**
+   * When the call's own start time is missing, the owning MESSAGE's created
+   * time is the honest approximation — supplied by screens that know it.
+   */
+  fallbackStartTime?: number
 }
 
-export function ToolCallCard({ tool, isDark, initiallyExpanded }: Props) {
+export function ToolCallCard({ tool, isDark, initiallyExpanded, fallbackStartTime }: Props) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(initiallyExpanded ?? false)
   const icon = (tool.tool && TOOL_ICONS[tool.tool]) || "extension-puzzle-outline"
@@ -402,6 +409,10 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded }: Props) {
   const error = tool.state?.error?.message
   const isRunning = status === "running" || status === "pending"
   const elapsed = useElapsed(tool.state?.time?.start, tool.state?.time?.end, isRunning)
+  // WHEN the call started, in the user's chosen zone. The call's own clock
+  // wins; the owning message's created time is the fallback.
+  const timeZone = useSettings((st) => st.timeZone)
+  const calledAt = shorthandTimestamp(tool.state?.time?.start ?? fallbackStartTime, Date.now(), timeZone)
   const hasDetail = tool.state?.input !== undefined || tool.state?.output !== undefined || error
 
   const toggle = useCallback(() => {
@@ -428,6 +439,7 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded }: Props) {
           <Text style={[s.name, isDark && s.nameDark]} numberOfLines={1}>
             {toolCallTitle(tool) || t("chat.toolCallCard.fallbackTitle")}
           </Text>
+          {calledAt && <Text style={[s.elapsed, isDark && s.elapsedDark]}>{calledAt}</Text>}
           {elapsed && (
             <Text style={[s.elapsed, isDark && s.elapsedDark, isRunning && s.elapsedLive]}>{elapsed}</Text>
           )}
