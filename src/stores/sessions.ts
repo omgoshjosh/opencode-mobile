@@ -597,7 +597,28 @@ export const useSessions = create<SessionsState>((set, get) => ({
     switch (event.type) {
       case "message.updated": {
         const message = (props.info || props.message) as Message | undefined
-        if (!message || !isLiveEventForSession(message.sessionID, currentSession.id)) return
+        if (!message) return
+        if (!isLiveEventForSession(message.sessionID, currentSession.id)) {
+          // Not the open session — but if its transcript is parked in the
+          // cache, keep that copy current too. Otherwise drilling in
+          // warm-starts from a frozen snapshot and the list's live preview
+          // reads NEWER than the transcript it leads to, until the
+          // reconciling fetch lands (the reported "doesn't reflect when I
+          // drill in").
+          if (message.sessionID) {
+            set((state) => {
+              const cached = getTranscript(state.transcriptCache, message.sessionID)
+              if (!cached) return {}
+              return {
+                transcriptCache: putTranscript(state.transcriptCache, message.sessionID, {
+                  ...cached,
+                  messages: mergeIncomingMessage(cached.messages, message),
+                }),
+              }
+            })
+          }
+          return
+        }
 
         set((state) => ({
           messages: mergeIncomingMessage(state.messages, message),
@@ -613,8 +634,28 @@ export const useSessions = create<SessionsState>((set, get) => ({
       case "message.part.updated": {
         const part = props.part as Part | undefined
         if (!part) return
-        // Only handle parts for current session
-        if (part.sessionID && part.sessionID !== currentSession.id) return
+        // Not the open session: keep a parked transcript current (see
+        // message.updated above for why), then stop.
+        if (part.sessionID && part.sessionID !== currentSession.id) {
+          set((state) => {
+            const cached = getTranscript(state.transcriptCache, part.sessionID!)
+            if (!cached) return {}
+            const messageParts = cached.parts[part.messageID] || []
+            const exists = messageParts.some((p) => p.id === part.id)
+            return {
+              transcriptCache: putTranscript(state.transcriptCache, part.sessionID!, {
+                ...cached,
+                parts: {
+                  ...cached.parts,
+                  [part.messageID]: exists
+                    ? messageParts.map((p) => (p.id === part.id ? part : p))
+                    : [...messageParts, part],
+                },
+              }),
+            }
+          })
+          return
+        }
 
         set((state) => {
           const messageParts = state.parts[part.messageID] || []
