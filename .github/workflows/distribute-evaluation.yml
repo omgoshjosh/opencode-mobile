@@ -31,7 +31,10 @@ jobs:
     runs-on: ubuntu-latest
     concurrency:
       group: opencodex-mobile-evaluation-distribution
-      cancel-in-progress: false
+      # A newer push supersedes the running build, not just the queued one:
+      # every deploy contains everything before it, so finishing an older
+      # build only delays the one the user actually wants to install.
+      cancel-in-progress: true
     permissions:
       contents: read
     env:
