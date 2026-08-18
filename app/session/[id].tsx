@@ -8,6 +8,7 @@ import {
   StyleSheet,
   useColorScheme,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
   ActivityIndicator,
   Alert,
@@ -43,6 +44,7 @@ import { breadcrumbFor } from "../../src/lib/session-breadcrumb"
 import { ABORT_CONFIRM_WINDOW_MS, DISARMED, abortLabel, isAbortable, isArmed, pressAbort } from "../../src/lib/abort-control"
 import { inferBusyFromMessages } from "../../src/lib/session-status-reconcile"
 import { useSessions } from "../../src/stores/sessions"
+import { useDrafts } from "../../src/stores/drafts"
 import { useEvents, refreshPending } from "../../src/stores/events"
 import { useConnections } from "../../src/stores/connections"
 import { useAuth } from "../../src/stores/auth"
@@ -237,17 +239,27 @@ export default function SessionScreen() {
   // message sent concurrently with a revert isn't hidden.
   const revertMessageID = currentSession?.revert?.messageID
 
+  // The store holds ONE transcript globally, and it still belongs to the
+  // previously-viewed session for the first frames after navigating here
+  // (selectSession runs in an effect, after render). Rendering unconditionally
+  // flashed the last session's messages on open — the reported leakage. Bind
+  // the transcript to this screen's route id and render nothing until the
+  // store has actually switched.
+  const transcriptBound = currentSession?.id === id
+
   // Inverted FlatList: data is reversed (newest first) so newest renders at bottom
   const messageData = useMemo(
     () =>
-      (messages || [])
-        .filter((msg) => !revertMessageID || msg.id.startsWith("temp-") || msg.id < revertMessageID)
-        .map((msg) => ({
-          message: msg,
-          parts: (parts && parts[msg.id]) || [],
-        }))
-        .reverse(),
-    [messages, parts, revertMessageID],
+      transcriptBound
+        ? (messages || [])
+            .filter((msg) => !revertMessageID || msg.id.startsWith("temp-") || msg.id < revertMessageID)
+            .map((msg) => ({
+              message: msg,
+              parts: (parts && parts[msg.id]) || [],
+            }))
+            .reverse()
+        : [],
+    [messages, parts, revertMessageID, transcriptBound],
   )
 
   // Tracks the latest composer text without pulling `input` into
@@ -256,6 +268,37 @@ export default function SessionScreen() {
   // keystrokes for MessageBubble's custom memo comparator.
   const inputRef = useRef(input)
   inputRef.current = input
+
+  // Per-session composer drafts. Order matters against leakage: CLEAR first,
+  // then restore this session's own draft — the previous session's half-typed
+  // text must never render under a different session's transcript. The
+  // cleanup saves the outgoing session's text before the id changes; blur and
+  // keyboard-hide (below, on the TextInput) cover backgrounding mid-type.
+  useEffect(() => {
+    if (!id) return
+    setInput("")
+    useDrafts
+      .getState()
+      .load()
+      .then(() => {
+        const draft = useDrafts.getState().drafts[id]
+        if (draft?.text) setInput(draft.text)
+      })
+    return () => {
+      useDrafts.getState().save(id, inputRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id])
+
+  // Closing the keyboard is the strongest "I'm stepping away mid-type"
+  // signal on a phone — save there too, not just on blur (multiline inputs
+  // don't always blur when the keyboard dismisses).
+  useEffect(() => {
+    const sub = Keyboard.addListener("keyboardDidHide", () => {
+      if (id) useDrafts.getState().save(id, inputRef.current)
+    })
+    return () => sub.remove()
+  }, [id])
 
   const applyRevertResult = useCallback((result: Awaited<ReturnType<typeof revertToMessage>>) => {
     if (!result.ok) {
@@ -551,6 +594,8 @@ export default function SessionScreen() {
     const files = [...attachments]
     setInput("")
     setAttachments([])
+    // A sent message is no longer a draft.
+    if (id) useDrafts.getState().clear(id)
 
     // Server slash commands (no attachments for commands)
     if (text.startsWith("/") && files.length === 0) {
@@ -1005,6 +1050,7 @@ export default function SessionScreen() {
               placeholderTextColor={speech.listening ? "#ef4444" : isDark ? "#9a9a9a" : "#999999"}
               value={speech.listening ? speech.transcript : input}
               onChangeText={speech.listening ? undefined : setInput}
+              onBlur={() => id && useDrafts.getState().save(id, inputRef.current)}
               editable={!speech.listening}
               multiline
               maxLength={10000}

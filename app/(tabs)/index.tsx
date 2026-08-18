@@ -1616,11 +1616,15 @@ const styles = StyleSheet.create({
   filterSearchDark: { borderColor: "#222", color: "#ffffff" },
   emptyClearFilter: { fontSize: 14, fontWeight: "700", color: "#8b5cf6", marginTop: 10, textAlign: "center" },
   groupByLeft: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 },
+  // flexShrink + marginLeft:auto, NOT flex:1 — the greedy pill claimed the
+  // whole row even with a short summary, squeezing the group-mode control
+  // out of its information. Now it hugs its content and yields first.
   filterBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    flex: 1,
+    flexShrink: 1,
+    marginLeft: "auto",
     justifyContent: "flex-end",
     paddingVertical: 3,
     paddingHorizontal: 8,
