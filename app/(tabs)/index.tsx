@@ -68,6 +68,7 @@ import {
   type Attention,
 } from "../../src/lib/session-attention"
 import { rowSubtitle, triageDot } from "../../src/lib/session-triage"
+import { SESSION_SORTS, parseSessionSort, sortSessions, type SessionSort } from "../../src/lib/session-sort"
 import { useSettings } from "../../src/stores/settings"
 import { nameOf } from "../../src/lib/path-utils"
 import { SETUP_GUIDE_URL } from "../../src/lib/links"
@@ -77,6 +78,9 @@ import { SETUP_GUIDE_URL } from "../../src/lib/links"
 // Holds only booleans and known status strings.
 // See the allowlist in src/lib/persisted-keys.test.ts.
 const SESSION_FILTER_KEY = "sessions_filter"
+// Sort is its own key, not a filter field: clearing filters must not silently
+// reset a chosen ordering.
+const SESSION_SORT_KEY = "sessions_sort"
 
 const ATTENTION_BADGE: Record<Attention, object> = {
   "needs-attention": { backgroundColor: "#fee2e2" },
@@ -485,6 +489,7 @@ export default function SessionsScreen() {
   const lastViewedMap = useSessions((s) => s.lastViewed)
   const [filter, setFilter] = useState<SessionFilter>(NO_FILTER)
   const [showFilters, setShowFilters] = useState(false)
+  const [sort, setSort] = useState<SessionSort>("newest")
 
   // Persisted so a narrowed list survives a relaunch — otherwise "only what
   // needs me" has to be re-applied every time the app is opened.
@@ -492,10 +497,17 @@ export default function SessionsScreen() {
     AsyncStorage.getItem(SESSION_FILTER_KEY)
       .then((raw) => setFilter(parseFilter(raw)))
       .catch(() => {})
+    AsyncStorage.getItem(SESSION_SORT_KEY)
+      .then((raw) => setSort(parseSessionSort(raw)))
+      .catch(() => {})
   }, [])
   const applyFilter = useCallback((next: SessionFilter) => {
     setFilter(next)
     AsyncStorage.setItem(SESSION_FILTER_KEY, JSON.stringify(next)).catch(() => {})
+  }, [])
+  const applySort = useCallback((next: SessionSort) => {
+    setSort(next)
+    AsyncStorage.setItem(SESSION_SORT_KEY, next).catch(() => {})
   }, [])
 
   // Read-state drives the complete/idle distinction, so it has to be restored
@@ -564,9 +576,13 @@ export default function SessionsScreen() {
         )
       : sessions
 
+    // Sort BEFORE bucketing: group order is first-seen, so the chosen order
+    // ranks the groups too, and children sort within their group.
+    const ordered = sortSessions(visible, sort)
+
     const buckets = new Map<string, Session[]>()
     const order: string[] = []
-    for (const session of visible) {
+    for (const session of ordered) {
       const key = groupKey(session as never, groupMode, { nowMs, statusOf, sessionsByID })
       let bucket = buckets.get(key)
       if (!bucket) {
@@ -577,7 +593,7 @@ export default function SessionsScreen() {
       bucket.push(session)
     }
     if (order.length <= 1) {
-      return visible.map((session) => ({ type: "session", session }))
+      return ordered.map((session) => ({ type: "session", session }))
     }
     // Stable sort: modes that define an order (date, status) use it; the rest
     // keep first-seen order. Ungrouped always sinks to the bottom.
@@ -617,6 +633,7 @@ export default function SessionsScreen() {
     questionsMap,
     lastViewedMap,
     listV2,
+    sort,
   ])
 
   // Fetch server-known projects when the new session modal opens
@@ -1093,6 +1110,34 @@ export default function SessionsScreen() {
                       ]}
                     >
                       {attentionLabel(status)}
+                    </Text>
+                  </TouchableOpacity>
+                )
+              })}
+            </View>
+
+            {/* Ordering, not narrowing — lives here because this sheet is
+                where the list's shape is decided, but persists separately so
+                Clear (a filter action) never resets a chosen order. */}
+            <Text style={[styles.filterGroupLabel, isDark && styles.metaDark]}>SORT</Text>
+            <View style={styles.filterChips}>
+              {SESSION_SORTS.map((option) => {
+                const on = sort === option.value
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[styles.filterChip, isDark && styles.filterChipDark, on && styles.filterChipOn]}
+                    onPress={() => applySort(option.value)}
+                    testID={`sort-${option.value}`}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        isDark && styles.filterChipTextDark,
+                        on && styles.filterChipTextOn,
+                      ]}
+                    >
+                      {option.label}
                     </Text>
                   </TouchableOpacity>
                 )
