@@ -116,3 +116,25 @@ export function previewFromParts(
   }
   return null
 }
+
+/**
+ * Parse a persisted preview map defensively: garbage in, empty map out.
+ * Previews are labels, so losing a corrupt cache costs one line per row
+ * until the stream speaks again — never worth a crash.
+ */
+export function parsePreviewMap(raw: string | null): PreviewMap {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as PreviewMap
+    if (typeof parsed !== "object" || parsed === null) return {}
+    const out: PreviewMap = {}
+    for (const [id, entry] of Object.entries(parsed)) {
+      if (entry && typeof entry.text === "string" && entry.text && typeof entry.at === "number") {
+        out[id] = entry
+      }
+    }
+    return out
+  } catch {
+    return {}
+  }
+}

@@ -51,6 +51,8 @@ const ALLOWED_ASYNC_KEYS = new Map<string, string>([
   ["LAST_VIEWED_KEY", "sessionID -> last-opened timestamp; ids and numbers only, no content"],
   ["SESSION_FILTER_KEY", "sessions list: hide-subagents flag + chosen status names"],
   ["DRAFTS_KEY", "composer drafts: the user's own half-typed prompts, per session; never model output"],
+  ["STATUS_CACHE_KEY", "last-known busy sessions for cold-start list rendering; ids and a type tag only"],
+  ["PREVIEWS_KEY", "one truncated preview line per session for the list; bounded by MAX_TRACKED_PREVIEWS"],
   // These two write through a variable rather than a literal, so the key is
   // named at the call site's own constant. Listed by the variable name their
   // helpers use; both hold queued user-submitted form data, not model output.

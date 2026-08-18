@@ -9,7 +9,7 @@ import { I18nextProvider, useTranslation } from "react-i18next"
 import i18n from "../src/lib/i18n/config"
 import { useAuth } from "../src/stores/auth"
 import { useConnections } from "../src/stores/connections"
-import { useEvents } from "../src/stores/events"
+import { useEvents, restoreStatusCache } from "../src/stores/events"
 import { useCatalog } from "../src/stores/catalog"
 import { useSettings } from "../src/stores/settings"
 import { AuthGate } from "../src/components/AuthGate"
@@ -40,6 +40,10 @@ function RootLayout() {
     initAuth()
     loadConnections()
     useSettings.getState().load()
+    // Last-known session statuses, so the list shows real state at cold
+    // start instead of guessing "all idle". Validated against the server on
+    // first stream liveness — see restoreStatusCache/resyncBusySessions.
+    restoreStatusCache()
 
     // Connect notification preferences to the notification module
     notifications.configure(() => useSettings.getState().notifications)

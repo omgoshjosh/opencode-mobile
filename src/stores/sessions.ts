@@ -10,7 +10,7 @@ import { mergeIncomingMessage } from "../lib/message-merge"
 import { isColdSessionLoad, isLiveEventForSession } from "../lib/session-load-reconcile"
 import { mergeOlderPage, mergeOlderParts, refreshWindowSize } from "../lib/message-page"
 import { canRenderFromCache, dropTranscript, getTranscript, putTranscript, type TranscriptCache } from "../lib/transcript-cache"
-import { dropPreview, previewFromParts, previewText, putPreview, type PreviewMap } from "../lib/session-preview"
+import { dropPreview, parsePreviewMap, previewFromParts, previewText, putPreview, type PreviewMap } from "../lib/session-preview"
 import { markViewed, parseLastViewed, type LastViewedMap } from "../lib/session-attention"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
@@ -30,6 +30,21 @@ function parseMessages(response: MessageWithParts[]): { messages: Message[]; par
 // Holds only session ids and timestamps -- no message text, titles or tool
 // output. See the allowlist in src/lib/persisted-keys.test.ts.
 const LAST_VIEWED_KEY = "session_last_viewed"
+
+// Last-known preview lines, persisted eagerly for cold-start rendering.
+// Bounded by MAX_TRACKED_PREVIEWS via putPreview, so the write stays small.
+const PREVIEWS_KEY = "session_previews"
+
+function persistPreviews(previews: Record<string, { text: string; at: number }>) {
+  AsyncStorage.setItem(PREVIEWS_KEY, JSON.stringify(previews)).catch(() => {})
+}
+
+/** putPreview + eager persist in one step, for use inside set() updaters. */
+function persistedPutPreview(previews: PreviewMap, sessionID: string, seed: { text: string; at: number }): PreviewMap {
+  const next = putPreview(previews, sessionID, seed)
+  persistPreviews(next)
+  return next
+}
 
 function pageSize(): number {
   return useSettings.getState().pageSize
@@ -134,6 +149,17 @@ export const useSessions = create<SessionsState>((set, get) => ({
     } catch {
       // Read state is a convenience; failing to restore it must not block the
       // session list from rendering.
+    }
+    // Previews ride the same boot path: last-known "what is this session
+    // talking about" lines render immediately instead of starting blank
+    // until the stream mentions each session again. Live entries win.
+    try {
+      const cached = parsePreviewMap(await AsyncStorage.getItem(PREVIEWS_KEY))
+      if (Object.keys(cached).length > 0) {
+        set((state) => ({ previews: { ...cached, ...state.previews } }))
+      }
+    } catch {
+      // Same convenience rule as above.
     }
   },
 
@@ -242,7 +268,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
       set((state) => ({
         lastViewed: nextViewed,
-        ...(seed ? { previews: putPreview(state.previews, sessionID, seed) } : null),
+        ...(seed ? { previews: persistedPutPreview(state.previews, sessionID, seed) } : null),
         currentSession: session,
         messages,
         parts,
@@ -560,6 +586,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
               at: part.time?.start ?? Date.now(),
             }),
           }))
+          persistPreviews(get().previews)
         }
       }
     }

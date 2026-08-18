@@ -9,6 +9,24 @@ import { AnalyticsEvent, track } from "../lib/analytics"
 import { recordSuccessfulSession } from "../lib/store-review"
 import { isAuthError } from "../lib/api-error"
 import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
+import { parseStatusCache, toStatusCache } from "../lib/status-cache"
+import AsyncStorage from "@react-native-async-storage/async-storage"
+
+// Last-known statuses, persisted eagerly so the sessions list renders real
+// state at cold start instead of guessing "all idle". See src/lib/status-cache.ts.
+const STATUS_CACHE_KEY = "opencode_session_status_cache"
+
+function persistStatusCache(map: Record<string, { type: string }>) {
+  AsyncStorage.setItem(STATUS_CACHE_KEY, JSON.stringify(toStatusCache(map))).catch(() => {})
+}
+
+/** Restore at boot. Live values win: a status the stream already delivered is newer than the disk. */
+export async function restoreStatusCache() {
+  const raw = await AsyncStorage.getItem(STATUS_CACHE_KEY).catch(() => null)
+  const cached = parseStatusCache(raw)
+  if (Object.keys(cached).length === 0) return
+  useEvents.setState((state) => ({ sessionStatus: { ...cached, ...state.sessionStatus } }))
+}
 import { isHealthy, shouldReconnectOnResume, shouldResetRetries, type TransportState } from "../lib/sse-liveness"
 import { RECONCILE_MESSAGE_LIMIT } from "../lib/message-page"
 import type { Client, Part, Session, Message } from "../lib/sdk"
@@ -153,6 +171,7 @@ async function resyncBusySessions() {
           sessionStatus: { ...state.sessionStatus, [sessionID]: { type: "idle" } },
           statusText: { ...state.statusText, [sessionID]: "" },
         }))
+        persistStatusCache(useEvents.getState().sessionStatus)
         useSessions.setState((state) => ({ sending: { ...state.sending, [sessionID]: false } }))
         if (useSessions.getState().currentSession?.id === sessionID) {
           useSessions.getState().refreshMessages()
@@ -230,10 +249,12 @@ export const useEvents = create<EventsState>((set, get) => ({
     // Run in background
     ;(async () => {
       let reconnectScheduled = false
-      // True if this connect() call is resuming after a prior disconnect —
-      // gates the one-time busy-session resync below so a cold app start
-      // (sessionStatus is always empty then) never triggers it, and a run of
-      // failed retries can't re-arm the check on every attempt.
+      // True if this connect() call is resuming after a prior disconnect.
+      // The busy-session resync used to run ONLY then, because a cold start
+      // had an empty sessionStatus — that assumption died when the status
+      // cache started restoring last-known state from disk. Now the resync
+      // also runs on first liveness whenever any busy statuses exist, which
+      // is exactly the set that can be stale (disk-restored or missed-idle).
       const isReconnect = get().reconnectAttempts > 0
       let resyncedAfterReconnect = false
       // Retry state resets on demonstrated liveness, not on a timer. The old
@@ -284,7 +305,8 @@ export const useEvents = create<EventsState>((set, get) => ({
           // The stream is genuinely live again (we're actually receiving
           // data, not just optimistically marked "connected") — resync once
           // per reconnect, not on every event.
-          if (isReconnect && !resyncedAfterReconnect) {
+          const hasBusyStatuses = Object.values(get().sessionStatus).some((s) => s.type === "busy")
+          if ((isReconnect || hasBusyStatuses) && !resyncedAfterReconnect) {
             resyncedAfterReconnect = true
             void resyncBusySessions()
             // Backfill content missed while the stream was down. Separate from
@@ -325,6 +347,9 @@ export const useEvents = create<EventsState>((set, get) => ({
                 // Clear status text when idle
                 statusText: status.type === "idle" ? { ...state.statusText, [sessionID]: "" } : state.statusText,
               }))
+              // Eager, on every transition: the sessions list must be able to
+              // render last-known truth at next cold start.
+              persistStatusCache(get().sessionStatus)
 
               // SSE is the source of truth — update sending state unconditionally
               if (status.type === "idle") {

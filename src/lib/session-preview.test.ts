@@ -1,6 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
+  parsePreviewMap,
   MAX_TRACKED_PREVIEWS,
   PREVIEW_MAX_CHARS,
   dropPreview,
@@ -149,4 +150,14 @@ test("a seeded preview is normalised like a streamed one", () => {
 
 test("a part with no timestamp still seeds, at the epoch", () => {
   assert.equal(previewFromParts([{ type: "text", text: "hi" }])?.at, 0)
+})
+
+// --- persistence round-trip ---
+
+test("a persisted preview map parses back; corrupt storage parses to empty", () => {
+  const map = { s1: { text: "running tests", at: 5 } }
+  assert.deepEqual(parsePreviewMap(JSON.stringify(map)), map)
+  assert.deepEqual(parsePreviewMap(null), {})
+  assert.deepEqual(parsePreviewMap("garbage"), {})
+  assert.deepEqual(parsePreviewMap('{"s1":{"text":42,"at":1}}'), {})
 })
