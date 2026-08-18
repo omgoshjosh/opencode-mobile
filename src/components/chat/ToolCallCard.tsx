@@ -1,4 +1,5 @@
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
+import { LIVE_TICK_MS, formatElapsed } from "../../lib/elapsed-format"
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView, Platform } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { useTranslation } from "react-i18next"
@@ -368,11 +369,20 @@ function ErrorBanner({ message, isDark }: { message: string; isDark: boolean }) 
 }
 
 // --- Duration display ---
-function duration(start?: number, end?: number): string | null {
-  if (!start || !end) return null
-  const ms = end - start
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(1)}s`
+// Finished calls: exact span. Running calls: a LIVE wall clock — the elapsed
+// figure ticks every second, which is also the difference between "still
+// working" and "hung" being visible at a glance. See src/lib/elapsed-format.
+function useElapsed(start?: number, end?: number, running?: boolean): string | null {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!running || !start || end) return
+    const timer = setInterval(() => setNow(Date.now()), LIVE_TICK_MS)
+    return () => clearInterval(timer)
+  }, [running, start, end])
+  if (!start) return null
+  if (end) return formatElapsed(end - start)
+  if (!running) return null
+  return formatElapsed(Math.max(0, now - start))
 }
 
 // --- Main component ---
@@ -390,7 +400,8 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded }: Props) {
   const status = tool.state?.status || "pending"
   const color = statusColor(status)
   const error = tool.state?.error?.message
-  const elapsed = duration(tool.state?.time?.start, tool.state?.time?.end)
+  const isRunning = status === "running" || status === "pending"
+  const elapsed = useElapsed(tool.state?.time?.start, tool.state?.time?.end, isRunning)
   const hasDetail = tool.state?.input !== undefined || tool.state?.output !== undefined || error
 
   const toggle = useCallback(() => {
@@ -417,7 +428,9 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded }: Props) {
           <Text style={[s.name, isDark && s.nameDark]} numberOfLines={1}>
             {toolCallTitle(tool) || t("chat.toolCallCard.fallbackTitle")}
           </Text>
-          {elapsed && <Text style={[s.elapsed, isDark && s.elapsedDark]}>{elapsed}</Text>}
+          {elapsed && (
+            <Text style={[s.elapsed, isDark && s.elapsedDark, isRunning && s.elapsedLive]}>{elapsed}</Text>
+          )}
         </View>
         <View style={s.headerRight}>
           {status === "running" && <ActivityIndicator size="small" color={color} />}
@@ -482,6 +495,8 @@ const s = StyleSheet.create({
   nameDark: { color: "#e5e5e5" },
   elapsed: { fontSize: 11, color: "#999999" },
   elapsedDark: { color: "#9a9a9a" },
+  // Amber while ticking: the number moving + the color say "in flight".
+  elapsedLive: { color: "#f59e0b", fontWeight: "600" },
 
   // Error
   errorBanner: {
