@@ -6,6 +6,7 @@ import { clampPageSize, mergeStoredSettings } from "../lib/settings-merge"
 import { setAppLocale } from "../lib/i18n/config"
 import type { LocalePreference } from "../lib/i18n/locale-resolve"
 import { resolveColorScheme, type ThemePreference } from "../lib/theme-preference"
+import type { TimeZoneMode } from "../lib/timestamp-shorthand"
 
 const SETTINGS_KEY = "opencode_settings"
 
@@ -16,6 +17,8 @@ interface Settings {
   theme: ThemePreference
   /** Experiment: triage-first sessions list. Off = the classic list. */
   sessionsListV2: boolean
+  /** Timestamp rendering: device-local time or UTC. */
+  timeZone: TimeZoneMode
 }
 
 const DEFAULTS: Settings = {
@@ -24,6 +27,7 @@ const DEFAULTS: Settings = {
   locale: "system",
   theme: "system",
   sessionsListV2: false,
+  timeZone: "local",
 }
 
 interface SettingsState extends Settings {
@@ -34,6 +38,7 @@ interface SettingsState extends Settings {
   setLocale: (locale: LocalePreference) => Promise<void>
   setTheme: (theme: ThemePreference) => Promise<void>
   setSessionsListV2: (enabled: boolean) => Promise<void>
+  setTimeZone: (zone: TimeZoneMode) => Promise<void>
 }
 
 function snapshot(get: () => SettingsState): Settings {
@@ -43,6 +48,7 @@ function snapshot(get: () => SettingsState): Settings {
     locale: get().locale,
     theme: get().theme,
     sessionsListV2: get().sessionsListV2,
+    timeZone: get().timeZone,
   }
 }
 
@@ -100,5 +106,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
   setSessionsListV2: async (sessionsListV2) => {
     set({ sessionsListV2 })
     await persist({ ...snapshot(get), sessionsListV2 })
+  },
+
+  setTimeZone: async (timeZone) => {
+    set({ timeZone })
+    await persist({ ...snapshot(get), timeZone })
   },
 }))

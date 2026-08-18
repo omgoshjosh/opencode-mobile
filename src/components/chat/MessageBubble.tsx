@@ -12,6 +12,7 @@ import { modelDisplayLabel } from "../../lib/model-label"
 import { deliveryState } from "../../lib/message-delivery"
 import { shorthandTimestamp } from "../../lib/timestamp-shorthand"
 import { useSessions } from "../../stores/sessions"
+import { useSettings } from "../../stores/settings"
 
 const SCREEN_WIDTH = Dimensions.get("window").width
 
@@ -46,6 +47,7 @@ export const MessageBubble = memo(
     // every row.
     const providers = useCatalog((c) => c.providers)
     const failedMessageIDs = useSessions((st) => st.failedMessageIDs)
+    const timeZone = useSettings((st) => st.timeZone)
     // "sent" is the overwhelmingly common case and needs no chrome; only the
     // in-flight and failed states are worth a badge.
     const delivery = deliveryState({ messageID: message.id, failedIDs: failedMessageIDs })
@@ -103,7 +105,7 @@ export const MessageBubble = memo(
           {/* When it was said. Shorthand grows with distance: clock today,
               date this year, year beyond — see src/lib/timestamp-shorthand. */}
           {(() => {
-            const stamp = shorthandTimestamp(message.time?.created, Date.now())
+            const stamp = shorthandTimestamp(message.time?.created, Date.now(), timeZone)
             return stamp ? <Text style={[s.msgTime, isDark && s.msgTimeDark]}>{stamp}</Text> : null
           })()}
         </View>

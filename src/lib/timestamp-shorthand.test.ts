@@ -27,3 +27,18 @@ test("garbage renders nothing, not NaN", () => {
   assert.equal(shorthandTimestamp(0, now), null)
   assert.equal(shorthandTimestamp(Number.NaN, now), null)
 })
+
+// --- UTC mode ---
+
+test("utc mode renders UTC fields and says so", () => {
+  // 2026-08-17T14:30Z; "today" in UTC is decided by UTC fields.
+  const utcNow = Date.UTC(2026, 7, 17, 14, 30)
+  assert.equal(shorthandTimestamp(Date.UTC(2026, 7, 17, 9, 5), utcNow, "utc"), "09:05 UTC")
+  assert.equal(shorthandTimestamp(Date.UTC(2026, 2, 3, 23, 41), utcNow, "utc"), "Mar 3, 23:41 UTC")
+  assert.equal(shorthandTimestamp(Date.UTC(2025, 11, 31, 8, 0), utcNow, "utc"), "2025 Dec 31, 08:00 UTC")
+})
+
+test("local stays suffix-free", () => {
+  const now = new Date(2026, 7, 17, 14, 30).getTime()
+  assert.equal(shorthandTimestamp(new Date(2026, 7, 17, 9, 5).getTime(), now, "local"), "09:05")
+})

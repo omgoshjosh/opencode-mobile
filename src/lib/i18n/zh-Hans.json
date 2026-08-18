@@ -84,6 +84,15 @@
         "label": "新版会话列表",
         "description": "以分诊为先的重新设计：状态圆点，无标签块。可随时切回。"
       }
+    },
+    "timezone": {
+      "label": "时区",
+      "title": "时间戳时区",
+      "local": "本地",
+      "utc": "UTC",
+      "specificDisabled": "指定时区（不可用）",
+      "specificSoonTitle": "暂不可用",
+      "specificSoonMessage": "指定时区功能稍后推出。目前可使用本地时间和 UTC。"
     }
   },
   "session": {
