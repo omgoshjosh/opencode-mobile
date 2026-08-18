@@ -12,6 +12,7 @@ import type { Message, Part } from "../../lib/sdk"
 import { useCatalog } from "../../stores/catalog"
 import { modelDisplayLabel } from "../../lib/model-label"
 import { deliveryState } from "../../lib/message-delivery"
+import { shorthandTimestamp } from "../../lib/timestamp-shorthand"
 import { useSessions } from "../../stores/sessions"
 
 const SCREEN_WIDTH = Dimensions.get("window").width
@@ -101,6 +102,12 @@ export const MessageBubble = memo(
           {!isUser && assistantModelLabel && (
             <Text style={[s.modelTag, isDark && s.modelTagDark]}>{assistantModelLabel}</Text>
           )}
+          {/* When it was said. Shorthand grows with distance: clock today,
+              date this year, year beyond — see src/lib/timestamp-shorthand. */}
+          {(() => {
+            const stamp = shorthandTimestamp(message.time?.created, Date.now())
+            return stamp ? <Text style={[s.msgTime, isDark && s.msgTimeDark]}>{stamp}</Text> : null
+          })()}
         </View>
 
         {/* Image attachments */}
@@ -263,6 +270,8 @@ const s = StyleSheet.create({
   assistantDark: { backgroundColor: "#1a1a2e" },
 
   header: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 },
+  msgTime: { marginLeft: "auto", fontSize: 11, color: "#999999", flexShrink: 0 },
+  msgTimeDark: { color: "#9a9a9a" },
   role: { fontSize: 13, fontWeight: "600", color: "#666666" },
   roleUser: { color: "#0a0a0a" },
   textWhite: { color: "#ffffff" },
