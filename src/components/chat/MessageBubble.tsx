@@ -5,6 +5,8 @@ import { Markdown } from "../markdown"
 import { ReasoningBlock } from "./ReasoningBlock"
 import { SelectableTextModal } from "./SelectableTextModal"
 import { splitSwarmBriefing } from "../../lib/swarm-briefing"
+import { segmentParts } from "../../lib/message-segments"
+import { shouldCollapseToolRun, summarizeToolRun } from "../../lib/tool-titles"
 import { router } from "expo-router"
 import type { Message, Part } from "../../lib/sdk"
 import { useCatalog } from "../../stores/catalog"
@@ -69,6 +71,9 @@ export const MessageBubble = memo(
     // model, not for the human rereading their own message — collapse it to a
     // small indicator, expandable on demand. See src/lib/swarm-briefing.ts.
     const { visibleText: text, briefing, swarmName } = splitSwarmBriefing(joined)
+    // Assistant bodies render as interleaved segments (prose / tool runs in
+    // stream order); user messages have no tools and keep the joined blob.
+    const segments = segmentParts(parts)
     const [showBriefing, setShowBriefing] = useState(false)
     const reasoning = reasoningParts.map((p) => p.text).join("\n") || ""
 
@@ -134,17 +139,80 @@ export const MessageBubble = memo(
         {/* Reasoning (collapsible) */}
         {reasoning.length > 0 && <ReasoningBlock text={reasoning} isDark={isDark} />}
 
-        {/* Message text */}
-        {text.length > 0 &&
-          (isUser ? (
-            <Text style={[s.messageText, isDark && s.textWhite]} selectable>
-              {text}
-            </Text>
-          ) : (
-            <View style={s.markdownWrap}>
-              <Markdown>{text}</Markdown>
-            </View>
-          ))}
+        {/* Message body. User messages are one prose block. Assistant
+            messages preserve the STREAM's shape: prose, then the tool calls
+            exactly where they interrupted it, then more prose — the breaks
+            are context ("ran this, saw that, so I did X" only reads
+            truthfully when the run sits between the clauses). Short runs
+            render as inline links; long runs as one summary row. */}
+        {isUser
+          ? text.length > 0 && (
+              <Text style={[s.messageText, isDark && s.textWhite]} selectable>
+                {text}
+              </Text>
+            )
+          : segments.map((segment, index) =>
+              segment.kind === "text" ? (
+                <View key={`t${index}`} style={s.markdownWrap}>
+                  <Markdown>{segment.text}</Markdown>
+                </View>
+              ) : shouldCollapseToolRun(segment.tools.length) ? (
+                (() => {
+                  const run = summarizeToolRun(segment.tools)
+                  return (
+                    <TouchableOpacity
+                      key={`r${index}`}
+                      style={[s.toolRunRow, isDark && s.toolRunRowDark]}
+                      onPress={() =>
+                        router.push({
+                          pathname: "/tool-run/[messageID]",
+                          params: { messageID: message.id, focus: segment.tools[0].id },
+                        })
+                      }
+                      activeOpacity={0.7}
+                      testID={`tool-run-${message.id}-${index}`}
+                    >
+                      <Ionicons
+                        name={run.failed ? "alert-circle" : run.running ? "sync-outline" : "construct-outline"}
+                        size={14}
+                        color={run.failed ? "#ef4444" : run.running ? "#f59e0b" : "#8b5cf6"}
+                      />
+                      <Text style={[s.toolRunText, isDark && s.toolRunTextDark]} numberOfLines={1}>
+                        {run.count} tool calls
+                        {run.failed ? ` · ${run.failed} failed` : ""}
+                        {run.running ? ` · ${run.running} running` : ""}
+                      </Text>
+                      <Ionicons name="chevron-forward" size={14} color={isDark ? "#9a9a9a" : "#999999"} />
+                    </TouchableOpacity>
+                  )
+                })()
+              ) : (
+                <View key={`l${index}`} style={s.toolLinks}>
+                  {segment.tools.map((tool) => {
+                    const status = tool.state?.status
+                    return (
+                      <Text
+                        key={tool.id}
+                        style={[
+                          s.toolLink,
+                          status === "error" && s.toolLinkFailed,
+                          (status === "running" || status === "pending") && s.toolLinkRunning,
+                        ]}
+                        onPress={() =>
+                          router.push({
+                            pathname: "/tool-run/[messageID]",
+                            params: { messageID: message.id, focus: tool.id },
+                          })
+                        }
+                        testID={`tool-link-${tool.id}`}
+                      >
+                        {tool.tool || "tool"}
+                      </Text>
+                    )
+                  })}
+                </View>
+              ),
+            )}
 
         {/* Collapsed swarm briefing. Indicated, not shown: the name says
             where the message went; the tap keeps the detail reachable. */}
@@ -164,40 +232,6 @@ export const MessageBubble = memo(
         )}
         {briefing && (
           <SelectableTextModal visible={showBriefing} text={briefing} onClose={() => setShowBriefing(false)} />
-        )}
-
-        {/* Tool calls, as the briefest possible inline representation: the
-            tool's name styled like a link. Neither cards nor a summary row —
-            the transcript stays prose, and everything about a call lives one
-            tap away. Each link lands on the tool screen with ITS call
-            expanded and scrolled to the top (focus param). Status is carried
-            in the link color so a failed call is findable without opening
-            anything. */}
-        {toolParts.length > 0 && (
-          <View style={s.toolLinks}>
-            {toolParts.map((tool) => {
-              const status = tool.state?.status
-              return (
-                <Text
-                  key={tool.id}
-                  style={[
-                    s.toolLink,
-                    status === "error" && s.toolLinkFailed,
-                    (status === "running" || status === "pending") && s.toolLinkRunning,
-                  ]}
-                  onPress={() =>
-                    router.push({
-                      pathname: "/tool-run/[messageID]",
-                      params: { messageID: message.id, focus: tool.id },
-                    })
-                  }
-                  testID={`tool-link-${tool.id}`}
-                >
-                  {tool.tool || "tool"}
-                </Text>
-              )
-            })}
-          </View>
         )}
 
         {/* Tokens/cost for assistant messages */}
@@ -229,7 +263,24 @@ export const MessageBubble = memo(
 )
 
 const s = StyleSheet.create({
-  toolLinks: { flexDirection: "row", flexWrap: "wrap", columnGap: 10, rowGap: 4, marginTop: 4 },
+  toolLinks: { flexDirection: "row", flexWrap: "wrap", columnGap: 10, rowGap: 4, marginVertical: 4 },
+  // Summary row for a long consecutive run — one line, sits between prose
+  // blocks where the run actually happened.
+  toolRunRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#faf9ff",
+    borderWidth: 1,
+    borderColor: "#e9e5f8",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginVertical: 4,
+  },
+  toolRunRowDark: { backgroundColor: "#151321", borderColor: "#2a2440" },
+  toolRunText: { flex: 1, fontSize: 12, fontWeight: "600", color: "#6d28d9" },
+  toolRunTextDark: { color: "#a78bfa" },
   toolLink: { fontSize: 12, fontWeight: "600", color: "#8b5cf6", textDecorationLine: "underline" },
   toolLinkFailed: { color: "#ef4444" },
   toolLinkRunning: { color: "#f59e0b" },
