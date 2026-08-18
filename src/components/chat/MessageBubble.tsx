@@ -2,12 +2,10 @@ import { memo, useState } from "react"
 import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity, Dimensions } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Markdown } from "../markdown"
-import { ToolCallCard } from "./ToolCallCard"
 import { ReasoningBlock } from "./ReasoningBlock"
 import { SelectableTextModal } from "./SelectableTextModal"
 import { splitSwarmBriefing } from "../../lib/swarm-briefing"
 import { router } from "expo-router"
-import { shouldCollapseToolRun, summarizeToolRun } from "../../lib/tool-titles"
 import type { Message, Part } from "../../lib/sdk"
 import { useCatalog } from "../../stores/catalog"
 import { modelDisplayLabel } from "../../lib/model-label"
@@ -166,42 +164,38 @@ export const MessageBubble = memo(
           <SelectableTextModal visible={showBriefing} text={briefing} onClose={() => setShowBriefing(false)} />
         )}
 
-        {/* Tool calls. A long run collapses to one row that pushes its own
-            screen — thirteen consecutive cards is a wall, not a transcript.
-            Short runs stay inline, one tap cheaper. */}
-        {shouldCollapseToolRun(toolParts.length) ? (
-          (() => {
-            const run = summarizeToolRun(toolParts)
-            return (
-              <TouchableOpacity
-                style={[s.toolRunRow, isDark && s.toolRunRowDark]}
-                onPress={() => router.push({ pathname: "/tool-run/[messageID]", params: { messageID: message.id } })}
-                activeOpacity={0.7}
-                testID={`tool-run-${message.id}`}
-              >
-                <Ionicons
-                  name={run.failed ? "alert-circle" : run.running ? "sync-outline" : "construct-outline"}
-                  size={15}
-                  color={run.failed ? "#ef4444" : run.running ? "#f59e0b" : "#8b5cf6"}
-                />
-                <View style={s.toolRunText}>
-                  <Text style={[s.toolRunTitle, isDark && s.textWhite]}>
-                    {run.count} tool calls
-                    {run.failed ? ` · ${run.failed} failed` : ""}
-                    {run.running ? ` · ${run.running} running` : ""}
-                  </Text>
-                  {run.preview.length > 0 && (
-                    <Text style={[s.toolRunPreview, isDark && s.toolRunPreviewDark]} numberOfLines={1}>
-                      {run.preview.join(" · ")}…
-                    </Text>
-                  )}
-                </View>
-                <Ionicons name="chevron-forward" size={16} color={isDark ? "#9a9a9a" : "#999999"} />
-              </TouchableOpacity>
-            )
-          })()
-        ) : (
-          toolParts.map((tool) => <ToolCallCard key={tool.id} tool={tool} isDark={isDark} />)
+        {/* Tool calls, as the briefest possible inline representation: the
+            tool's name styled like a link. Neither cards nor a summary row —
+            the transcript stays prose, and everything about a call lives one
+            tap away. Each link lands on the tool screen with ITS call
+            expanded and scrolled to the top (focus param). Status is carried
+            in the link color so a failed call is findable without opening
+            anything. */}
+        {toolParts.length > 0 && (
+          <View style={s.toolLinks}>
+            {toolParts.map((tool) => {
+              const status = tool.state?.status
+              return (
+                <Text
+                  key={tool.id}
+                  style={[
+                    s.toolLink,
+                    status === "error" && s.toolLinkFailed,
+                    (status === "running" || status === "pending") && s.toolLinkRunning,
+                  ]}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/tool-run/[messageID]",
+                      params: { messageID: message.id, focus: tool.id },
+                    })
+                  }
+                  testID={`tool-link-${tool.id}`}
+                >
+                  {tool.tool || "tool"}
+                </Text>
+              )
+            })}
+          </View>
         )}
 
         {/* Tokens/cost for assistant messages */}
@@ -233,23 +227,10 @@ export const MessageBubble = memo(
 )
 
 const s = StyleSheet.create({
-  toolRunRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#faf9ff",
-    borderWidth: 1,
-    borderColor: "#e9e5f8",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginTop: 6,
-  },
-  toolRunRowDark: { backgroundColor: "#151321", borderColor: "#2a2440" },
-  toolRunText: { flex: 1, gap: 1 },
-  toolRunTitle: { fontSize: 13, fontWeight: "600", color: "#0a0a0a" },
-  toolRunPreview: { fontSize: 11, color: "#888888" },
-  toolRunPreviewDark: { color: "#9a9a9a" },
+  toolLinks: { flexDirection: "row", flexWrap: "wrap", columnGap: 10, rowGap: 4, marginTop: 4 },
+  toolLink: { fontSize: 12, fontWeight: "600", color: "#8b5cf6", textDecorationLine: "underline" },
+  toolLinkFailed: { color: "#ef4444" },
+  toolLinkRunning: { color: "#f59e0b" },
   briefingChip: {
     flexDirection: "row",
     alignItems: "center",
