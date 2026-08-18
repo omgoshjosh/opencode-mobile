@@ -592,9 +592,12 @@ export default function SessionsScreen() {
       }
       bucket.push(session)
     }
-    if (order.length <= 1) {
-      return ordered.map((session) => ({ type: "session", session }))
-    }
+    // No single-group special case. This used to render ONE group flat with
+    // no header at all — read as "the top group's header is missing",
+    // because with an explicitly chosen group mode the header carries the
+    // name, the count and the collapse control regardless of how many
+    // sibling groups happen to exist. (V2's single-CHILD dedup below is a
+    // different rule and still applies.)
     // Stable sort: modes that define an order (date, status) use it; the rest
     // keep first-seen order. Ungrouped always sinks to the bottom.
     const sorted = order
