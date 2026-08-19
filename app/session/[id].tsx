@@ -48,6 +48,7 @@ import { shouldAutoScroll, shouldShowScrollButton, transcriptSignature } from ".
 import { breadcrumbFor } from "../../src/lib/session-breadcrumb"
 import { ABORT_CONFIRM_WINDOW_MS, DISARMED, abortLabel, isAbortable, isArmed, pressAbort } from "../../src/lib/abort-control"
 import { inferBusyFromMessages } from "../../src/lib/session-status-reconcile"
+import { visibleTranscriptEntry } from "../../src/lib/transcript-visibility"
 import { useSessions } from "../../src/stores/sessions"
 import { useDrafts } from "../../src/stores/drafts"
 import { useEvents, refreshPending } from "../../src/stores/events"
@@ -201,6 +202,10 @@ export default function SessionScreen() {
   const sessionList = useSessions((st) => st.sessions)
   const breadcrumb = useMemo(() => breadcrumbFor(currentSession, sessionList), [currentSession?.parentID, sessionList])
   const [showScrollButton, setShowScrollButton] = useState(false)
+  // Send re-entrancy: ref blocks same-frame double-taps (state lags a
+  // render); state drives the button's instant pending dim.
+  const sendInFlight = useRef(false)
+  const [sendPending, setSendPending] = useState(false)
 
   // SSE reconnect banner
   const reconnectAttempts = useEvents((s) => s.reconnectAttempts)
@@ -260,10 +265,10 @@ export default function SessionScreen() {
       transcriptBound
         ? (messages || [])
             .filter((msg) => !revertMessageID || msg.id.startsWith("temp-") || msg.id < revertMessageID)
-            .map((msg) => ({
-              message: msg,
-              parts: (parts && parts[msg.id]) || [],
-            }))
+            .flatMap((msg) => {
+              const entry = visibleTranscriptEntry(msg, parts?.[msg.id])
+              return entry ? [entry] : []
+            })
             .reverse()
         : [],
     [messages, parts, revertMessageID, transcriptBound],
@@ -602,48 +607,69 @@ export default function SessionScreen() {
   // --- Send ---
   const handleSend = async () => {
     if (!input.trim() && attachments.length === 0) return
-    const authenticated = await authenticateForMessage()
-    if (!authenticated) {
-      Alert.alert(t("session.alerts.authRequiredTitle"), t("session.alerts.authRequiredMessage"))
-      return
-    }
-
-    const text = input.trim()
-    const files = [...attachments]
-    setInput("")
-    setAttachments([])
-    // A sent message is no longer a draft.
-    if (id) useDrafts.getState().clear(id)
-
-    // Server slash commands (no attachments for commands)
-    if (text.startsWith("/") && files.length === 0) {
-      const [cmdName, ...args] = text.split(" ")
-      const name = cmdName.slice(1)
-      const match = serverCommands.find((c) => c.name === name)
-      if (match && sessionClient && currentSession) {
-        sessionClient.session
-          .command(currentSession.id, {
-            command: name,
-            arguments: args.join(" "),
-            agent,
-            model: model ? `${model.providerID}/${model.modelID}` : undefined,
-          })
-          .catch((err) => console.error("Command failed:", err))
+    // Synchronous re-entrancy guard — the double-send bug. The await on
+    // authentication yields before the input is consumed, so every tap
+    // landing in that window passed the input check and fired its own
+    // duplicate send. A ref (not state) blocks same-frame re-entry; same
+    // pattern as creatingInFlight on the new-session FAB.
+    if (sendInFlight.current) return
+    sendInFlight.current = true
+    // State mirror of the ref, for the button's instant "got your tap" dim.
+    setSendPending(true)
+    try {
+      const authenticated = await authenticateForMessage()
+      if (!authenticated) {
+        Alert.alert(t("session.alerts.authRequiredTitle"), t("session.alerts.authRequiredMessage"))
         return
       }
-    }
 
-    // Messages are queued server-side when the session is busy.
-    // No need to abort - just send and it will be processed after current response.
-    try {
-      const selection = sessionPromptSelection({ agent, model })
-      await sendMessage(text, selection.model, selection.agent, files, variant || undefined)
-    } catch (err) {
-      console.error("Send failed:", err)
-      // Restore the user's text and attachments so their input isn't lost.
-      setInput((prev) => (prev ? prev : text))
-      setAttachments((prev) => (prev.length ? prev : files))
-      Alert.alert(t("session.alerts.sendFailedTitle"), t("session.alerts.sendFailedMessage"))
+      const text = input.trim()
+      const files = [...attachments]
+      setInput("")
+      setAttachments([])
+      // A sent message is no longer a draft.
+      if (id) useDrafts.getState().clear(id)
+
+      // Server slash commands (no attachments for commands)
+      if (text.startsWith("/") && files.length === 0) {
+        const [cmdName, ...args] = text.split(" ")
+        const name = cmdName.slice(1)
+        const match = serverCommands.find((c) => c.name === name)
+        if (match && sessionClient && currentSession) {
+          // Awaited, with failure feedback. This was fire-and-forget with a
+          // console.error — a failed command silently swallowed the user's
+          // input, which is strictly worse than the duplicate-send bug.
+          try {
+            await sessionClient.session.command(currentSession.id, {
+              command: name,
+              arguments: args.join(" "),
+              agent,
+              model: model ? `${model.providerID}/${model.modelID}` : undefined,
+            })
+          } catch (err) {
+            console.error("Command failed:", err)
+            setInput((prev) => (prev ? prev : text))
+            Alert.alert(t("session.alerts.sendFailedTitle"), t("session.alerts.sendFailedMessage"))
+          }
+          return
+        }
+      }
+
+      // Messages are queued server-side when the session is busy.
+      // No need to abort - just send and it will be processed after current response.
+      try {
+        const selection = sessionPromptSelection({ agent, model })
+        await sendMessage(text, selection.model, selection.agent, files, variant || undefined)
+      } catch (err) {
+        console.error("Send failed:", err)
+        // Restore the user's text and attachments so their input isn't lost.
+        setInput((prev) => (prev ? prev : text))
+        setAttachments((prev) => (prev.length ? prev : files))
+        Alert.alert(t("session.alerts.sendFailedTitle"), t("session.alerts.sendFailedMessage"))
+      }
+    } finally {
+      sendInFlight.current = false
+      setSendPending(false)
     }
   }
 
@@ -1091,10 +1117,21 @@ export default function SessionScreen() {
                 <Ionicons name="mic" size={22} color="#ffffff" />
               </TouchableOpacity>
             )}
-            {/* Send button: when there's input */}
+            {/* Send button: when there's input. Dims the instant a tap is
+                accepted — the "we got it" signal while auth/send runs — and
+                refuses further taps until the flight resolves. */}
             {!speech.listening && (input.trim() || attachments.length > 0) && (
-              <TouchableOpacity style={s.sendBtn} onPress={handleSend} testID="chat-send-button">
-                <Ionicons name="send" size={20} color="#ffffff" />
+              <TouchableOpacity
+                style={[s.sendBtn, sendPending && s.sendBtnPending]}
+                onPress={handleSend}
+                disabled={sendPending}
+                testID="chat-send-button"
+              >
+                {sendPending ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Ionicons name="send" size={20} color="#ffffff" />
+                )}
               </TouchableOpacity>
             )}
           </View>
@@ -1279,6 +1316,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     marginLeft: 8,
   },
+  sendBtnPending: { opacity: 0.5 },
   sendBtnDisabled: { backgroundColor: "#cccccc" },
   micBtn: {
     width: 40,
