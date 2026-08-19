@@ -15,12 +15,14 @@ interface PartLike {
   ignored?: boolean
 }
 
-export function visibleTranscriptEntry<M extends MessageLike, P extends PartLike>(
+export function visibleTranscriptEntry<M extends MessageLike & { time?: { completed?: number } }, P extends PartLike>(
   message: M,
   parts: P[] | null | undefined,
 ): { message: M; parts: P[] } | undefined {
   const visible = visibleTranscriptParts(parts)
-  if (visible.length === 0 && !messageErrorText(message)) return undefined
+  // Kept when there is content OR any notice to show (explicit error, or
+  // the synthesized missing-response notice for finalized-empty messages).
+  if (visible.length === 0 && !messageNoticeText(message, parts)) return undefined
   return { message, parts: visible }
 }
 
@@ -55,4 +57,47 @@ function errorTitle(name?: string) {
   if (name === "StructuredOutputError") return "Structured output failed"
   if (name === "APIError") return "Provider request failed"
   return "Something went wrong"
+}
+
+/** Finalized = the server closed this message: completed stamp or an error. */
+export function isFinalizedMessage(message: MessageLike & { time?: { completed?: number } }): boolean {
+  return Boolean(message.time?.completed) || Boolean(message.error)
+}
+
+export const MISSING_RESPONSE_NOTICE =
+  "No response was received — delivery may have failed. Ask again to retry."
+
+/**
+ * The one notice a bubble may need: an explicit error wins; otherwise a
+ * FINALIZED assistant message with nothing visible synthesizes a
+ * delivery-failure notice rather than rendering blank or vanishing.
+ *
+ * Two deliberate exclusions:
+ * - In-flight messages: streaming messages are born empty; emptiness only
+ *   means something after finalization.
+ * - Structural messages: one that carries deliberately-hidden text
+ *   (synthetic/ignored — briefings, compaction bookkeeping) is empty by
+ *   DESIGN, not by loss, and creates no card at all.
+ *
+ * Self-correcting for transient loss: if the missing content arrives later
+ * (observed in the wild — a relay flush landing after finalization), the
+ * visible parts appear and the notice evaporates on the same render pass.
+ */
+export function messageNoticeText(
+  message: MessageLike & { time?: { completed?: number } },
+  parts: PartLike[] | null | undefined,
+): string | undefined {
+  const explicit = messageErrorText(message)
+  if (explicit) return explicit
+  if (message.role !== "assistant") return undefined
+  // An aborted run has no content because the USER stopped it — expected
+  // silence, not lost delivery.
+  if (message.error?.name === "MessageAbortedError") return undefined
+  if (!isFinalizedMessage(message)) return undefined
+  if (visibleTranscriptParts(parts).length > 0) return undefined
+  const structural = (parts ?? []).some(
+    (part) => part.type === "text" && (part.synthetic || part.ignored) && Boolean(part.text?.trim()),
+  )
+  if (structural) return undefined
+  return MISSING_RESPONSE_NOTICE
 }

@@ -1,6 +1,12 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { messageErrorText, visibleTranscriptEntry, visibleTranscriptParts } from "./transcript-visibility.ts"
+import {
+  MISSING_RESPONSE_NOTICE,
+  messageErrorText,
+  messageNoticeText,
+  visibleTranscriptEntry,
+  visibleTranscriptParts,
+} from "./transcript-visibility.ts"
 
 const assistant = { role: "assistant" }
 
@@ -61,4 +67,51 @@ test("aborted assistant messages without content remain hidden", () => {
   const message = { ...assistant, error: { name: "MessageAbortedError", data: { message: "aborted" } } }
   assert.equal(visibleTranscriptEntry(message, []), undefined)
   assert.equal(messageErrorText(message), undefined)
+})
+
+// --- the four contract states ---
+
+const finalized = { role: "assistant", time: { completed: 5 } }
+const inflight = { role: "assistant", time: {} }
+const textPart = { type: "text", text: "hello" }
+
+test("state 1: in-flight with nothing visible renders nothing — and no notice", () => {
+  assert.equal(visibleTranscriptEntry(inflight, []), undefined)
+  assert.equal(messageNoticeText(inflight, []), undefined)
+})
+
+test("state 2: finalized with content renders normally, no notice", () => {
+  const entry = visibleTranscriptEntry(finalized, [textPart])
+  assert.ok(entry)
+  assert.equal(messageNoticeText(finalized, [textPart]), undefined)
+})
+
+test("state 3: finalized with a non-abort error renders the error notice", () => {
+  const errored = { role: "assistant", time: {}, error: { name: "APIError", message: "boom" } }
+  assert.equal(messageNoticeText(errored, []), "Provider request failed: boom")
+  assert.ok(visibleTranscriptEntry(errored, []))
+})
+
+test("state 4: finalized, empty, no error synthesizes the missing-response notice — not a drop", () => {
+  assert.equal(messageNoticeText(finalized, []), MISSING_RESPONSE_NOTICE)
+  // Scaffolding-only parts (step markers, empty text) count as empty too.
+  const scaffolding = [{ type: "step-start" }, { type: "text", text: "" }, { type: "step-finish" }]
+  assert.equal(messageNoticeText(finalized, scaffolding), MISSING_RESPONSE_NOTICE)
+  assert.ok(visibleTranscriptEntry(finalized, []), "entry must be kept so the notice can render")
+})
+
+test("structural messages (synthetic/ignored text only) create no card and no notice", () => {
+  const briefing = [{ type: "text", text: "<swarm-briefing>...</swarm-briefing>", synthetic: true }]
+  assert.equal(messageNoticeText(finalized, briefing), undefined)
+  assert.equal(visibleTranscriptEntry(finalized, briefing), undefined)
+})
+
+test("late-arriving content evaporates the notice", () => {
+  assert.equal(messageNoticeText(finalized, []), MISSING_RESPONSE_NOTICE)
+  assert.equal(messageNoticeText(finalized, [textPart]), undefined)
+})
+
+test("aborted messages never synthesize a notice", () => {
+  const aborted = { role: "assistant", time: { completed: 5 }, error: { name: "MessageAbortedError" } }
+  assert.equal(messageNoticeText(aborted, []), undefined)
 })

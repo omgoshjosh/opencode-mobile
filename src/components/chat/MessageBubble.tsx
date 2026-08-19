@@ -16,7 +16,7 @@ import { deliveryState } from "../../lib/message-delivery"
 import { shorthandTimestamp } from "../../lib/timestamp-shorthand"
 import { useSessions } from "../../stores/sessions"
 import { useSettings } from "../../stores/settings"
-import { messageErrorText } from "../../lib/transcript-visibility"
+import { messageNoticeText } from "../../lib/transcript-visibility"
 
 const SCREEN_WIDTH = Dimensions.get("window").width
 
@@ -78,7 +78,9 @@ export const MessageBubble = memo(
     const segments = segmentParts(parts)
     const [showBriefing, setShowBriefing] = useState(false)
     const reasoning = reasoningParts.map((p) => p.text).join("\n") || ""
-    const error = messageErrorText(message)
+    // Explicit error, or the synthesized missing-response notice for
+    // finalized-empty messages — see src/lib/transcript-visibility.ts.
+    const error = messageNoticeText(message, parts)
 
     return (
       <TouchableOpacity
