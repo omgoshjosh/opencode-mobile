@@ -16,6 +16,7 @@ import { deliveryState } from "../../lib/message-delivery"
 import { shorthandTimestamp } from "../../lib/timestamp-shorthand"
 import { useSessions } from "../../stores/sessions"
 import { useSettings } from "../../stores/settings"
+import { messageErrorText } from "../../lib/transcript-visibility"
 
 const SCREEN_WIDTH = Dimensions.get("window").width
 
@@ -77,6 +78,7 @@ export const MessageBubble = memo(
     const segments = segmentParts(parts)
     const [showBriefing, setShowBriefing] = useState(false)
     const reasoning = reasoningParts.map((p) => p.text).join("\n") || ""
+    const error = messageErrorText(message)
 
     return (
       <TouchableOpacity
@@ -139,6 +141,13 @@ export const MessageBubble = memo(
 
         {/* Reasoning (collapsible) */}
         {reasoning.length > 0 && <ReasoningBlock text={reasoning} isDark={isDark} />}
+
+        {error && (
+          <View style={[s.errorNotice, isDark && s.errorNoticeDark]}>
+            <Ionicons name="alert-circle-outline" size={16} color={isDark ? "#fca5a5" : "#b91c1c"} />
+            <Text style={[s.errorText, isDark && s.errorTextDark]}>{error}</Text>
+          </View>
+        )}
 
         {/* Message body. User messages are one prose block. Assistant
             messages preserve the STREAM's shape: prose, then the tool calls
@@ -323,6 +332,17 @@ const s = StyleSheet.create({
 
   messageText: { fontSize: 15, lineHeight: 22, color: "#0a0a0a" },
   markdownWrap: { marginHorizontal: -4 },
+  errorNotice: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: "#fee2e2",
+  },
+  errorNoticeDark: { backgroundColor: "#450a0a" },
+  errorText: { flex: 1, fontSize: 13, lineHeight: 18, color: "#991b1b" },
+  errorTextDark: { color: "#fecaca" },
 
   tokens: { fontSize: 11, color: "#999999", marginTop: 8 },
   tokensDark: { color: "#9a9a9a" },

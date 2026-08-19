@@ -88,7 +88,11 @@ export interface Message {
     reasoning?: number
     cache?: { read: number; write: number }
   }
-  error?: { message: string }
+  error?: {
+    name?: string
+    message?: string
+    data?: Record<string, unknown>
+  }
   finish?: string
 }
 
@@ -117,6 +121,9 @@ export interface Part {
     | "agent"
   // Text / reasoning part
   text?: string
+  synthetic?: boolean
+  ignored?: boolean
+  metadata?: Record<string, unknown>
   // Tool part
   tool?: string
   callID?: string
