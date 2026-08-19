@@ -91,3 +91,26 @@ test("isGroupMode validates persisted values", () => {
   assert.equal(isGroupMode(undefined), false)
   assert.equal(isGroupMode(DEFAULT_GROUP_MODE), true)
 })
+
+// The reported gap: a swarm's role sessions persist their own execution
+// models, so keying on the session's own model scattered the whole team
+// into Ungrouped while the root sat alone.
+test("a role session inherits its root's swarm group", () => {
+  const byID = new Map([
+    ["root", { id: "root", model: { providerID: "swarm", id: "swm_team" } }],
+    ["role", { id: "role", parentID: "root", model: { providerID: "openai", id: "gpt-5.6-sol" } }],
+    ["grandchild", { id: "grandchild", parentID: "role", model: null }],
+  ])
+  const role = byID.get("role")!
+  const grandchild = byID.get("grandchild")!
+  assert.equal(groupKey(role, "swarm", { sessionsByID: byID }), "swm_team")
+  assert.equal(groupKey(grandchild, "swarm", { sessionsByID: byID }), "swm_team")
+})
+
+test("a non-swarm tree stays ungrouped even with the ancestor walk", () => {
+  const byID = new Map([
+    ["root", { id: "root", model: { providerID: "openai", id: "gpt-5.6-sol" } }],
+    ["child", { id: "child", parentID: "root", model: null }],
+  ])
+  assert.equal(groupKey(byID.get("child")!, "swarm", { sessionsByID: byID }), "￿:ungrouped")
+})

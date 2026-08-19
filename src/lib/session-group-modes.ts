@@ -82,16 +82,26 @@ export function groupKey(
      * session's topmost ancestor; omitting it falls back to the old
      * single-level behaviour rather than throwing.
      */
-    sessionsByID?: Map<string, { id: string; parentID?: string }>
+    sessionsByID?: Map<string, { id: string; parentID?: string; model?: { providerID?: string; id?: string } | null }>
   },
 ): string {
   switch (mode) {
     case "directory":
       return session.directory || UNGROUPED_KEY
-    case "swarm":
-      return session.model?.providerID === SWARM_PROVIDER_ID && session.model.id
-        ? session.model.id
-        : UNGROUPED_KEY
+    case "swarm": {
+      // A session inherits its ROOT's swarm. Role sessions persist their own
+      // execution model (openai/..., not the swarm facade), so keying on the
+      // session's own model scattered a team's entire task graph into
+      // Ungrouped while its root sat alone — reading as "this team isn't a
+      // swarm". Same ancestor-walk the root mode uses.
+      const own = session.model?.providerID === SWARM_PROVIDER_ID && session.model.id ? session.model.id : null
+      if (own) return own
+      if (context.sessionsByID) {
+        const root = context.sessionsByID.get(rootIDOf(session, context.sessionsByID))
+        if (root?.model?.providerID === SWARM_PROVIDER_ID && root.model.id) return root.model.id
+      }
+      return UNGROUPED_KEY
+    }
     case "root":
       // Everything in a tree groups under its topmost ancestor, so a swarm and
       // its whole task graph land in one bucket. This used to return
