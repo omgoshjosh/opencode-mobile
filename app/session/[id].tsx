@@ -658,7 +658,19 @@ export default function SessionScreen() {
       // Messages are queued server-side when the session is busy.
       // No need to abort - just send and it will be processed after current response.
       try {
-        const selection = sessionPromptSelection({ agent, model })
+        // Stale-chip guard: if the user has NOT touched the picker in this
+        // session and the session is persisted as a swarm the chip disagrees
+        // with, the chip is stale (the open-time sync lost a race) — send
+        // with the session's own swarm rather than reassigning the session.
+        let effectiveModel = model
+        if (!modelTouchedRef.current) {
+          const persisted = resolveSessionModel({ sessionModel: currentSession?.model, fromMessages: null })
+          if (persisted && (!model || model.providerID !== persisted.providerID || model.modelID !== persisted.modelID)) {
+            effectiveModel = persisted
+            setModel(persisted) // heal the chip too
+          }
+        }
+        const selection = sessionPromptSelection({ agent, model: effectiveModel })
         await sendMessage(text, selection.model, selection.agent, files, variant || undefined)
       } catch (err) {
         console.error("Send failed:", err)
@@ -774,8 +786,20 @@ export default function SessionScreen() {
     }
   }
 
+  // Has the user deliberately touched the model picker since opening THIS
+  // session? The composer chip is global state synced to the session by an
+  // effect — a send racing that sync used to carry the PREVIOUS session's
+  // swarm and silently reassign this session to it (observed in the wild:
+  // a Sol session flipped to Fable by one stale-chip send). Deliberate picks
+  // must still win, so the guard keys on this flag, not on the mismatch.
+  const modelTouchedRef = useRef(false)
+  useEffect(() => {
+    modelTouchedRef.current = false
+  }, [id])
+
   const handleModelSelect = useCallback(
     (providerID: string, modelID: string) => {
+      modelTouchedRef.current = true
       setModel({ providerID, modelID })
     },
     [setModel],
