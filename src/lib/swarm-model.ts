@@ -35,6 +35,24 @@ export interface SessionModel {
   variant?: string
 }
 
+export function resolveSessionAgent(input: {
+  sessionAgent?: string | null
+  availableAgents: readonly string[]
+}): string | null {
+  if (!input.sessionAgent) return null
+  return input.availableAgents.includes(input.sessionAgent) ? input.sessionAgent : null
+}
+
+export function sessionPromptSelection(input: {
+  agent?: string | null
+  model?: ModelSelection | null
+}): { agent?: string; model?: ModelSelection } {
+  return {
+    agent: input.agent || undefined,
+    model: input.model || undefined,
+  }
+}
+
 export function isSwarmSelection(selection: ModelSelection | null | undefined): boolean {
   return selection?.providerID === SWARM_PROVIDER_ID
 }

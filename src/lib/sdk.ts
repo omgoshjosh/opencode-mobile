@@ -34,6 +34,7 @@ export interface Session {
   parentID?: string
   title: string
   version: string
+  agent?: string
   share?: { url: string }
   // The model this session is persisted as running. Note the server uses `id`
   // here, while messages and the catalog store use `modelID`. For a swarm this

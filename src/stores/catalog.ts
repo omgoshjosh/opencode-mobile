@@ -42,6 +42,7 @@ interface CatalogState {
   // Actions
   load: () => Promise<void>
   setAgent: (name: string) => void
+  restoreAgent: (name: string) => void
   setModel: (selection: ModelSelection | null) => void
   setVariant: (variant: string | null) => void
   cycleAgent: (direction?: 1 | -1) => void
@@ -134,6 +135,14 @@ export const useCatalog = create<CatalogState>((set, get) => ({
       model,
       variant: sameModel(state.model, model) ? state.variant : null,
     }))
+  },
+
+  // Session hydration restores only the persisted mode. Model selection is a
+  // separate axis and may be a swarm facade that an agent default must not
+  // replace.
+  restoreAgent: (name) => {
+    if (!get().agents.some((agent) => agent.name === name)) return
+    set({ agent: name })
   },
 
   setModel: (selection) =>

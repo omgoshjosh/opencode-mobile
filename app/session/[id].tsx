@@ -36,7 +36,12 @@ import {
   type Attachment,
 } from "../../src/components/chat"
 import { extractCopyText, hasCopyableText } from "../../src/lib/message-copy-text"
-import { resolveSessionModel, type ModelSelection } from "../../src/lib/swarm-model"
+import {
+  resolveSessionAgent,
+  resolveSessionModel,
+  sessionPromptSelection,
+  type ModelSelection,
+} from "../../src/lib/swarm-model"
 import { keyboardVerticalOffset } from "../../src/lib/keyboard-offset"
 import { modelDisplayLabel } from "../../src/lib/model-label"
 import { shouldAutoScroll, shouldShowScrollButton, transcriptSignature } from "../../src/lib/auto-scroll"
@@ -178,6 +183,8 @@ export default function SessionScreen() {
   const serverCommands = Array.isArray(catalog.commands) ? catalog.commands : []
   const providers = Array.isArray(catalog.providers) ? catalog.providers : []
   const agent = catalog.agent || ""
+  const restoreAgent = catalog.restoreAgent
+  const catalogLoaded = catalog.loaded
   const model = catalog.model
   const setModel = catalog.setModel
   const variant = catalog.variant
@@ -467,6 +474,17 @@ export default function SessionScreen() {
     if (resolved) setModel(resolved)
   }, [currentSession?.id, currentSession?.model?.providerID, currentSession?.model?.id, messages?.length])
 
+  // Restore the persisted mode when opening or reconnecting to a session. This
+  // depends on the persisted value rather than the session object identity, so
+  // unrelated session.updated events cannot overwrite a local unsent change.
+  useEffect(() => {
+    const resolved = resolveSessionAgent({
+      sessionAgent: currentSession?.agent,
+      availableAgents: agents.map((item) => item.name),
+    })
+    if (resolved) restoreAgent(resolved)
+  }, [currentSession?.id, currentSession?.agent, catalogLoaded])
+
   // Slash command handler
   const handleSlashSelect = useCallback(
     (cmd: SlashCommand) => {
@@ -618,7 +636,8 @@ export default function SessionScreen() {
     // Messages are queued server-side when the session is busy.
     // No need to abort - just send and it will be processed after current response.
     try {
-      await sendMessage(text, model || undefined, agent || undefined, files, variant || undefined)
+      const selection = sessionPromptSelection({ agent, model })
+      await sendMessage(text, selection.model, selection.agent, files, variant || undefined)
     } catch (err) {
       console.error("Send failed:", err)
       // Restore the user's text and attachments so their input isn't lost.

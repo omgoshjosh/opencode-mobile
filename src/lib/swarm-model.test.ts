@@ -4,6 +4,8 @@ import {
   SWARM_PROVIDER_ID,
   isSwarmSelection,
   resolveSessionModel,
+  resolveSessionAgent,
+  sessionPromptSelection,
   sessionModelSelection,
 } from "./swarm-model.ts"
 
@@ -82,4 +84,23 @@ test("deliberately switching a swarm session to an ordinary model is not blocked
   // Selecting an ordinary model re-persists session.model server-side; once it
   // is no longer a swarm, normal message-derived syncing resumes.
   assert.deepEqual(resolveSessionModel({ sessionModel: { providerID: "openai", id: "gpt-5.6-sol" }, fromMessages: sol }), sol)
+})
+
+test("restores a persisted goal agent only when the server still exposes it", () => {
+  assert.equal(resolveSessionAgent({ sessionAgent: "goal", availableAgents: ["build", "goal", "plan"] }), "goal")
+  assert.equal(resolveSessionAgent({ sessionAgent: "removed", availableAgents: ["build", "goal", "plan"] }), null)
+  assert.equal(resolveSessionAgent({ sessionAgent: undefined, availableAgents: ["build", "goal", "plan"] }), null)
+})
+
+test("goal mode and a swarm model remain independent prompt selections", () => {
+  assert.deepEqual(
+    sessionPromptSelection({
+      agent: "goal",
+      model: { providerID: SWARM_PROVIDER_ID, modelID: SWARM_ID },
+    }),
+    {
+      agent: "goal",
+      model: { providerID: SWARM_PROVIDER_ID, modelID: SWARM_ID },
+    },
+  )
 })
