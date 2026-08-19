@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useRef, useEffect } from "react"
+import { memo, useCallback, useMemo, useState, useRef, useEffect } from "react"
 import {
   View,
   Text,
@@ -112,7 +112,7 @@ function formatTime(timestamp: number, t: (key: string, opts?: Record<string, un
   return date.toLocaleDateString()
 }
 
-function SessionItem({
+const SessionItem = memo(function SessionItem({
   session,
   isDark,
   onRename,
@@ -120,8 +120,8 @@ function SessionItem({
 }: {
   session: Session
   isDark: boolean
-  onRename: () => void
-  onDelete: () => void
+  onRename: (session: Session) => void
+  onDelete: (session: Session) => void
 }) {
   const { t } = useTranslation()
 
@@ -135,8 +135,8 @@ function SessionItem({
   const onLongPress = () => {
     Alert.alert(session.title || t("sessionsList.untitledSession"), undefined, [
       { text: t("common.cancel"), style: "cancel" },
-      { text: t("sessionsList.actions.rename"), onPress: onRename },
-      { text: t("common.delete"), style: "destructive", onPress: onDelete },
+      { text: t("sessionsList.actions.rename"), onPress: () => onRename(session) },
+      { text: t("common.delete"), style: "destructive", onPress: () => onDelete(session) },
     ])
   }
 
@@ -238,7 +238,7 @@ function SessionItem({
       <Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />
     </TouchableOpacity>
   )
-}
+})
 
 // --- Sessions list V2 (experiment, Settings > Experiments) ---
 //
@@ -246,7 +246,7 @@ function SessionItem({
 // timestamp never truncates, and the swarm/preview get a full line instead
 // of chips fighting for width. See src/lib/session-triage.ts for the
 // vocabulary and the list-redesign review for the rationale.
-function SessionRowV2({
+const SessionRowV2 = memo(function SessionRowV2({
   session,
   isDark,
   onRename,
@@ -254,8 +254,8 @@ function SessionRowV2({
 }: {
   session: Session
   isDark: boolean
-  onRename: () => void
-  onDelete: () => void
+  onRename: (session: Session) => void
+  onDelete: (session: Session) => void
 }) {
   const { t } = useTranslation()
   const providers = useCatalog((c) => c.providers)
@@ -295,8 +295,8 @@ function SessionRowV2({
       onLongPress={() =>
         Alert.alert(session.title || t("sessionsList.untitledSession"), undefined, [
           { text: t("common.cancel"), style: "cancel" },
-          { text: t("sessionsList.actions.rename"), onPress: onRename },
-          { text: t("common.delete"), style: "destructive", onPress: onDelete },
+          { text: t("sessionsList.actions.rename"), onPress: () => onRename(session) },
+          { text: t("common.delete"), style: "destructive", onPress: () => onDelete(session) },
         ])
       }
       testID={`session-item-${session.id}`}
@@ -330,7 +330,7 @@ function SessionRowV2({
       )}
     </TouchableOpacity>
   )
-}
+})
 
 // Deduped status counts for a group, e.g. "3 busy · 1 retry". Statuses with no
 // members are omitted entirely rather than rendered as "0 idle" — see
@@ -504,6 +504,18 @@ export default function SessionsScreen() {
   const questionsMap = useEvents((s) => s.questions)
   const lastViewedMap = useSessions((s) => s.lastViewed)
   const [filter, setFilter] = useState<SessionFilter>(NO_FILTER)
+
+  // Do the live maps affect which rows exist and in what order — or only
+  // what the rows display? Only status grouping and attention filters read
+  // them during row derivation; everything else is per-row rendering with
+  // its own store subscriptions. Null when irrelevant, so the rows memo
+  // skips recomputing on the constant SSE churn of a large farm.
+  const statusesAffectRows = groupMode === "status" || filter.statuses.length > 0 || isFilterActive(filter)
+  const statusDep = statusesAffectRows ? sessionStatusMap : null
+  const attentionAffectsRows = filter.statuses.length > 0
+  const permissionsDep = attentionAffectsRows ? permissionsMap : null
+  const questionsDep = attentionAffectsRows ? questionsMap : null
+  const lastViewedDep = attentionAffectsRows ? lastViewedMap : null
   const [showFilters, setShowFilters] = useState(false)
   const [sort, setSort] = useState<SessionSort>("newest")
 
@@ -642,15 +654,23 @@ export default function SessionsScreen() {
     }
     return out
   }, [
+    // Deliberately NOT the raw status/permission/question/lastViewed maps:
+    // those churn on every SSE event a 350-session bot farm emits, and each
+    // churn re-sorted and re-grouped the whole list on the JS thread — the
+    // reported multi-second hangs on back/keyboard/drill-in. The *Dep
+    // variables are null unless those maps actually affect row MEMBERSHIP or
+    // ORDER (status grouping, attention filters); the badges and dots inside
+    // each row subscribe on their own and stay live regardless.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     sessions,
     collapsedDirs,
     groupMode,
-    sessionStatusMap,
     providersForLabels,
     filter,
-    permissionsMap,
-    questionsMap,
-    lastViewedMap,
+    statusDep,
+    permissionsDep,
+    questionsDep,
+    lastViewedDep,
     listV2,
     sort,
   ])
@@ -1217,19 +1237,9 @@ export default function SessionsScreen() {
           row.type === "header" ? (
             <GroupHeader row={row} isDark={isDark} onToggle={() => toggleGroup(row.directory)} />
           ) : listV2 ? (
-            <SessionRowV2
-              session={row.session}
-              isDark={isDark}
-              onRename={() => handleRename(row.session)}
-              onDelete={() => handleDelete(row.session)}
-            />
+            <SessionRowV2 session={row.session} isDark={isDark} onRename={handleRename} onDelete={handleDelete} />
           ) : (
-            <SessionItem
-              session={row.session}
-              isDark={isDark}
-              onRename={() => handleRename(row.session)}
-              onDelete={() => handleDelete(row.session)}
-            />
+            <SessionItem session={row.session} isDark={isDark} onRename={handleRename} onDelete={handleDelete} />
           )
         }
         refreshControl={
