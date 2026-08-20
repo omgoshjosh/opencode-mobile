@@ -93,6 +93,13 @@
       "specificDisabled": "指定时区（不可用）",
       "specificSoonTitle": "暂不可用",
       "specificSoonMessage": "指定时区功能稍后推出。目前可使用本地时间和 UTC。"
+    },
+    "clock": {
+      "label": "时钟",
+      "title": "时间格式",
+      "system": "跟随系统",
+      "h12": "12 小时制 (8:05 PM)",
+      "h24": "24 小时制 (20:05)"
     }
   },
   "session": {

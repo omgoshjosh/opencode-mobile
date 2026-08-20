@@ -101,6 +101,8 @@ export default function SettingsScreen() {
     setSessionsListV2,
     timeZone,
     setTimeZone,
+    clock,
+    setClock,
   } = useSettings()
   const [osGranted, setOsGranted] = useState<boolean | null>(null)
   const [telemetryUpdating, setTelemetryUpdating] = useState(false)
@@ -194,6 +196,21 @@ export default function SettingsScreen() {
       { text: t("common.cancel"), style: "cancel" },
     ])
   }, [t, setTheme, themeLabels])
+
+  const clockLabels: Record<typeof clock, string> = {
+    system: t("settings.clock.system"),
+    "12h": t("settings.clock.h12"),
+    "24h": t("settings.clock.h24"),
+  }
+
+  const handleClockPress = useCallback(() => {
+    Alert.alert(t("settings.clock.title"), undefined, [
+      { text: clockLabels.system, onPress: () => setClock("system") },
+      { text: clockLabels["12h"], onPress: () => setClock("12h") },
+      { text: clockLabels["24h"], onPress: () => setClock("24h") },
+      { text: t("common.cancel"), style: "cancel" },
+    ])
+  }, [t, setClock, clockLabels])
 
   const timeZoneLabels: Record<typeof timeZone, string> = {
     local: t("settings.timezone.local"),
@@ -356,6 +373,14 @@ export default function SettingsScreen() {
           description={themeLabels[theme]}
           isDark={isDark}
           onPress={handleThemePress}
+          right={<Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
+        />
+        <SettingRow
+          icon="alarm"
+          label={t("settings.clock.label")}
+          description={clockLabels[clock]}
+          isDark={isDark}
+          onPress={handleClockPress}
           right={<Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
         />
         <SettingRow

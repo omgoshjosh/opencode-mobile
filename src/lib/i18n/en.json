@@ -93,6 +93,13 @@
       "specificDisabled": "Specific time zone (unavailable)",
       "specificSoonTitle": "Not available yet",
       "specificSoonMessage": "Choosing a specific time zone is coming later. Local and UTC work today."
+    },
+    "clock": {
+      "label": "Clock",
+      "title": "Clock format",
+      "system": "System Default",
+      "h12": "12-hour (8:05 PM)",
+      "h24": "24-hour (20:05)"
     }
   },
   "session": {

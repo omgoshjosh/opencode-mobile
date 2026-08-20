@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react"
 import { LIVE_TICK_MS, formatElapsed } from "../../lib/elapsed-format"
-import { shorthandTimestamp } from "../../lib/timestamp-shorthand"
+import { resolveClockMode, shorthandTimestamp } from "../../lib/timestamp-shorthand"
+import { deviceUses24hClock } from "../../lib/device-clock"
 import { useSettings } from "../../stores/settings"
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView, Platform } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
@@ -412,7 +413,11 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded, fallbackStartTim
   // WHEN the call started, in the user's chosen zone. The call's own clock
   // wins; the owning message's created time is the fallback.
   const timeZone = useSettings((st) => st.timeZone)
-  const calledAt = shorthandTimestamp(tool.state?.time?.start ?? fallbackStartTime, Date.now(), timeZone)
+  const clockMode = resolveClockMode(
+    useSettings((st) => st.clock),
+    deviceUses24hClock(),
+  )
+  const calledAt = shorthandTimestamp(tool.state?.time?.start ?? fallbackStartTime, Date.now(), timeZone, clockMode)
   const hasDetail = tool.state?.input !== undefined || tool.state?.output !== undefined || error
 
   const toggle = useCallback(() => {

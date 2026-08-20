@@ -6,7 +6,7 @@ import { clampPageSize, mergeStoredSettings } from "../lib/settings-merge"
 import { setAppLocale } from "../lib/i18n/config"
 import type { LocalePreference } from "../lib/i18n/locale-resolve"
 import { resolveColorScheme, type ThemePreference } from "../lib/theme-preference"
-import type { TimeZoneMode } from "../lib/timestamp-shorthand"
+import type { ClockPreference, TimeZoneMode } from "../lib/timestamp-shorthand"
 
 const SETTINGS_KEY = "opencode_settings"
 
@@ -19,6 +19,8 @@ interface Settings {
   sessionsListV2: boolean
   /** Timestamp rendering: device-local time or UTC. */
   timeZone: TimeZoneMode
+  /** 12-hour vs 24-hour clock; "system" follows the phone's own setting. */
+  clock: ClockPreference
 }
 
 const DEFAULTS: Settings = {
@@ -28,6 +30,7 @@ const DEFAULTS: Settings = {
   theme: "system",
   sessionsListV2: false,
   timeZone: "local",
+  clock: "system",
 }
 
 interface SettingsState extends Settings {
@@ -39,6 +42,7 @@ interface SettingsState extends Settings {
   setTheme: (theme: ThemePreference) => Promise<void>
   setSessionsListV2: (enabled: boolean) => Promise<void>
   setTimeZone: (zone: TimeZoneMode) => Promise<void>
+  setClock: (clock: ClockPreference) => Promise<void>
 }
 
 function snapshot(get: () => SettingsState): Settings {
@@ -49,6 +53,7 @@ function snapshot(get: () => SettingsState): Settings {
     theme: get().theme,
     sessionsListV2: get().sessionsListV2,
     timeZone: get().timeZone,
+    clock: get().clock,
   }
 }
 
@@ -111,5 +116,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
   setTimeZone: async (timeZone) => {
     set({ timeZone })
     await persist({ ...snapshot(get), timeZone })
+  },
+
+  setClock: async (clock) => {
+    set({ clock })
+    await persist({ ...snapshot(get), clock })
   },
 }))

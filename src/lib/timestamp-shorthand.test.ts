@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { shorthandTimestamp } from "./timestamp-shorthand.ts"
+import { resolveClockMode, shorthandTimestamp } from "./timestamp-shorthand.ts"
 
 // Fixed reference: 2026-08-17 14:30 local.
 const now = new Date(2026, 7, 17, 14, 30).getTime()
@@ -41,4 +41,32 @@ test("utc mode renders UTC fields and says so", () => {
 test("local stays suffix-free", () => {
   const now = new Date(2026, 7, 17, 14, 30).getTime()
   assert.equal(shorthandTimestamp(new Date(2026, 7, 17, 9, 5).getTime(), now, "local"), "09:05")
+})
+
+// --- 12-hour clock ---
+
+test("12-hour mode reads like a wall clock: no leading zero, AM/PM", () => {
+  const now = new Date(2026, 7, 17, 14, 30).getTime()
+  assert.equal(shorthandTimestamp(new Date(2026, 7, 17, 8, 5).getTime(), now, "local", "12h"), "8:05 AM")
+  assert.equal(shorthandTimestamp(new Date(2026, 7, 17, 20, 5).getTime(), now, "local", "12h"), "8:05 PM")
+  assert.equal(shorthandTimestamp(new Date(2026, 2, 3, 23, 41).getTime(), now, "local", "12h"), "Mar 3, 11:41 PM")
+})
+
+test("noon and midnight are 12 PM and 12 AM, never 0", () => {
+  const now = new Date(2026, 7, 17, 14, 30).getTime()
+  assert.equal(shorthandTimestamp(new Date(2026, 7, 17, 0, 0).getTime(), now, "local", "12h"), "12:00 AM")
+  assert.equal(shorthandTimestamp(new Date(2026, 7, 17, 12, 0).getTime(), now, "local", "12h"), "12:00 PM")
+})
+
+test("12-hour composes with UTC's suffix", () => {
+  const utcNow = Date.UTC(2026, 7, 17, 14, 30)
+  assert.equal(shorthandTimestamp(Date.UTC(2026, 7, 17, 20, 5), utcNow, "utc", "12h"), "8:05 PM UTC")
+})
+
+test("clock preference resolution: system follows the device, unknown keeps 24h", () => {
+  assert.equal(resolveClockMode("12h", true), "12h")
+  assert.equal(resolveClockMode("24h", false), "24h")
+  assert.equal(resolveClockMode("system", false), "12h")
+  assert.equal(resolveClockMode("system", true), "24h")
+  assert.equal(resolveClockMode("system", null), "24h")
 })

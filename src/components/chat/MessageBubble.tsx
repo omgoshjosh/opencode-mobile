@@ -13,7 +13,8 @@ import type { Message, Part } from "../../lib/sdk"
 import { useCatalog } from "../../stores/catalog"
 import { modelDisplayLabel } from "../../lib/model-label"
 import { deliveryState } from "../../lib/message-delivery"
-import { shorthandTimestamp } from "../../lib/timestamp-shorthand"
+import { resolveClockMode, shorthandTimestamp } from "../../lib/timestamp-shorthand"
+import { deviceUses24hClock } from "../../lib/device-clock"
 import { useSessions } from "../../stores/sessions"
 import { useSettings } from "../../stores/settings"
 import { messageNoticeText } from "../../lib/transcript-visibility"
@@ -52,6 +53,10 @@ export const MessageBubble = memo(
     const providers = useCatalog((c) => c.providers)
     const failedMessageIDs = useSessions((st) => st.failedMessageIDs)
     const timeZone = useSettings((st) => st.timeZone)
+    const clockMode = resolveClockMode(
+      useSettings((st) => st.clock),
+      deviceUses24hClock(),
+    )
     // "sent" is the overwhelmingly common case and needs no chrome; only the
     // in-flight and failed states are worth a badge.
     const delivery = deliveryState({ messageID: message.id, failedIDs: failedMessageIDs })
@@ -115,7 +120,7 @@ export const MessageBubble = memo(
           {/* When it was said. Shorthand grows with distance: clock today,
               date this year, year beyond — see src/lib/timestamp-shorthand. */}
           {(() => {
-            const stamp = shorthandTimestamp(message.time?.created, Date.now(), timeZone)
+            const stamp = shorthandTimestamp(message.time?.created, Date.now(), timeZone, clockMode)
             return stamp ? <Text style={[s.msgTime, isDark && s.msgTimeDark]}>{stamp}</Text> : null
           })()}
         </View>
