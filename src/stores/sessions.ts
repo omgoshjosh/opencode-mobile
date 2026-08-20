@@ -79,7 +79,7 @@ interface SessionsState {
   error: string | null
 
   // Actions
-  loadSessions: () => Promise<void>
+  loadSessions: (options?: { rootsOnly?: boolean }) => Promise<void>
   loadLastViewed: () => Promise<void>
   selectSession: (sessionID: string, directory?: string) => Promise<void>
   loadOlderMessages: () => Promise<void>
@@ -163,7 +163,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
     }
   },
 
-  loadSessions: async () => {
+  loadSessions: async (options) => {
     const connState = useConnections.getState()
     // Use a directory-less client so the server returns sessions from ALL projects,
     // not just the one matching the active connection's directory header.
@@ -187,7 +187,11 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // was the "I feel like I'm missing sessions" bug: front-end filters
       // (recency, search) can only surface what survived it. FlatList
       // virtualizes, so row count is not a render concern.
-      const sessions = await client.session.list({ roots: true, includeChildren: true })
+      // rootsOnly (the hide-subagents view) narrows SERVER-side: children
+      // never leave the database, so the fetch is one small page instead of
+      // paging the whole farm. Otherwise children ride along for the
+      // Swarm-root grouping as before.
+      const sessions = await client.session.list({ roots: true, includeChildren: !options?.rootsOnly })
       set({ sessions, isLoading: false })
     } catch (error) {
       set({ error: "Failed to load sessions", isLoading: false })

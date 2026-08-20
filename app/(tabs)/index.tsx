@@ -529,10 +529,19 @@ export default function SessionsScreen() {
       .then((raw) => setSort(parseSessionSort(raw)))
       .catch(() => {})
   }, [])
-  const applyFilter = useCallback((next: SessionFilter) => {
-    setFilter(next)
-    AsyncStorage.setItem(SESSION_FILTER_KEY, JSON.stringify(next)).catch(() => {})
-  }, [])
+  const applyFilter = useCallback(
+    (next: SessionFilter) => {
+      const rootsChanged = next.hideSubagents !== filterRef.current.hideSubagents
+      setFilter(next)
+      filterRef.current = next
+      AsyncStorage.setItem(SESSION_FILTER_KEY, JSON.stringify(next)).catch(() => {})
+      // The hide-subagents axis changes what the SERVER should send (roots
+      // only vs. everything) — refetch under the new narrowing. Old rows
+      // stay on screen until the response lands; no blank flash.
+      if (rootsChanged) loadSessions({ rootsOnly: next.hideSubagents })
+    },
+    [loadSessions],
+  )
   const applySort = useCallback((next: SessionSort) => {
     setSort(next)
     AsyncStorage.setItem(SESSION_SORT_KEY, next).catch(() => {})
@@ -684,29 +693,40 @@ export default function SessionsScreen() {
       .catch(() => setServerProjects([]))
   }, [showNewSession, client])
 
+  // Fetch narrowing follows the hide-subagents filter: roots-only views
+  // filter SERVER-side (children never leave the database) instead of paging
+  // the whole farm and discarding most of it. Ref-read so every reload site
+  // uses the CURRENT filter without re-subscribing callbacks to it.
+  const filterRef = useRef(filter)
+  filterRef.current = filter
+  const reloadSessions = useCallback(
+    () => loadSessions({ rootsOnly: filterRef.current.hideSubagents }),
+    [loadSessions],
+  )
+
   const handleSwitchDirectory = useCallback(
     async (dir?: string) => {
       await switchDirectory(dir)
-      loadSessions()
+      reloadSessions()
       refreshProject()
       loadCatalog()
     },
-    [switchDirectory, loadSessions, refreshProject, loadCatalog],
+    [switchDirectory, reloadSessions, refreshProject, loadCatalog],
   )
 
   useFocusEffect(
     useCallback(() => {
       if (client) {
-        loadSessions()
+        reloadSessions()
         refreshProject()
       }
-    }, [client, loadSessions, refreshProject]),
+    }, [client, reloadSessions, refreshProject]),
   )
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true)
     try {
-      await Promise.all([loadSessions(), refreshProject()])
+      await Promise.all([reloadSessions(), refreshProject()])
     } catch (err) {
       console.error("Refresh failed:", err)
     } finally {
@@ -729,7 +749,7 @@ export default function SessionsScreen() {
       await renameClient.session.update(renaming.id, { title })
       setRenaming(null)
       setRenameText("")
-      loadSessions()
+      reloadSessions()
     } catch (err) {
       console.error("Rename failed:", err)
       Alert.alert(t("sessionsList.alerts.renameFailedTitle"), t("sessionsList.alerts.renameFailedMessage"))

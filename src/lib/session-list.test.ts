@@ -217,3 +217,18 @@ test("loadSessionList: a stuck cursor cannot loop forever", async () => {
   await loadSessionList(t, {})
   assert.ok(count <= 3, `stuck cursor stopped after ${count} calls`)
 })
+
+test("roots-only views narrow SERVER-side; child-inclusive views do not", async () => {
+  const queries: string[] = []
+  const t: SessionListTransport = {
+    getExperimental: async (query: string) => {
+      queries.push(query)
+      return { sessions: [] }
+    },
+    getLegacy: async () => [],
+  }
+  await loadSessionList(t, { roots: true, includeChildren: false })
+  assert.ok(queries[0].includes("roots=true"), "hide-subagents fetch must carry roots=true")
+  await loadSessionList(t, { roots: true, includeChildren: true })
+  assert.ok(!queries[1].includes("roots=true"), "swarm-grouping fetch needs children, no server roots filter")
+})

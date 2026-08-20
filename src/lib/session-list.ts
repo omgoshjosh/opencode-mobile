@@ -101,10 +101,16 @@ export function legacySessionQuery(params?: SessionListParams): string {
 export const GLOBAL_PAGE_LIMIT = 200
 export const MAX_GLOBAL_PAGES = 10
 
-export function experimentalPageQuery(cursor?: number): string {
+export function experimentalPageQuery(cursor?: number, rootsOnly?: boolean): string {
   const query = new URLSearchParams()
   query.set("limit", String(GLOBAL_PAGE_LIMIT))
   if (cursor != null) query.set("cursor", String(cursor))
+  // Server-side narrowing: `roots` is a SQL WHERE applied BEFORE limit, so
+  // when the caller doesn't need children (hide-subagents view), each page
+  // carries only roots — a farm of hundreds of role sessions collapses to
+  // one small page instead of paging through everything just to discard
+  // most of it client-side.
+  if (rootsOnly) query.set("roots", "true")
   return `?${query.toString()}`
 }
 
@@ -117,7 +123,10 @@ export async function loadSessionList(
   transport: SessionListTransport,
   params?: SessionListParams,
 ): Promise<Session[]> {
-  const first = await transport.getExperimental(experimentalPageQuery())
+  // Children are only needed when the caller shows them (Swarm-root
+  // grouping); a roots-only view filters server-side and skips the pages.
+  const rootsOnly = Boolean(params?.roots && !params.includeChildren)
+  const first = await transport.getExperimental(experimentalPageQuery(undefined, rootsOnly))
   if (first === null) return transport.getLegacy(legacySessionQuery(params))
 
   const seen = new Set<string>()
@@ -134,7 +143,7 @@ export async function loadSessionList(
   push(first.sessions)
   let cursor = first.nextCursor
   for (let pageIndex = 1; cursor != null && pageIndex < MAX_GLOBAL_PAGES; pageIndex++) {
-    const page = await transport.getExperimental(experimentalPageQuery(cursor))
+    const page = await transport.getExperimental(experimentalPageQuery(cursor, rootsOnly))
     if (page === null) break // route vanished mid-loop: keep what we have
     push(page.sessions)
     // A cursor that does not advance would loop forever; treat as final.
