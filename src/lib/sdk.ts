@@ -587,6 +587,15 @@ export function createClient(config: ClientConfig) {
 
       abort: (sessionID: string) => request<boolean>(config, `/session/${sessionID}/abort`, { method: "POST" }),
 
+      // Compact the session's context: the server summarizes the transcript
+      // with the given REAL model (never the swarm facade — see
+      // src/lib/summarize-model.ts) and continues from the summary.
+      summarize: (sessionID: string, params: { providerID: string; modelID: string }) =>
+        request<boolean>(config, `/session/${sessionID}/summarize`, {
+          method: "POST",
+          body: JSON.stringify(params),
+        }),
+
       diff: (sessionID: string, messageID?: string) => {
         const qs = messageID ? `?messageID=${messageID}` : ""
         return request<unknown[]>(config, `/session/${sessionID}/diff${qs}`)

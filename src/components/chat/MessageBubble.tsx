@@ -36,12 +36,16 @@ interface Props {
   // over parts) so it stays correct even if the memo below bails on a stale
   // render.
   onLongPress?: (messageID: string) => void
+  // Server-acked but still waiting for its turn while the session is busy
+  // (the server queues prompts mid-run). Computed by the screen, which has
+  // the whole transcript; see awaitingTurn in src/lib/message-delivery.ts.
+  awaitingTurn?: boolean
 }
 
 // TODO: Replace with streamdown-rn once React 19 types PR lands - it has
 // built-in block-level memoization that eliminates re-renders for stable blocks
 export const MessageBubble = memo(
-  function MessageBubble({ message, parts, isDark, onLongPress }: Props) {
+  function MessageBubble({ message, parts, isDark, onLongPress, awaitingTurn }: Props) {
     const isUser = message.role === "user"
 
     // Resolve display names from the provider catalog so a swarm shows its
@@ -109,7 +113,7 @@ export const MessageBubble = memo(
           />
           <Text style={[s.role, isUser && s.roleUser, isDark && s.textWhite]}>{isUser ? "You" : "Assistant"}</Text>
           {userModelLabel && <Text style={[s.modelTag, isDark && s.modelTagDark]}>{userModelLabel}</Text>}
-          {delivery !== "sent" && (
+          {(delivery !== "sent" || awaitingTurn) && (
             <Text style={[s.deliveryTag, delivery === "failed" ? s.deliveryFailed : s.deliveryQueued]}>
               {delivery === "failed" ? "Failed" : "Queued"}
             </Text>

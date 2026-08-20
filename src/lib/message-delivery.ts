@@ -46,3 +46,23 @@ export function mergePendingMessages<T extends { id: string }>(serverMessages: T
   const seen = new Set(serverMessages.map((m) => m.id))
   return [...serverMessages, ...pending.filter((m) => !seen.has(m.id))]
 }
+
+/**
+ * Is a server-acknowledged user message still WAITING for its turn?
+ *
+ * The server queues prompts while a session is busy, but an acked message
+ * looked identical to one being worked on. Rule: while the session is busy,
+ * a user message newer than the newest assistant message hasn't had its
+ * turn start yet — the moment its assistant reply is created, the tag drops.
+ * (The current turn's own seed shows Queued only for the instant before its
+ * reply message exists, which is the honest reading of that instant.)
+ */
+export function awaitingTurn(input: {
+  role?: string
+  createdAt?: number
+  busy: boolean
+  newestAssistantCreatedAt?: number | null
+}): boolean {
+  if (!input.busy || input.role !== "user" || !input.createdAt) return false
+  return input.newestAssistantCreatedAt == null || input.createdAt > input.newestAssistantCreatedAt
+}

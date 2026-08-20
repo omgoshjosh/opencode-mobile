@@ -48,6 +48,10 @@ import { shouldAutoScroll, shouldShowScrollButton, transcriptSignature } from ".
 import { breadcrumbFor } from "../../src/lib/session-breadcrumb"
 import { ABORT_CONFIRM_WINDOW_MS, DISARMED, abortLabel, isAbortable, isArmed, pressAbort } from "../../src/lib/abort-control"
 import { inferBusyFromMessages } from "../../src/lib/session-status-reconcile"
+import { slashPopoverQuery } from "../../src/lib/slash-trigger"
+import { summarizeModel } from "../../src/lib/summarize-model"
+import { awaitingTurn } from "../../src/lib/message-delivery"
+import { TitlePeek } from "../../src/components/chat/TitlePeek"
 import { visibleTranscriptEntry } from "../../src/lib/transcript-visibility"
 import { useSessions } from "../../src/stores/sessions"
 import { useDrafts } from "../../src/stores/drafts"
@@ -78,6 +82,13 @@ const BUILTIN_COMMANDS: SlashCommand[] = [
     title: "Switch Agent",
     description: "Cycle to next agent",
     icon: "person-outline",
+    type: "builtin",
+  },
+  {
+    trigger: "compact",
+    title: "Compact Context",
+    description: "Summarize the conversation to free context",
+    icon: "archive-outline",
     type: "builtin",
   },
 ]
@@ -227,9 +238,15 @@ export default function SessionScreen() {
     Alert.alert(t("session.alerts.speechErrorTitle"), t("session.alerts.speechErrorMessage"))
   }, [speech.error, t])
 
-  // Slash command state
-  const slashActive = input.startsWith("/") && !input.includes(" ")
-  const slashQuery = slashActive ? input.slice(1) : ""
+  // Slash command state. The popover survives ARGUMENTS when the first
+  // token is a known command ("/review the auth flow" keeps showing what's
+  // about to run) — see src/lib/slash-trigger.ts.
+  const slashQueryResolved = slashPopoverQuery(
+    input,
+    [...serverCommands.map((c) => c.name), ...BUILTIN_COMMANDS.map((c) => c.trigger)],
+  )
+  const slashActive = slashQueryResolved !== null
+  const slashQuery = slashQueryResolved ?? ""
 
   const allCommands = useMemo<SlashCommand[]>(() => {
     const custom: SlashCommand[] = serverCommands.map((cmd) => ({
@@ -258,6 +275,16 @@ export default function SessionScreen() {
   // the transcript to this screen's route id and render nothing until the
   // store has actually switched.
   const transcriptBound = currentSession?.id === id
+
+  // Server-side queue visibility: while busy, user messages newer than the
+  // newest assistant reply are waiting for their turn. See message-delivery.
+  const newestAssistantCreatedAt = useMemo(() => {
+    for (let i = (messages?.length ?? 0) - 1; i >= 0; i--) {
+      if (messages![i].role === "assistant") return messages![i].time?.created ?? null
+    }
+    return null
+  }, [messages])
+  const sessionBusy = serverStatus === "busy" || serverStatus === "retry"
 
   // Inverted FlatList: data is reversed (newest first) so newest renders at bottom
   const messageData = useMemo(
@@ -506,6 +533,10 @@ export default function SessionScreen() {
             setInput("")
             cycleAgent()
             return
+          case "compact":
+            setInput("")
+            runCompact()
+            return
         }
       }
       setInput(`/${cmd.trigger} `)
@@ -634,6 +665,10 @@ export default function SessionScreen() {
       if (text.startsWith("/") && files.length === 0) {
         const [cmdName, ...args] = text.split(" ")
         const name = cmdName.slice(1)
+        if (name === "compact") {
+          runCompact()
+          return
+        }
         const match = serverCommands.find((c) => c.name === name)
         if (match && sessionClient && currentSession) {
           // Awaited, with failure feedback. This was fire-and-forget with a
@@ -797,6 +832,25 @@ export default function SessionScreen() {
     modelTouchedRef.current = false
   }, [id])
 
+  // /compact: summarize with the model that actually RAN this session (the
+  // swarm facade is not a model — see src/lib/summarize-model.ts).
+  const runCompact = useCallback(() => {
+    if (!sessionClient || !currentSession) return
+    const chosen = summarizeModel(messages, model ? { providerID: model.providerID, modelID: model.modelID } : null)
+    if (!chosen) {
+      Alert.alert(t("session.alerts.notSupportedTitle"), "No usable model found to summarize with yet.")
+      return
+    }
+    sessionClient.session.summarize(currentSession.id, chosen).catch((err: unknown) => {
+      console.error("Compact failed:", err)
+      Alert.alert(t("session.alerts.sendFailedTitle"), "Compact failed — the server may not support summarize.")
+    })
+  }, [sessionClient, currentSession, messages, model, t])
+
+  // Tap the (truncated) header title -> full title unfurls in a banner
+  // below the header, self-dismissing. See src/components/chat/TitlePeek.
+  const [titlePeek, setTitlePeek] = useState(false)
+
   const handleModelSelect = useCallback(
     (providerID: string, modelID: string) => {
       modelTouchedRef.current = true
@@ -825,6 +879,15 @@ export default function SessionScreen() {
       <Stack.Screen
         options={{
           title: currentSession?.title || t("session.titleFallback"),
+          headerTitle: () => (
+            <Text
+              numberOfLines={1}
+              onPress={() => setTitlePeek(true)}
+              style={{ fontSize: 18, fontWeight: "600", color: isDark ? "#ffffff" : "#0a0a0a", maxWidth: 220 }}
+            >
+              {currentSession?.title || t("session.titleFallback")}
+            </Text>
+          ),
           headerRight: () => (
             <View style={s.headerRight}>
               {shortDir && (
@@ -888,6 +951,13 @@ export default function SessionScreen() {
             flatListRef.current?.scrollToEnd({ animated: true })
           }}
           onClose={() => setShowInfo(false)}
+        />
+
+        <TitlePeek
+          title={currentSession?.title || ""}
+          visible={titlePeek}
+          isDark={isDark}
+          onDismiss={() => setTitlePeek(false)}
         />
 
         {/* Select/copy sheet for message text. Rendered here, outside the
@@ -971,6 +1041,12 @@ export default function SessionScreen() {
                   parts={item.parts}
                   isDark={isDark}
                   onLongPress={handleMessageLongPress}
+                  awaitingTurn={awaitingTurn({
+                    role: item.message.role,
+                    createdAt: item.message.time?.created,
+                    busy: sessionBusy,
+                    newestAssistantCreatedAt,
+                  })}
                 />
               )}
               contentContainerStyle={s.messageList}

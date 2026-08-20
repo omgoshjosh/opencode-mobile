@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { deliveryState, isOptimisticID, mergePendingMessages } from "./message-delivery.ts"
+import { awaitingTurn, deliveryState, isOptimisticID, mergePendingMessages } from "./message-delivery.ts"
 
 test("a server-assigned id is delivered", () => {
   assert.equal(deliveryState({ messageID: "msg_00abc" }), "sent")
@@ -48,4 +48,20 @@ test("merging never duplicates and preserves pending order", () => {
 test("no pending messages returns the server list untouched", () => {
   const server = [{ id: "msg_1" }]
   assert.equal(mergePendingMessages(server, [{ id: "msg_0" }]), server)
+})
+
+// --- server-side queue visibility ---
+
+test("a user message newer than every assistant reply is awaiting its turn while busy", () => {
+  assert.equal(awaitingTurn({ role: "user", createdAt: 100, busy: true, newestAssistantCreatedAt: 50 }), true)
+  assert.equal(awaitingTurn({ role: "user", createdAt: 100, busy: true, newestAssistantCreatedAt: null }), true)
+})
+
+test("the tag drops the moment its reply exists or the session goes idle", () => {
+  assert.equal(awaitingTurn({ role: "user", createdAt: 100, busy: true, newestAssistantCreatedAt: 150 }), false)
+  assert.equal(awaitingTurn({ role: "user", createdAt: 100, busy: false, newestAssistantCreatedAt: 50 }), false)
+})
+
+test("assistant messages never carry the tag", () => {
+  assert.equal(awaitingTurn({ role: "assistant", createdAt: 100, busy: true, newestAssistantCreatedAt: 50 }), false)
 })
