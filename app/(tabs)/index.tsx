@@ -36,6 +36,7 @@ import {
   groupKey,
   groupSortIndex,
   isGroupMode,
+  shouldRenderGroupHeader,
   type GroupMode,
 } from "../../src/lib/session-group-modes"
 import { statusCounts, type StatusCount } from "../../src/lib/session-status-counts"
@@ -646,10 +647,8 @@ export default function SessionsScreen() {
     for (const key of sorted) {
       const items = buckets.get(key) as Session[]
       const collapsed = collapsedDirs.has(key)
-      // V2: a header over exactly one session repeats the name the row is
-      // about to show — the duplicated pairs that dominated the screenshot
-      // review. Headers only earn their row when they actually group.
-      if (!(listV2 && items.length === 1)) {
+      const hasHeader = shouldRenderGroupHeader(groupMode, key, items.length, listV2)
+      if (hasHeader) {
         out.push({
           type: "header",
           directory: key,
@@ -659,7 +658,7 @@ export default function SessionsScreen() {
           sessionIDs: items.map((item) => item.id),
         })
       }
-      if (!collapsed || (listV2 && items.length === 1)) for (const session of items) out.push({ type: "session", session })
+      if (!collapsed || !hasHeader) for (const session of items) out.push({ type: "session", session })
     }
     return out
   }, [

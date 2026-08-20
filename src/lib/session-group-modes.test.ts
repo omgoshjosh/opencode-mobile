@@ -7,6 +7,7 @@ import {
   groupKey,
   groupSortIndex,
   isGroupMode,
+  shouldRenderGroupHeader,
 } from "./session-group-modes.ts"
 
 const NOW = new Date("2026-08-15T14:00:00").getTime()
@@ -113,4 +114,20 @@ test("a non-swarm tree stays ungrouped even with the ancestor walk", () => {
     ["child", { id: "child", parentID: "root", model: null }],
   ])
   assert.equal(groupKey(byID.get("child")!, "swarm", { sessionsByID: byID }), "￿:ungrouped")
+})
+
+test("V2 renders headers for distinct single-session swarms", () => {
+  assert.equal(shouldRenderGroupHeader("swarm", "swm_reliability", 1, true), true)
+  assert.equal(shouldRenderGroupHeader("swarm", "swm_mobile", 1, true), true)
+})
+
+test("V2 leaves a single non-swarm session ungrouped without a duplicate header", () => {
+  assert.equal(shouldRenderGroupHeader("swarm", UNGROUPED_KEY, 1, true), false)
+})
+
+test("single-item header dedup remains unchanged for other modes and V1", () => {
+  assert.equal(shouldRenderGroupHeader("directory", "/workspace", 1, true), false)
+  assert.equal(shouldRenderGroupHeader("root", "ses_root", 1, true), false)
+  assert.equal(shouldRenderGroupHeader("swarm", "swm_team", 1, false), true)
+  assert.equal(shouldRenderGroupHeader("directory", "/workspace", 2, true), true)
 })

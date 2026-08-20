@@ -138,3 +138,9 @@ export function groupSortIndex(key: string, mode: GroupMode): number {
   }
   return 0 // directory/swarm/root keep first-seen order
 }
+
+/** Keep named swarm headers even when V2 deduplicates other single-item groups. */
+export function shouldRenderGroupHeader(mode: GroupMode, key: string, itemCount: number, listV2: boolean): boolean {
+  if (!listV2 || itemCount !== 1) return true
+  return mode === "swarm" && key !== UNGROUPED_KEY
+}
