@@ -84,6 +84,38 @@ For full company facts (D-U-N-S, address, governor, etc.) see `~/.agents/skills/
 
 After 14 days on Closed testing with 12+ active testers → promote to Production.
 
+### Tagging a release publishes to Production (since AGE-110)
+
+Pushing a `v*` tag (or publishing a GitHub Release) now uploads straight to the
+**production** track with `status: completed`. Only `workflow_dispatch` honours
+the `track`/`status` inputs, which still default to `internal`/`completed` for
+dry runs.
+
+Why the default flipped: while tag pushes stopped at `internal`, production kept
+serving versionCode **136 (v0.4.5, 2026-06-22) for eight weeks**, because the
+second manual dispatch was easy to forget. Sentry release health then showed
+~64–78% of active users pinned to a single stale build, which capped the AGE-105
+noise gate at a fraction of the error volume it was written to remove. The
+human gate was not protecting users; it was silently withholding fixes from them.
+
+Ad-hoc dry run (unchanged):
+
+```bash
+gh workflow run publish-play-store.yml --ref main -f track=internal -f status=draft
+```
+
+Every run **rebuilds** the AAB, so it gets its own versionCode
+(`github.run_number + 100`) — it never promotes an existing artifact in place,
+and it is never equal to `app.json`'s committed `android.versionCode`.
+
+### Release history (production track)
+
+| Version | Internal versionCode (tag push) | Production versionCode | Production rollout (UTC) | Notes |
+|---|---|---|---|---|
+| v0.4.13 | 148 (run 48, cancelled) | **149** (run 49, dispatch) | 2026-08-14 09:20 | waitlist retry queue (#166) |
+| v0.4.14 | 150 (run 50) | **151** (run 51, dispatch) | 2026-08-14 14:22 | Sentry client-side noise gate (#169) — post-deploy Sentry measurement window for AGE-105 starts at this date, not at merge |
+| v0.4.15 | — | **153** (run 53, **tag push**) | 2026-08-14 17:58 | In-app update check for non-Play installs (#179). First release to reach production **without a dispatch** — #177 verified in the wild: run [31824702844](https://github.com/dzianisv/opencode-mobile/actions/runs/31824702844) logged `event=push -> track=production status=completed`. Code 152 (run 52, 17:04) was the same version from the pre-#180 tag, superseded by 153 |
+
 ---
 
 ## Files in repo
