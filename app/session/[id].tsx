@@ -50,7 +50,7 @@ import { ABORT_CONFIRM_WINDOW_MS, DISARMED, abortLabel, isAbortable, isArmed, pr
 import { inferBusyFromMessages } from "../../src/lib/session-status-reconcile"
 import { slashPopoverQuery } from "../../src/lib/slash-trigger"
 import { summarizeModel } from "../../src/lib/summarize-model"
-import { awaitingTurn } from "../../src/lib/message-delivery"
+import { awaitingTurn, inFlightUserCreatedAt } from "../../src/lib/message-delivery"
 import { TitlePeek } from "../../src/components/chat/TitlePeek"
 import { visibleTranscriptEntry } from "../../src/lib/transcript-visibility"
 import { useSessions } from "../../src/stores/sessions"
@@ -289,14 +289,10 @@ export default function SessionScreen() {
   // store has actually switched.
   const transcriptBound = currentSession?.id === id
 
-  // Server-side queue visibility: while busy, user messages newer than the
-  // newest assistant reply are waiting for their turn. See message-delivery.
-  const newestAssistantCreatedAt = useMemo(() => {
-    for (let i = (messages?.length ?? 0) - 1; i >= 0; i--) {
-      if (messages![i].role === "assistant") return messages![i].time?.created ?? null
-    }
-    return null
-  }, [messages])
+  // Server-side queue visibility. The OLDEST unanswered prompt is the one
+  // being worked on; only prompts sent after it are actually queued behind
+  // it — see inFlightUserCreatedAt in src/lib/message-delivery.ts.
+  const inFlightCreatedAt = useMemo(() => inFlightUserCreatedAt(messages), [messages])
   const sessionBusy = serverStatus === "busy" || serverStatus === "retry"
 
   // Inverted FlatList: data is reversed (newest first) so newest renders at bottom
@@ -1054,7 +1050,7 @@ export default function SessionScreen() {
                     role: item.message.role,
                     createdAt: item.message.time?.created,
                     busy: sessionBusy,
-                    newestAssistantCreatedAt,
+                    inFlightUserCreatedAt: inFlightCreatedAt,
                   })}
                 />
               )}

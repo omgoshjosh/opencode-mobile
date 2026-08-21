@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { awaitingTurn, deliveryState, isOptimisticID, mergePendingMessages } from "./message-delivery.ts"
+import { awaitingTurn, inFlightUserCreatedAt, deliveryState, isOptimisticID, mergePendingMessages } from "./message-delivery.ts"
 
 test("a server-assigned id is delivered", () => {
   assert.equal(deliveryState({ messageID: "msg_00abc" }), "sent")
@@ -52,16 +52,32 @@ test("no pending messages returns the server list untouched", () => {
 
 // --- server-side queue visibility ---
 
-test("a user message newer than every assistant reply is awaiting its turn while busy", () => {
-  assert.equal(awaitingTurn({ role: "user", createdAt: 100, busy: true, newestAssistantCreatedAt: 50 }), true)
-  assert.equal(awaitingTurn({ role: "user", createdAt: 100, busy: true, newestAssistantCreatedAt: null }), true)
+const userMsgAt = (created: number) => ({ role: "user", time: { created } })
+const assistantMsgAt = (created: number) => ({ role: "assistant", time: { created } })
+
+// The reported false positive: the message being worked on showed "Queued".
+test("the message being worked on is NOT queued — only ones behind it are", () => {
+  const messages = [userMsgAt(100), userMsgAt(200), userMsgAt(300)]
+  const inFlight = inFlightUserCreatedAt(messages)
+  assert.equal(inFlight, 100, "the oldest unanswered prompt is the one in flight")
+  assert.equal(awaitingTurn({ role: "user", createdAt: 100, busy: true, inFlightUserCreatedAt: inFlight }), false)
+  assert.equal(awaitingTurn({ role: "user", createdAt: 200, busy: true, inFlightUserCreatedAt: inFlight }), true)
+  assert.equal(awaitingTurn({ role: "user", createdAt: 300, busy: true, inFlightUserCreatedAt: inFlight }), true)
 })
 
-test("the tag drops the moment its reply exists or the session goes idle", () => {
-  assert.equal(awaitingTurn({ role: "user", createdAt: 100, busy: true, newestAssistantCreatedAt: 150 }), false)
-  assert.equal(awaitingTurn({ role: "user", createdAt: 100, busy: false, newestAssistantCreatedAt: 50 }), false)
+test("a lone in-flight prompt never wears the tag", () => {
+  const messages = [userMsgAt(100), assistantMsgAt(150), userMsgAt(200)]
+  const inFlight = inFlightUserCreatedAt(messages)
+  assert.equal(inFlight, 200)
+  assert.equal(awaitingTurn({ role: "user", createdAt: 200, busy: true, inFlightUserCreatedAt: inFlight }), false)
 })
 
-test("assistant messages never carry the tag", () => {
-  assert.equal(awaitingTurn({ role: "assistant", createdAt: 100, busy: true, newestAssistantCreatedAt: 50 }), false)
+test("everything answered means nothing is in flight or queued", () => {
+  assert.equal(inFlightUserCreatedAt([userMsgAt(100), assistantMsgAt(150)]), null)
+  assert.equal(awaitingTurn({ role: "user", createdAt: 100, busy: true, inFlightUserCreatedAt: null }), false)
+})
+
+test("idle sessions and assistant messages never carry the tag", () => {
+  assert.equal(awaitingTurn({ role: "user", createdAt: 300, busy: false, inFlightUserCreatedAt: 100 }), false)
+  assert.equal(awaitingTurn({ role: "assistant", createdAt: 300, busy: true, inFlightUserCreatedAt: 100 }), false)
 })

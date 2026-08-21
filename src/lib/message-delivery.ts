@@ -48,21 +48,49 @@ export function mergePendingMessages<T extends { id: string }>(serverMessages: T
 }
 
 /**
- * Is a server-acknowledged user message still WAITING for its turn?
+ * Is a server-acknowledged user message still WAITING BEHIND another?
  *
  * The server queues prompts while a session is busy, but an acked message
- * looked identical to one being worked on. Rule: while the session is busy,
- * a user message newer than the newest assistant message hasn't had its
- * turn start yet — the moment its assistant reply is created, the tag drops.
- * (The current turn's own seed shows Queued only for the instant before its
- * reply message exists, which is the honest reading of that instant.)
+ * looked identical to one being worked on. The first cut over-reported:
+ * it tagged EVERY user message newer than the newest assistant reply —
+ * including the one the model is answering right now, whose reply message
+ * doesn't exist yet. That read as "queued" for the very message being
+ * worked on, which is the opposite of the truth.
+ *
+ * Correct rule: among the unanswered user messages, the OLDEST is in
+ * flight; only the ones sent after it are actually waiting their turn.
  */
 export function awaitingTurn(input: {
   role?: string
   createdAt?: number
   busy: boolean
-  newestAssistantCreatedAt?: number | null
+  /** Created time of the oldest user message with no reply yet — the one in flight. */
+  inFlightUserCreatedAt?: number | null
 }): boolean {
   if (!input.busy || input.role !== "user" || !input.createdAt) return false
-  return input.newestAssistantCreatedAt == null || input.createdAt > input.newestAssistantCreatedAt
+  if (input.inFlightUserCreatedAt == null) return false
+  return input.createdAt > input.inFlightUserCreatedAt
+}
+
+/**
+ * The oldest user message that has no assistant reply after it — i.e. the
+ * turn currently being worked on. Null when every prompt has been answered.
+ */
+export function inFlightUserCreatedAt(
+  messages: ReadonlyArray<{ role?: string; time?: { created?: number } }> | null | undefined,
+): number | null {
+  const list = messages ?? []
+  let newestAssistant: number | null = null
+  for (const m of list) {
+    if (m.role === "assistant" && m.time?.created != null) {
+      newestAssistant = Math.max(newestAssistant ?? 0, m.time.created)
+    }
+  }
+  let oldestUnanswered: number | null = null
+  for (const m of list) {
+    if (m.role !== "user" || m.time?.created == null) continue
+    if (newestAssistant != null && m.time.created <= newestAssistant) continue
+    oldestUnanswered = oldestUnanswered == null ? m.time.created : Math.min(oldestUnanswered, m.time.created)
+  }
+  return oldestUnanswered
 }
