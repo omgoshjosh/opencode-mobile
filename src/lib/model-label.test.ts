@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { DEFAULT_MODEL_LABEL, modelDisplayLabel, type ProviderRef } from "./model-label.ts"
+import { catalogModelName, DEFAULT_MODEL_LABEL, modelDisplayLabel, type ProviderRef } from "./model-label.ts"
 
 const SWARM_ID = "swm_0043e3dd30010PKhr4pCJWdlMN"
 
@@ -19,6 +19,19 @@ const providers: ProviderRef[] = [
 // The reported bug: the chip showed the opaque swarm handle.
 test("a swarm shows its team name, not the raw id", () => {
   assert.equal(modelDisplayLabel(providers, { providerID: "swarm", modelID: SWARM_ID }), "Fable Bowser Dev Team")
+})
+
+test("swarm metadata replaces a raw provider-catalog name", () => {
+  assert.equal(
+    catalogModelName("swarm", { id: SWARM_ID, name: SWARM_ID }, [{ id: SWARM_ID, title: "Fable Bowser Dev Team" }]),
+    "Fable Bowser Dev Team",
+  )
+})
+
+test("catalog hydration preserves model and id fallbacks without swarm metadata", () => {
+  assert.equal(catalogModelName("swarm", { id: SWARM_ID, name: "Catalog team name" }, []), "Catalog team name")
+  assert.equal(catalogModelName("swarm", { id: SWARM_ID }, undefined), SWARM_ID)
+  assert.equal(catalogModelName("openai", { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }, []), "GPT-5.6 Sol")
 })
 
 test("ordinary models show their catalog display name", () => {

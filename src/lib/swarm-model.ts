@@ -38,7 +38,9 @@ export interface SessionModel {
 export function resolveSessionAgent(input: {
   sessionAgent?: string | null
   availableAgents: readonly string[]
+  selectionTouched?: boolean
 }): string | null {
+  if (input.selectionTouched) return null
   if (!input.sessionAgent) return null
   return input.availableAgents.includes(input.sessionAgent) ? input.sessionAgent : null
 }

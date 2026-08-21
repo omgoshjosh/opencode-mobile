@@ -202,6 +202,19 @@ export default function SessionScreen() {
   const variant = catalog.variant
   const setVariant = catalog.setVariant
   const cycleAgent = catalog.cycleAgent
+  const agentTouchedRef = useRef(false)
+  const modelTouchedRef = useRef(false)
+  useEffect(() => {
+    agentTouchedRef.current = false
+    modelTouchedRef.current = false
+  }, [id])
+  const handleAgentCycle = useCallback(
+    (direction: 1 | -1 = 1) => {
+      agentTouchedRef.current = true
+      cycleAgent(direction)
+    },
+    [cycleAgent],
+  )
 
   // Permission & question state
   const sessionID = currentSession?.id
@@ -513,6 +526,7 @@ export default function SessionScreen() {
     const resolved = resolveSessionAgent({
       sessionAgent: currentSession?.agent,
       availableAgents: agents.map((item) => item.name),
+      selectionTouched: agentTouchedRef.current,
     })
     if (resolved) restoreAgent(resolved)
   }, [currentSession?.id, currentSession?.agent, catalogLoaded])
@@ -531,7 +545,7 @@ export default function SessionScreen() {
             return
           case "agent":
             setInput("")
-            cycleAgent()
+            handleAgentCycle()
             return
           case "compact":
             setInput("")
@@ -541,7 +555,7 @@ export default function SessionScreen() {
       }
       setInput(`/${cmd.trigger} `)
     },
-    [router, cycleAgent],
+    [router, handleAgentCycle],
   )
 
   // --- Image picking ---
@@ -827,11 +841,6 @@ export default function SessionScreen() {
   // swarm and silently reassign this session to it (observed in the wild:
   // a Sol session flipped to Fable by one stale-chip send). Deliberate picks
   // must still win, so the guard keys on this flag, not on the mismatch.
-  const modelTouchedRef = useRef(false)
-  useEffect(() => {
-    modelTouchedRef.current = false
-  }, [id])
-
   // /compact: summarize with the model that actually RAN this session (the
   // swarm facade is not a model — see src/lib/summarize-model.ts).
   const runCompact = useCallback(() => {
@@ -1115,8 +1124,8 @@ export default function SessionScreen() {
         <View style={[s.toolbar, isDark && s.toolbarDark]}>
           <TouchableOpacity
             style={[s.agentChip, { borderColor: agentColor }]}
-            onPress={() => cycleAgent()}
-            onLongPress={() => cycleAgent(-1)}
+            onPress={() => handleAgentCycle()}
+            onLongPress={() => handleAgentCycle(-1)}
           >
             <View style={[s.agentDot, { backgroundColor: agentColor }]} />
             <Text style={[s.agentLabel, isDark && s.textWhite]}>{agent || "build"}</Text>

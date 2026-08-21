@@ -92,6 +92,17 @@ test("restores a persisted goal agent only when the server still exposes it", ()
   assert.equal(resolveSessionAgent({ sessionAgent: undefined, availableAgents: ["build", "goal", "plan"] }), null)
 })
 
+test("a late session hydration cannot overwrite a mode the user selected", () => {
+  assert.equal(
+    resolveSessionAgent({
+      sessionAgent: "build",
+      availableAgents: ["build", "goal", "plan"],
+      selectionTouched: true,
+    }),
+    null,
+  )
+})
+
 test("goal mode and a swarm model remain independent prompt selections", () => {
   assert.deepEqual(
     sessionPromptSelection({

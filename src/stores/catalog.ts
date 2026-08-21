@@ -2,6 +2,7 @@ import { create } from "zustand"
 import { useConnections } from "./connections"
 import type { Agent, Command } from "../lib/sdk"
 import { chooseModelSelection } from "../lib/model-selection"
+import { catalogModelName } from "../lib/model-label"
 
 export interface ProviderModel {
   id: string
@@ -59,13 +60,18 @@ export const useCatalog = create<CatalogState>((set, get) => ({
   loaded: false,
 
   load: async () => {
-    const client = useConnections.getState().client
+    const connections = useConnections.getState()
+    const client = connections.client
     if (!client) return
+    // Swarms are server-wide, not directory-scoped. A project client can list
+    // provider facades but may fail to resolve their global display metadata.
+    const globalClient = connections.clientForDirectory(undefined) || client
 
-    const [agentResult, commandResult, providerResult] = await Promise.all([
+    const [agentResult, commandResult, providerResult, swarmResult] = await Promise.all([
       client.agent.list().catch(() => [] as Agent[]),
       client.command.list().catch(() => [] as Command[]),
       client.provider.list().catch(() => null),
+      globalClient.swarm.list().catch(() => []),
     ])
 
     const agents = Array.isArray(agentResult) ? agentResult : []
@@ -86,7 +92,7 @@ export const useCatalog = create<CatalogState>((set, get) => ({
               .filter((m) => m.status !== "deprecated")
               .map((m) => ({
                 id: m.id,
-                name: m.name || m.id,
+                name: catalogModelName(p.id, m, swarmResult),
                 reasoning: m.reasoning ?? false,
                 attachment: m.attachment ?? false,
                 limit: m.limit,

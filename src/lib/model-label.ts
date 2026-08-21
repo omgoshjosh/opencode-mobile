@@ -30,7 +30,23 @@ export interface ModelSelection {
   modelID: string
 }
 
+export interface SwarmRef {
+  id: string
+  title?: string
+}
+
 export const DEFAULT_MODEL_LABEL = "default"
+
+export function catalogModelName(
+  providerID: string,
+  model: ModelRef,
+  swarms: SwarmRef[] | null | undefined,
+): string {
+  const swarmTitle =
+    providerID === "swarm" ? (swarms ?? []).find((swarm) => swarm.id === model.id)?.title?.trim() : undefined
+
+  return swarmTitle || model.name?.trim() || model.id
+}
 
 export function modelDisplayLabel(
   providers: ProviderRef[] | null | undefined,
