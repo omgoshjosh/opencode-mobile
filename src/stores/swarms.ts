@@ -1,6 +1,12 @@
 import { create } from "zustand"
 import { useConnections } from "./connections"
-import { canSaveRoles, toRoleInput, type RoleInput, type Swarm } from "../lib/swarm-crud"
+import {
+  applyPerRoleFallback,
+  canSaveRoles,
+  toRoleInput,
+  type RoleInput,
+  type Swarm,
+} from "../lib/swarm-crud"
 import type { SkillInfo } from "../lib/sdk"
 
 interface SwarmsState {
@@ -77,17 +83,78 @@ export const useSwarms = create<SwarmsState>((set, get) => ({
     const payload = roles.map(toRoleInput)
     try {
       set({ isSaving: true, error: null })
-      const saved = swarmID
-        ? await api.swarm.update(swarmID, { title, roles: payload })
-        : await api.swarm.create({ title, roles: payload })
+      let saved: Swarm | null = null
+      try {
+        saved = swarmID
+          ? await api.swarm.update(swarmID, { title, roles: payload })
+          : await api.swarm.create({ title, roles: payload })
+      } catch {
+        // The bulk roles array was refused — server builds with the per-role
+        // contract. Create has no honest fallback there: those builds
+        // auto-seed a default team that no route can delete, so "creating"
+        // would silently ship the wrong team. Say so and stop.
+        if (!swarmID) {
+          set({
+            isSaving: false,
+            error: "This server can't create swarm teams from the app yet",
+          })
+          return null
+        }
+        // Update CAN land via per-role writes; removals cannot (no DELETE
+        // route), so applyPerRoleFallback reports what it had to leave behind.
+        const outcome = await applyPerRoleFallback(
+          {
+            get: (id) => api.swarm.get(id),
+            patchTitle: (id, t) => api.swarm.update(id, { title: t }),
+            addRole: (id, r) => api.swarm.addRole(id, r),
+            updateRole: (id, roleID, r) => api.swarm.updateRole(id, roleID, r),
+          },
+          swarmID,
+          { title, roles: payload },
+        )
+        if (!outcome.ok) {
+          set({
+            isSaving: false,
+            error:
+              outcome.phase === "load"
+                ? "Failed to load swarm before saving"
+                : outcome.phase === "rename"
+                  ? "Saved roles failed: couldn't rename the swarm"
+                  : `Partially saved (${outcome.detail})`,
+          })
+          return null
+        }
+        // Refetch so the list reflects what the server actually holds — but
+        // don't let a refresh failure turn a landed save into "failed".
+        let refreshed: Swarm
+        try {
+          refreshed = await api.swarm.get(swarmID)
+        } catch {
+          set({
+            isSaving: false,
+            error: "Saved, but couldn't reload the swarm — pull to refresh",
+          })
+          return null
+        }
+        saved = refreshed
+        const left =
+          outcome.undeletable.length > 0
+            ? ` — this server can't remove roles: ${outcome.undeletable.map((r) => r.name).join(", ")}`
+            : ""
+        if (left || outcome.added || outcome.updated) {
+          set((state) => ({
+            error: left ? `Saved${left}` : state.error,
+          }))
+        }
+      }
 
       // Replace in place when it already existed so list order doesn't jump
       // under the user on a rename.
       set((state) => ({
         isSaving: false,
-        swarms: state.swarms.some((s) => s.id === saved.id)
-          ? state.swarms.map((s) => (s.id === saved.id ? saved : s))
-          : [saved, ...state.swarms],
+        swarms: state.swarms.some((s) => s.id === saved!.id)
+          ? state.swarms.map((s) => (s.id === saved!.id ? saved! : s))
+          : [saved!, ...state.swarms],
       }))
       return saved
     } catch {

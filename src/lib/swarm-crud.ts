@@ -138,6 +138,123 @@ export function moveRole(roles: RoleInput[], from: number, to: number): RoleInpu
   return list
 }
 
+// --- per-role server contract ---
+//
+// Server builds diverged on how role edits are expressed. The documented
+// contract carries a whole `roles` array on POST/PATCH /experimental/opencodex/
+// swarm; some builds reject that array with a bare 400 and only accept
+// per-role writes (POST/PATCH .../role). Those builds also auto-seed a default
+// team when a swarm is created without valid roles, and they have no per-role
+// DELETE — so a phone-created team cannot be assembled there, and a saved edit
+// cannot remove roles. The helpers below let an update still land where
+// possible and name exactly what the server refused, rather than letting a
+// save pretend it succeeded.
+
+/** A role as the server holds it, narrowed to what reconciliation needs. */
+export interface ServerRole {
+  id: string
+  name: string
+}
+
+export interface RoleReconciliation {
+  /** Desired roles with no same-name server counterpart. */
+  adds: RoleInput[]
+  /** Desired roles matched to an existing server role by name. */
+  updates: Array<{ roleID: string; role: RoleInput }>
+  /**
+   * On the server but no longer desired. With no DELETE route these can only
+   * be reported back to the user, never silently dropped from the result.
+   */
+  undeletable: ServerRole[]
+}
+
+/**
+ * Match desired roles onto server roles by trimmed name.
+ *
+ * Name is the only handle that survives the round trip: the editor hands us
+ * plain RoleInputs with no server ids, and role ids are not exposed in any
+ * stable order. First unused match wins so duplicate names still pair up
+ * deterministically instead of both latching onto one server row.
+ */
+export function reconcileRoles(server: ServerRole[], desired: RoleInput[]): RoleReconciliation {
+  const out: RoleReconciliation = { adds: [], updates: [], undeletable: [] }
+  const matched = new Set<string>()
+  for (const d of desired) {
+    const hit = server.find((s) => !matched.has(s.id) && s.name.trim() === d.name.trim())
+    if (hit) {
+      matched.add(hit.id)
+      out.updates.push({ roleID: hit.id, role: d })
+    } else {
+      out.adds.push(d)
+    }
+  }
+  out.undeletable = server.filter((s) => !matched.has(s.id))
+  return out
+}
+
+/** The narrow slice of the swarm API the fallback needs, injectable for tests. */
+export interface SwarmWriteTransport {
+  get: (swarmID: string) => Promise<{ id: string; title?: string; roles?: ServerRole[] }>
+  patchTitle: (swarmID: string, title: string) => Promise<unknown>
+  addRole: (swarmID: string, role: RoleInput) => Promise<unknown>
+  updateRole: (swarmID: string, roleID: string, role: RoleInput) => Promise<unknown>
+}
+
+export type PerRoleOutcome =
+  | { ok: true; added: number; updated: number; renamed: boolean; undeletable: ServerRole[] }
+  | { ok: false; phase: "load" | "rename" | "write"; detail: string }
+
+/**
+ * Apply a desired role set through per-role calls.
+ *
+ * Runs after the bulk write was already refused. Rename goes first while
+ * nothing is half-applied; then updates, then adds, so by the time anything
+ * fails the user is told precisely which phase stopped and what landed before
+ * it did. Removals are never attempted — there is no route for them.
+ */
+export async function applyPerRoleFallback(
+  t: SwarmWriteTransport,
+  swarmID: string,
+  input: { title?: string; roles: RoleInput[] },
+): Promise<PerRoleOutcome> {
+  let current: { id: string; title?: string; roles?: ServerRole[] }
+  try {
+    current = await t.get(swarmID)
+  } catch (err) {
+    return { ok: false, phase: "load", detail: String(err) }
+  }
+
+  const renamed = input.title !== undefined && input.title !== current.title
+  if (renamed) {
+    try {
+      await t.patchTitle(swarmID, input.title!)
+    } catch (err) {
+      return { ok: false, phase: "rename", detail: String(err) }
+    }
+  }
+
+  const rec = reconcileRoles(current.roles ?? [], input.roles)
+  let added = 0
+  let updated = 0
+  try {
+    for (const u of rec.updates) {
+      await t.updateRole(swarmID, u.roleID, u.role)
+      updated += 1
+    }
+    for (const a of rec.adds) {
+      await t.addRole(swarmID, a)
+      added += 1
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      phase: "write",
+      detail: `after ${updated} updated, ${added} added: ${String(err)}`,
+    }
+  }
+  return { ok: true, added, updated, renamed, undeletable: rec.undeletable }
+}
+
 // --- skills ---
 
 export interface Skill {

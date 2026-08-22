@@ -676,6 +676,21 @@ export function createClient(config: ClientConfig) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
         }),
+      // Some server builds refuse the bulk roles array with a bare 400 and
+      // only accept these per-role writes. See src/lib/swarm-crud.ts for the
+      // fallback that decides between the two contracts.
+      addRole: (swarmID: string, role: SwarmRoleInput) =>
+        request<SwarmInfo>(config, `${OPENCODEX_ROOT}/swarm/${swarmID}/role`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role }),
+        }),
+      updateRole: (swarmID: string, roleID: string, input: Partial<SwarmRoleInput>) =>
+        request<SwarmInfo>(config, `${OPENCODEX_ROOT}/swarm/${swarmID}/role/${roleID}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        }),
       delete: (swarmID: string) =>
         request<boolean>(config, `${OPENCODEX_ROOT}/swarm/${swarmID}`, { method: "DELETE" }),
     },

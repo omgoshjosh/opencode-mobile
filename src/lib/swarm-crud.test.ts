@@ -3,11 +3,13 @@ import assert from "node:assert/strict"
 import {
   MIN_ROLES,
   addRole,
+  applyPerRoleFallback,
   canSaveRoles,
   humanizeSkillName,
   isRoleConfigured,
   isSwarmReady,
   moveRole,
+  reconcileRoles,
   removeRole,
   roleFromSkill,
   swarmBlocker,
@@ -15,6 +17,7 @@ import {
   unusedSkills,
   updateRole,
   type RoleInput,
+  type ServerRole,
 } from "./swarm-crud.ts"
 
 function role(name: string, extra: Partial<RoleInput> = {}): RoleInput {
@@ -202,4 +205,125 @@ test("roles without a skill do not filter anything out", () => {
 test("empty inputs are tolerated", () => {
   assert.deepEqual(unusedSkills([], []), [])
   assert.deepEqual(unusedSkills(null as never, null as never), [])
+})
+
+// --- per-role server contract ---
+
+function serverRole(id: string, name: string): ServerRole {
+  return { id, name }
+}
+
+test("reconciliation adds roles the server does not have", () => {
+  const rec = reconcileRoles([serverRole("r1", "Orchestrator")], [role("Scout"), role("Checker")])
+  assert.deepEqual(rec.updates, [])
+  assert.deepEqual(rec.adds.map((r) => r.name), ["Scout", "Checker"])
+  assert.deepEqual(rec.undeletable.map((r) => r.name), ["Orchestrator"])
+})
+
+test("reconciliation matches by trimmed name and keeps the server id", () => {
+  const rec = reconcileRoles(
+    [serverRole("r1", " Scout ")],
+    [{ ...role("Scout"), modelID: "haiku" }],
+  )
+  assert.deepEqual(rec.adds, [])
+  assert.equal(rec.updates.length, 1)
+  assert.equal(rec.updates[0].roleID, "r1")
+  assert.deepEqual(rec.undeletable, [])
+})
+
+test("duplicate desired names pair up with distinct server rows", () => {
+  const rec = reconcileRoles(
+    [serverRole("r1", "Scout"), serverRole("r2", "Scout")],
+    [role("Scout"), role("Scout")],
+  )
+  assert.deepEqual(rec.updates.map((u) => u.roleID), ["r1", "r2"])
+  assert.deepEqual(rec.undeletable, [])
+})
+
+test("roles removed from the desired set come back undeletable, not silently dropped", () => {
+  const rec = reconcileRoles([serverRole("r1", "Old Hat")], [role("New Role")])
+  assert.deepEqual(rec.adds.map((r) => r.name), ["New Role"])
+  assert.deepEqual(rec.undeletable.map((r) => r.name), ["Old Hat"])
+})
+
+function fakeTransport(server: { title: string; roles: ServerRole[] }): SwarmWriteTransport & {
+  calls: string[]
+} {
+  const calls: string[] = []
+  return {
+    calls,
+    get: async () => ({ id: "swm_1", title: server.title, roles: server.roles }),
+    patchTitle: async (_id, title) => {
+      calls.push(`title:${title}`)
+      server.title = title
+    },
+    addRole: async (_id, r) => {
+      calls.push(`add:${r.name}`)
+      server.roles.push({ id: `new-${server.roles.length}`, name: r.name })
+    },
+    updateRole: async (_id, roleID, _r) => {
+      calls.push(`update:${roleID}`)
+    },
+  }
+}
+
+const DESIRED = [role("Orchestrator"), role("Scout"), role("Extra")]
+
+test("fallback renames first, then updates, then adds", async () => {
+  const server = { title: "Old", roles: [serverRole("r1", "Orchestrator")] }
+  const t = fakeTransport(server)
+  const out = await applyPerRoleFallback(t, "swm_1", { title: "New", roles: DESIRED })
+  assert.equal(out.ok, true)
+  if (!out.ok) return
+  assert.deepEqual(t.calls, ["title:New", "update:r1", "add:Scout", "add:Extra"])
+  assert.equal(out.updated, 1)
+  assert.equal(out.added, 2)
+  assert.equal(out.renamed, true)
+  assert.deepEqual(out.undeletable, [])
+})
+
+test("fallback skips a no-op rename", async () => {
+  const t = fakeTransport({ title: "Same", roles: [] })
+  const out = await applyPerRoleFallback(t, "swm_1", { title: "Same", roles: DESIRED })
+  assert.equal(out.ok, true)
+  if (!out.ok) return
+  assert.equal(out.renamed, false)
+  assert.ok(t.calls.every((c) => !c.startsWith("title:")))
+})
+
+test("a load failure reports the phase instead of writing blind", async () => {
+  const t = fakeTransport({ title: "T", roles: [] })
+  t.get = async () => {
+    throw new Error("401")
+  }
+  const out = await applyPerRoleFallback(t, "swm_1", { title: "N", roles: DESIRED })
+  assert.deepEqual(out, { ok: false, phase: "load", detail: "Error: 401" })
+  assert.deepEqual(t.calls, [])
+})
+
+test("a rename failure stops before any role write", async () => {
+  const t = fakeTransport({ title: "Old", roles: [] })
+  t.patchTitle = async () => {
+    throw new Error("400")
+  }
+  const out = await applyPerRoleFallback(t, "swm_1", { title: "New", roles: DESIRED })
+  assert.equal(out.ok, false)
+  if (out.ok) return
+  assert.equal(out.phase, "rename")
+  assert.deepEqual(t.calls, [])
+})
+
+test("a mid-write failure reports what landed before it stopped", async () => {
+  const server = { title: "T", roles: [serverRole("r1", "Orchestrator"), serverRole("r2", "Scout")] }
+  const t = fakeTransport(server)
+  let updates = 0
+  t.updateRole = async (_id, roleID) => {
+    updates += 1
+    if (updates === 2) throw new Error("500")
+  }
+  const out = await applyPerRoleFallback(t, "swm_1", { title: "T", roles: DESIRED })
+  assert.equal(out.ok, false)
+  if (out.ok) return
+  assert.equal(out.phase, "write")
+  assert.match(out.detail, /after 1 updated, 0 added/)
 })
