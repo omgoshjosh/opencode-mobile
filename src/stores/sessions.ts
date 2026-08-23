@@ -12,6 +12,7 @@ import { mergeOlderPage, mergeOlderParts, refreshWindowSize } from "../lib/messa
 import { canRenderFromCache, dropTranscript, getTranscript, putTranscript, type TranscriptCache } from "../lib/transcript-cache"
 import { dropPreview, parsePreviewMap, previewFromParts, previewText, putPreview, type PreviewMap } from "../lib/session-preview"
 import { markViewed, parseLastViewed, type LastViewedMap } from "../lib/session-attention"
+import { serializeSnapshot, parseSnapshot } from "../lib/list-freshness"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Helper to convert API response to our internal format
@@ -37,6 +38,16 @@ const PREVIEWS_KEY = "session_previews"
 
 function persistPreviews(previews: Record<string, { text: string; at: number }>) {
   AsyncStorage.setItem(PREVIEWS_KEY, JSON.stringify(previews)).catch(() => {})
+}
+
+// Last successful session list, for instant cold-start paint on a slow
+// backend. Session METADATA only (ids/titles/timestamps/directories — trimmed
+// and bounded in src/lib/list-freshness.ts); rows hydrated from it carry a
+// visible "as of" label until a live fetch confirms them.
+const SESSIONS_SNAPSHOT_KEY = "sessions_snapshot"
+
+function persistSessionsSnapshot(sessions: Session[]) {
+  AsyncStorage.setItem(SESSIONS_SNAPSHOT_KEY, serializeSnapshot(sessions, Date.now())).catch(() => {})
 }
 
 /** putPreview + eager persist in one step, for use inside set() updaters. */
@@ -77,6 +88,13 @@ interface SessionsState {
   // you still need to read from one you're done with.
   lastViewed: LastViewedMap
   error: string | null
+  // Where the rows in `sessions` came from and when — the inputs to the
+  // list's staleness banner (src/lib/list-freshness.ts). The UI must be able
+  // to say "showing sessions from 20m ago" instead of presenting disk-cached
+  // or refresh-failed data as current.
+  listSource: "network" | "snapshot" | null
+  listAsOf: number | null
+  listLoadFailed: boolean
 
   // Actions
   loadSessions: (options?: { rootsOnly?: boolean }) => Promise<void>
@@ -142,6 +160,9 @@ export const useSessions = create<SessionsState>((set, get) => ({
   previews: {},
   lastViewed: {},
   error: null,
+  listSource: null,
+  listAsOf: null,
+  listLoadFailed: false,
 
   loadLastViewed: async () => {
     try {
@@ -157,6 +178,23 @@ export const useSessions = create<SessionsState>((set, get) => ({
       const cached = parsePreviewMap(await AsyncStorage.getItem(PREVIEWS_KEY))
       if (Object.keys(cached).length > 0) {
         set((state) => ({ previews: { ...cached, ...state.previews } }))
+      }
+    } catch {
+      // Same convenience rule as above.
+    }
+    // The list snapshot rides the boot path too: on a slow backend the glance
+    // view paints instantly from disk — labelled as of when it was saved —
+    // instead of blanking behind a spinner until the full farm downloads.
+    // Only fills an empty list: if a live fetch has already landed (or lands
+    // while this read is in flight), the network data wins untouched.
+    try {
+      const snapshot = parseSnapshot(await AsyncStorage.getItem(SESSIONS_SNAPSHOT_KEY))
+      if (snapshot && snapshot.sessions.length > 0) {
+        set((state) =>
+          state.sessions.length === 0 && state.listSource === null
+            ? { sessions: snapshot.sessions, listSource: "snapshot", listAsOf: snapshot.savedAt }
+            : {},
+        )
       }
     } catch {
       // Same convenience rule as above.
@@ -192,9 +230,13 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // paging the whole farm. Otherwise children ride along for the
       // Swarm-root grouping as before.
       const sessions = await client.session.list({ roots: true, includeChildren: !options?.rootsOnly })
-      set({ sessions, isLoading: false })
+      set({ sessions, isLoading: false, listSource: "network", listAsOf: Date.now(), listLoadFailed: false })
+      persistSessionsSnapshot(sessions)
     } catch (error) {
-      set({ error: "Failed to load sessions", isLoading: false })
+      // Keep whatever rows are on screen (previous load or disk snapshot) —
+      // but marked: listLoadFailed drives the "showing sessions from Xm ago
+      // · Retry" banner rather than silently presenting stale data as fresh.
+      set({ error: "Failed to load sessions", isLoading: false, listLoadFailed: true })
     }
   },
 

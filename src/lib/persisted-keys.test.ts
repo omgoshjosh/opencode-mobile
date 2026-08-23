@@ -53,6 +53,15 @@ const ALLOWED_ASYNC_KEYS = new Map<string, string>([
   ["DRAFTS_KEY", "composer drafts: the user's own half-typed prompts, per session; never model output"],
   ["STATUS_CACHE_KEY", "last-known busy sessions for cold-start list rendering; ids and a type tag only"],
   ["PREVIEWS_KEY", "one truncated preview line per session for the list; bounded by MAX_TRACKED_PREVIEWS"],
+  [
+    "SESSIONS_SNAPSHOT_KEY",
+    // Same review outcome as PREVIEWS_KEY: session titles are model-derived,
+    // but the snapshot is rendered as inert list text with a visible "as of"
+    // label and is never fed into any model, prompt or request. revert/share
+    // state is stripped before writing (src/lib/list-freshness.ts) so stale
+    // versions can't drive an action against the wrong message.
+    "sessions-list metadata snapshot (ids, titles, timestamps, directories) for cold-start paint; bounded by SNAPSHOT_MAX_SESSIONS",
+  ],
   ["SESSION_SORT_KEY", "sessions list: chosen sort order (a fixed enum string)"],
   // These two write through a variable rather than a literal, so the key is
   // named at the call site's own constant. Listed by the variable name their

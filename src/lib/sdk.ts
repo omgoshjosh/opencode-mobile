@@ -296,6 +296,18 @@ async function requestWithHeaders<T>(
   return { body: (await response.json()) as T, headers: response.headers }
 }
 
+// Latency observer, injected by src/stores/rest-health.ts. A callback rather
+// than a store import keeps this file free of app-state dependencies (and
+// unit-testable under plain node). Settled responses (any status) and
+// timeouts report — each measures how long the server held the line. Other
+// failures don't: a connection refused in 30ms would land as a "fast" sample
+// and clear a slow verdict the server never earned (dead-vs-slow belongs to
+// the SSE indicator), and a user abort says nothing about the server at all.
+let latencyReporter: ((ms: number) => void) | null = null
+export function setLatencyReporter(fn: ((ms: number) => void) | null) {
+  latencyReporter = fn
+}
+
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
   const parentSignal = options.signal
   if (parentSignal?.aborted) throw new Error("Request aborted")
@@ -309,10 +321,14 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
   const onParentAbort = () => controller.abort()
   parentSignal?.addEventListener("abort", onParentAbort)
 
+  const startedAt = Date.now()
   try {
-    return await fetch(url, { ...options, signal: controller.signal })
+    const response = await fetch(url, { ...options, signal: controller.signal })
+    latencyReporter?.(Date.now() - startedAt)
+    return response
   } catch (error) {
     if (timedOut) {
+      latencyReporter?.(Date.now() - startedAt)
       throw new Error(`Request timed out after ${timeoutMs}ms`)
     }
     throw error
