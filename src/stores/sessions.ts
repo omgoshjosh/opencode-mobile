@@ -36,8 +36,22 @@ const LAST_VIEWED_KEY = "session_last_viewed"
 // Bounded by MAX_TRACKED_PREVIEWS via putPreview, so the write stays small.
 const PREVIEWS_KEY = "session_previews"
 
-function persistPreviews(previews: Record<string, { text: string; at: number }>) {
-  AsyncStorage.setItem(PREVIEWS_KEY, JSON.stringify(previews)).catch(() => {})
+// Text deltas arrive roughly per-token while any session on the farm streams,
+// and each one used to serialize the WHOLE preview map and write it to disk —
+// a hidden per-token JSON.stringify + AsyncStorage tax on the JS thread
+// (found in the slowdown audit). Trailing debounce instead: disk gets the
+// latest map once per window. Previews are a cold-start convenience, not a
+// journal — losing the last 2s on a process kill costs one stale preview
+// line, which the stream corrects on next launch.
+const PREVIEWS_PERSIST_DELAY_MS = 2_000
+let previewsPersistTimer: ReturnType<typeof setTimeout> | null = null
+function schedulePersistPreviews() {
+  if (previewsPersistTimer) return
+  previewsPersistTimer = setTimeout(() => {
+    previewsPersistTimer = null
+    // Read at fire time, not schedule time: the map has moved on since.
+    AsyncStorage.setItem(PREVIEWS_KEY, JSON.stringify(useSessions.getState().previews)).catch(() => {})
+  }, PREVIEWS_PERSIST_DELAY_MS)
 }
 
 // Last successful session list, for instant cold-start paint on a slow
@@ -50,10 +64,10 @@ function persistSessionsSnapshot(sessions: Session[]) {
   AsyncStorage.setItem(SESSIONS_SNAPSHOT_KEY, serializeSnapshot(sessions, Date.now())).catch(() => {})
 }
 
-/** putPreview + eager persist in one step, for use inside set() updaters. */
+/** putPreview + scheduled persist in one step, for use inside set() updaters. */
 function persistedPutPreview(previews: PreviewMap, sessionID: string, seed: { text: string; at: number }): PreviewMap {
   const next = putPreview(previews, sessionID, seed)
-  persistPreviews(next)
+  schedulePersistPreviews()
   return next
 }
 
@@ -639,7 +653,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
               at: part.time?.start ?? Date.now(),
             }),
           }))
-          persistPreviews(get().previews)
+          schedulePersistPreviews()
         }
       }
     }

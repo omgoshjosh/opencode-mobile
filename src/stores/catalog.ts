@@ -1,8 +1,10 @@
 import { create } from "zustand"
+import AsyncStorage from "@react-native-async-storage/async-storage"
 import { useConnections } from "./connections"
 import type { Agent, Command } from "../lib/sdk"
 import { chooseModelSelection } from "../lib/model-selection"
 import { applySwarmTitles, catalogModelName } from "../lib/model-label"
+import { serializeCatalog, parseCatalogSnapshot } from "../lib/catalog-snapshot"
 
 export interface ProviderModel {
   id: string
@@ -58,6 +60,36 @@ interface CatalogState {
   cycleAgent: (direction?: 1 | -1) => void
 }
 
+// Last-known catalog: provider/model display names (incl. user-entered swarm
+// team titles) + capability flags, so cold-start rows never show raw swm_/
+// model ids while the live catalog is still downloading. Config metadata
+// only — see src/lib/catalog-snapshot.ts and the persisted-keys allowlist.
+const CATALOG_SNAPSHOT_KEY = "catalog_snapshot"
+
+function persistCatalogSnapshot(providers: Provider[]) {
+  AsyncStorage.setItem(CATALOG_SNAPSHOT_KEY, serializeCatalog(providers)).catch(() => {})
+}
+
+// Snapshot models may lack fields a live Provider guarantees; default the
+// booleans so the picker degrades (no affordance) rather than crashes.
+function providersFromSnapshot(raw: string | null): Provider[] | null {
+  const parsed = parseCatalogSnapshot(raw)
+  if (!parsed) return null
+  return parsed.map((p) => ({
+    id: p.id,
+    name: p.name || p.id,
+    connected: p.connected ?? true,
+    models: p.models.map((m) => ({
+      id: m.id,
+      name: m.name || m.id,
+      reasoning: m.reasoning ?? false,
+      attachment: m.attachment ?? false,
+      limit: m.limit,
+      variants: m.variants,
+    })),
+  }))
+}
+
 export const useCatalog = create<CatalogState>((set, get) => ({
   agents: [],
   commands: [],
@@ -69,6 +101,21 @@ export const useCatalog = create<CatalogState>((set, get) => ({
   loaded: false,
 
   load: async () => {
+    // Hydrate last-known names first (couples the label "manifest" to the
+    // session snapshot's instant paint — rows and their names arrive
+    // together, not ids-then-names). Guarded so a live catalog that lands
+    // first, or a re-load, is never overwritten by disk.
+    if (!get().loaded && get().providers.length === 0) {
+      try {
+        const cached = providersFromSnapshot(await AsyncStorage.getItem(CATALOG_SNAPSHOT_KEY))
+        if (cached) {
+          set((state) => (!state.loaded && state.providers.length === 0 ? { providers: cached } : {}))
+        }
+      } catch {
+        // Cold-start convenience only; never block the live load.
+      }
+    }
+
     const connections = useConnections.getState()
     const client = connections.client
     if (!client) return
@@ -139,6 +186,9 @@ export const useCatalog = create<CatalogState>((set, get) => ({
       variant: sameModel(state.model, model) ? state.variant : null,
       loaded: true,
     }))
+    // Persist AFTER the set: these providers carry the final display names
+    // (swarm titles already applied via catalogModelName above).
+    if (providers.length > 0) persistCatalogSnapshot(providers)
   },
 
   refreshSwarms: async () => {
@@ -148,6 +198,9 @@ export const useCatalog = create<CatalogState>((set, get) => ({
     const swarms = await globalClient.swarm.list().catch(() => null)
     if (!swarms) return
     set((state) => ({ providers: applySwarmTitles(state.providers, swarms) }))
+    // A rename that reached every live surface must survive the next cold
+    // start too, or the old name comes back from disk.
+    persistCatalogSnapshot(get().providers)
   },
 
   setAgent: (name) => {

@@ -62,6 +62,13 @@ const ALLOWED_ASYNC_KEYS = new Map<string, string>([
     // versions can't drive an action against the wrong message.
     "sessions-list metadata snapshot (ids, titles, timestamps, directories) for cold-start paint; bounded by SNAPSHOT_MAX_SESSIONS",
   ],
+  [
+    "CATALOG_SNAPSHOT_KEY",
+    // Provider/model display names (incl. user-entered swarm team titles) and
+    // capability flags — config metadata, no model output. Hydrated with the
+    // sessions snapshot so cold-start rows never show raw swm_/model ids.
+    "last-known provider catalog for cold-start name resolution; bounded in src/lib/catalog-snapshot.ts",
+  ],
   ["SESSION_SORT_KEY", "sessions list: chosen sort order (a fixed enum string)"],
   // These two write through a variable rather than a literal, so the key is
   // named at the call site's own constant. Listed by the variable name their
