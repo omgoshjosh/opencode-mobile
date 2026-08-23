@@ -26,7 +26,8 @@ import {
 import type { Category } from "../../src/lib/notifications"
 import { hasTelemetryConsent, setTelemetryConsent } from "../../src/lib/telemetry"
 import { PRIVACY_POLICY_URL } from "../../src/lib/links"
-import { CURRENT_VERSION, checkForUpdate, type AvailableUpdate } from "../../src/lib/update-check"
+import { CURRENT_VERSION } from "../../src/lib/update-check"
+import { useUpdate } from "../../src/stores/update"
 import type { LocalePreference } from "../../src/lib/i18n/locale-resolve"
 
 function SettingRow({
@@ -111,17 +112,12 @@ export default function SettingsScreen() {
   // a newer build exists say so here too — the banner on the sessions list is
   // dismissible, this row is not (AGE-110). Uses the same 24h-throttled check,
   // so opening Settings repeatedly costs no extra requests.
-  const [updateAvailable, setUpdateAvailable] = useState<AvailableUpdate | null>(null)
+  // Shared with the tab-bar badge (src/stores/update.ts): one verdict,
+  // refreshed at launch and on foreground; opening Settings re-reads it so a
+  // just-published release shows up without waiting for the next foreground.
+  const updateAvailable = useUpdate((s) => s.available)
   useEffect(() => {
-    let cancelled = false
-    checkForUpdate({ ignoreDismissed: true })
-      .then((result) => {
-        if (!cancelled) setUpdateAvailable(result)
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
+    useUpdate.getState().refresh()
   }, [])
 
   // Telemetry consent: hasTelemetryConsent() returns null (unknown), true, or false.
@@ -234,6 +230,26 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={[styles.container, isDark && styles.containerDark]} contentContainerStyle={styles.content}>
+      {/* The Settings tab icon wears a dot when an update exists; this row is
+          what the dot points at — first thing on the page, tinted, one tap to
+          the release. The About row below keeps the exact version arrow. */}
+      {updateAvailable && (
+        <TouchableOpacity
+          style={[styles.updateCard, isDark && styles.updateCardDark]}
+          onPress={() => Linking.openURL(updateAvailable.url)}
+          activeOpacity={0.7}
+          testID="settings-update-card"
+        >
+          <Ionicons name="arrow-up-circle" size={22} color={isDark ? "#a78bfa" : "#6d28d9"} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.updateCardTitle, isDark && { color: "#e9d5ff" }]}>{t("update.available")}</Text>
+            <Text style={[styles.updateCardBody, isDark && { color: "#c4b5fd" }]}>
+              {t("update.body", { version: updateAvailable.version, current: CURRENT_VERSION })}
+            </Text>
+          </View>
+          <Text style={[styles.updateCardAction, isDark && { color: "#a78bfa" }]}>{t("update.action")}</Text>
+        </TouchableOpacity>
+      )}
       {/* Swarms are models you can pick in any session, so managing them
           belongs with the app's own configuration rather than inside a
           session. */}
@@ -459,6 +475,23 @@ const styles = StyleSheet.create({
   content: {
     paddingBottom: 32,
   },
+  // Update flair — accent-tinted, not alarm-coloured: an update is news,
+  // not an error.
+  updateCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#f5f3ff",
+    borderRadius: 12,
+    marginHorizontal: 16,
+    marginTop: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  updateCardDark: { backgroundColor: "#1e1b2e" },
+  updateCardTitle: { fontSize: 14, fontWeight: "700", color: "#4c1d95" },
+  updateCardBody: { fontSize: 12, color: "#6d28d9", marginTop: 1 },
+  updateCardAction: { fontSize: 13, fontWeight: "700", color: "#6d28d9" },
   section: {
     marginTop: 24,
   },

@@ -70,6 +70,23 @@ export function modelDisplayLabel(
 }
 
 /**
+ * Display name for a bare model id with no provider attached.
+ *
+ * The session hub's "models that ran" chips come from message records, which
+ * carry only modelID — a swarm session's facade id rendered as its raw
+ * swm_ handle right under a correctly-named team label. Search every
+ * provider for the id (ids are unique enough across a catalog; a collision
+ * would only pick a different display name for the same model).
+ */
+export function modelIDDisplayLabel(providers: ProviderRef[] | null | undefined, modelID: string): string {
+  for (const provider of providers ?? []) {
+    const name = provider.models?.find((m) => m.id === modelID)?.name
+    if (name && name.trim()) return name
+  }
+  return modelID.split("/").pop() || modelID
+}
+
+/**
  * Re-title the synthetic swarm provider's models from fresh swarm metadata.
  *
  * Swarm titles are baked into catalog display names at load time, so a rename

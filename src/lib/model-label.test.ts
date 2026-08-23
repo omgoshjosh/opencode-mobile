@@ -5,6 +5,7 @@ import {
   catalogModelName,
   DEFAULT_MODEL_LABEL,
   modelDisplayLabel,
+  modelIDDisplayLabel,
   type ProviderRef,
   type SwarmRef,
 } from "./model-label.ts"
@@ -117,4 +118,18 @@ test("whitespace-only titles never blank a label", () => {
   const odd = applySwarmTitles(providers, [{ id: SWARM_ID, title: "   " }])
   const model = odd.find((p) => p.id === "swarm")!.models.find((m) => m.id === SWARM_ID)!
   assert.equal(model.name, "Fable Bowser Dev Team")
+})
+
+test("modelIDDisplayLabel resolves a bare model id across providers", () => {
+  const providers = [
+    { id: "openai", models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }] },
+    { id: "swarm", models: [{ id: "swm_abc", name: "Fable Bowser Dev Team" }] },
+  ]
+  assert.equal(modelIDDisplayLabel(providers, "swm_abc"), "Fable Bowser Dev Team")
+  assert.equal(modelIDDisplayLabel(providers, "gpt-5.6-sol"), "GPT-5.6 Sol")
+})
+
+test("modelIDDisplayLabel falls back to the id's last segment before the catalog loads", () => {
+  assert.equal(modelIDDisplayLabel([], "anthropic/claude-opus"), "claude-opus")
+  assert.equal(modelIDDisplayLabel(null, "swm_abc"), "swm_abc")
 })

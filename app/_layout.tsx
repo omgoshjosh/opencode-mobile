@@ -10,6 +10,7 @@ import i18n from "../src/lib/i18n/config"
 import { useAuth } from "../src/stores/auth"
 import { useConnections } from "../src/stores/connections"
 import { useEvents, restoreStatusCache } from "../src/stores/events"
+import { useUpdate } from "../src/stores/update"
 import { useDrafts } from "../src/stores/drafts"
 import { useCatalog } from "../src/stores/catalog"
 import { useSettings } from "../src/stores/settings"
@@ -48,6 +49,10 @@ function RootLayout() {
     // Drafts feed the session list's draft badges, so they load at boot,
     // not lazily on first session open.
     useDrafts.getState().load()
+    // Shared update verdict (Settings tab badge + About row) — see
+    // src/stores/update.ts. Cached answer resolves instantly; network at
+    // most once per 24h.
+    useUpdate.getState().refresh()
 
     // Connect notification preferences to the notification module
     notifications.configure(() => useSettings.getState().notifications)
@@ -107,6 +112,10 @@ function RootLayout() {
       // no-op when the transport is already live or an attempt is in flight.
       if (next === "active") {
         useEvents.getState().resume()
+        // Foreground is when the user is about to look at the app — the
+        // moment "a newer build exists" should already be answered. Cheap:
+        // policy serves the cached verdict, network at most once per 24h.
+        useUpdate.getState().refresh()
       }
     })
     return () => sub.remove()

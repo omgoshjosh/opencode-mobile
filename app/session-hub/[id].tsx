@@ -6,7 +6,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useSessions } from "../../src/stores/sessions"
 import { useCatalog } from "../../src/stores/catalog"
 import { sessionStats, compactNumber } from "../../src/lib/session-stats"
-import { modelDisplayLabel } from "../../src/lib/model-label"
+import { getTranscript } from "../../src/lib/transcript-cache"
+import { modelDisplayLabel, modelIDDisplayLabel } from "../../src/lib/model-label"
 import { SWARM_PROVIDER_ID } from "../../src/lib/swarm-model"
 import { indexByID, depthOf } from "../../src/lib/session-tree"
 
@@ -27,16 +28,24 @@ export default function SessionHubScreen() {
   const messages = useSessions((s) => s.messages)
   const sessions = useSessions((s) => s.sessions)
   const previews = useSessions((s) => s.previews)
+  const transcriptCache = useSessions((s) => s.transcriptCache)
   const providers = useCatalog((c) => c.providers)
 
-  // The hub is only reachable from the open session, whose transcript is in
-  // the store. Guard anyway: a stale deep link should degrade, not lie.
+  // Render from the ROUTE id, never from whichever session the store has
+  // open: drilling from this hub into a subagent re-points currentSession,
+  // so coming BACK here found id ≠ currentSession and the whole hub
+  // degraded to its deep-link fallback, titled with the wrong session
+  // (found on Pixel 8 Pro). The session record comes from the list; usage
+  // comes from the live transcript when this session is the open one, else
+  // from its parked copy in the transcript cache.
   const isCurrent = currentSession?.id === id
-  const stats = useMemo(() => sessionStats(isCurrent ? messages : []), [isCurrent, messages])
+  const session = isCurrent ? currentSession : (sessions.find((x) => x.id === id) ?? null)
+  const statsMessages = isCurrent ? messages : (getTranscript(transcriptCache, id ?? "")?.messages ?? null)
+  const stats = useMemo(() => sessionStats(statsMessages ?? []), [statsMessages])
 
   const swarmLabel =
-    currentSession?.model?.providerID === SWARM_PROVIDER_ID
-      ? modelDisplayLabel(providers, { providerID: SWARM_PROVIDER_ID, modelID: currentSession.model.id })
+    session?.model?.providerID === SWARM_PROVIDER_ID
+      ? modelDisplayLabel(providers, { providerID: SWARM_PROVIDER_ID, modelID: session.model.id })
       : null
 
   // Direct children only. Grandchildren are reachable by descending — showing
@@ -49,12 +58,14 @@ export default function SessionHubScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: currentSession?.title || "Session" }} />
+      <Stack.Screen options={{ title: session?.title || "Session" }} />
       <ScrollView
         style={[s.container, isDark && s.containerDark]}
         contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 32 }}
       >
-        {!isCurrent ? (
+        {!session ? (
+          // A genuinely unknown id (stale deep link before any list load) —
+          // degrade, don't lie.
           <Text style={[s.dim, s.center]}>Open the session first, then its hub.</Text>
         ) : (
           <>
@@ -66,17 +77,23 @@ export default function SessionHubScreen() {
             )}
 
             <Text style={[s.label, isDark && s.dim]}>USAGE</Text>
-            <View style={[s.card, isDark && s.cardDark]}>
-              <Stat label="Cost" value={`$${stats.cost.toFixed(2)}`} isDark={isDark} />
-              <Stat label="Input" value={compactNumber(stats.inputTokens)} isDark={isDark} />
-              <Stat label="Output" value={compactNumber(stats.outputTokens)} isDark={isDark} />
-              <Stat label="Cache reads" value={compactNumber(stats.cacheReadTokens)} isDark={isDark} />
-              <Stat
-                label="Messages"
-                value={`${stats.userMessages} you · ${stats.assistantMessages} assistant`}
-                isDark={isDark}
-              />
-            </View>
+            {statsMessages === null ? (
+              // No transcript in memory for this session — zeros here would
+              // be fiction, not data.
+              <Text style={[s.dim, { fontSize: 13 }]}>Open the session to load usage.</Text>
+            ) : (
+              <View style={[s.card, isDark && s.cardDark]}>
+                <Stat label="Cost" value={`$${stats.cost.toFixed(2)}`} isDark={isDark} />
+                <Stat label="Input" value={compactNumber(stats.inputTokens)} isDark={isDark} />
+                <Stat label="Output" value={compactNumber(stats.outputTokens)} isDark={isDark} />
+                <Stat label="Cache reads" value={compactNumber(stats.cacheReadTokens)} isDark={isDark} />
+                <Stat
+                  label="Messages"
+                  value={`${stats.userMessages} you · ${stats.assistantMessages} assistant`}
+                  isDark={isDark}
+                />
+              </View>
+            )}
 
             {stats.models.length > 0 && (
               <>
@@ -84,7 +101,10 @@ export default function SessionHubScreen() {
                 <View style={s.chipWrap}>
                   {stats.models.map((modelID) => (
                     <View key={modelID} style={[s.chip, isDark && s.chipDark]}>
-                      <Text style={s.chipText}>{modelID}</Text>
+                      {/* Message records carry bare model ids; resolve to the
+                          catalog's display name so a swarm shows its team
+                          name, not its swm_ handle. */}
+                      <Text style={s.chipText}>{modelIDDisplayLabel(providers, modelID)}</Text>
                     </View>
                   ))}
                 </View>
