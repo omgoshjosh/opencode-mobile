@@ -145,6 +145,11 @@ export type RevertResult = ({ ok: true } & PromptFromParts) | { ok: false; reaso
 // this module) clears entries on busy and checks them on busy -> idle.
 export const abortedSessions = new Set<string>()
 
+// Same guard for loadSessions: the two-phase load below commits twice, and a
+// pull-to-refresh (or filter flip) issued mid-flight must not have an older
+// call's phase-2 result land on top of a newer call's rows.
+let listLoadSeq = 0
+
 // Monotonic token guarding selectSession against out-of-order resolution: a
 // slow fetch for a session the user has already navigated away from must not
 // overwrite the messages/currentSession of a newer selection. Each call takes
@@ -225,6 +230,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
       return
     }
 
+    const seq = ++listLoadSeq
     try {
       set({ isLoading: true, error: null })
       // A directory-less list includes sessions across projects. Each row carries
@@ -243,10 +249,34 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // never leave the database, so the fetch is one small page instead of
       // paging the whole farm. Otherwise children ride along for the
       // Swarm-root grouping as before.
+      // Roots-first two-phase (cold start only): the full farm download pages
+      // serially, so on a slow backend the glance view waited RTT×pages for
+      // rows it could have had in one. Phase 1 reuses the server-side roots
+      // narrowing (one small page) and commits immediately; phase 2 fetches
+      // the full list with children for the Swarm-root grouping and replaces.
+      // Warm refreshes skip phase 1: committing a roots-only interim over a
+      // list that already has children would collapse expanded swarm groups
+      // for a beat and then restore them — a flicker worse than the wait.
+      const cold = get().sessions.length === 0 || get().listSource !== "network"
+      const twoPhase = !options?.rootsOnly && cold
+      if (twoPhase) {
+        try {
+          const roots = await client.session.list({ roots: true, includeChildren: false })
+          if (seq === listLoadSeq && roots.length > 0) {
+            set({ sessions: roots, isLoading: false, listSource: "network", listAsOf: Date.now(), listLoadFailed: false })
+          }
+        } catch {
+          // Phase 1 is opportunistic; phase 2 below is the load of record and
+          // owns failure reporting.
+        }
+      }
+
       const sessions = await client.session.list({ roots: true, includeChildren: !options?.rootsOnly })
+      if (seq !== listLoadSeq) return
       set({ sessions, isLoading: false, listSource: "network", listAsOf: Date.now(), listLoadFailed: false })
       persistSessionsSnapshot(sessions)
     } catch (error) {
+      if (seq !== listLoadSeq) return
       // Keep whatever rows are on screen (previous load or disk snapshot) —
       // but marked: listLoadFailed drives the "showing sessions from Xm ago
       // · Retry" banner rather than silently presenting stale data as fresh.
