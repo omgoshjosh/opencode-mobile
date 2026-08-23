@@ -148,9 +148,16 @@ export default function SwarmEditorScreen() {
             </TouchableOpacity>
           </View>
 
-          {roles.length === 0 && (
+          {roles.length === 0 ? (
             <Text style={[s.hint, isDark && s.labelDark]}>
               Add at least two roles. Starting from a skill fills in the name and instructions for you.
+            </Text>
+          ) : (
+            // The server enforces this on create; saying it up front beats a
+            // rejected save (the rule surfaced as a post-save error on the
+            // Pixel 8 Pro before this hint existed). Reorder with the arrows.
+            <Text style={[s.hint, isDark && s.labelDark]}>
+              The first role is the team's orchestrator — the one you talk to. It coordinates the rest.
             </Text>
           )}
 

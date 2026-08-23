@@ -730,6 +730,17 @@ export default function SessionsScreen() {
     }, [client, reloadSessions, refreshProject]),
   )
 
+  // Catalog retry (seen on the primary device): load() runs once per
+  // connect, so a first attempt that failed or raced the connection left
+  // every swarm label as its raw swm_ handle until an app restart. The
+  // stream turning healthy is proof the server is reachable — exactly the
+  // moment to try again. `loaded` gates it to catalogs that never
+  // successfully loaded, so this never spams a healthy session.
+  const catalogLoaded = useCatalog((s) => s.loaded)
+  useEffect(() => {
+    if (transportHealthy && !catalogLoaded && client) loadCatalog()
+  }, [transportHealthy, catalogLoaded, client, loadCatalog])
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true)
     try {

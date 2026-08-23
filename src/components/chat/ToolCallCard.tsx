@@ -3,7 +3,7 @@ import { LIVE_TICK_MS, formatElapsed } from "../../lib/elapsed-format"
 import { resolveClockMode, shorthandTimestamp } from "../../lib/timestamp-shorthand"
 import { deviceUses24hClock } from "../../lib/device-clock"
 import { useSettings } from "../../stores/settings"
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView, Platform } from "react-native"
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView, Platform, Linking } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { useTranslation } from "react-i18next"
 import { router } from "expo-router"
@@ -11,8 +11,10 @@ import type { Part } from "../../lib/sdk"
 import { DiffView } from "./DiffView"
 import { isSubagentOpenable, subagentBadge, subagentLinkFrom } from "../../lib/subagent-link"
 import { toolCallTitle } from "../../lib/tool-titles"
+import { modelIDDisplayLabel } from "../../lib/model-label"
 import { useViewer } from "../../stores/viewer"
 import { useSessions } from "../../stores/sessions"
+import { useCatalog } from "../../stores/catalog"
 
 const TOOL_ICONS: Record<string, string> = {
   read: "glasses-outline",
@@ -95,11 +97,11 @@ function WriteDetail({ input, isDark }: { input: unknown; isDark: boolean }) {
         </Text>
       )}
       {typeof content === "string" && content.length > 0 && (
-        <View style={[s.codeBlock, isDark && s.codeBlockDark, { marginTop: 6 }]}>
-          <Text style={[s.codePre, isDark && s.codePteDark]} selectable numberOfLines={40}>
-            {content}
-          </Text>
-        </View>
+        // A write is "everything below is new" — render it in the same diff
+        // vocabulary as edit (all-adds, green gutter) instead of a bare code
+        // block, so edit and write read as the same kind of event.
+        // computeDiff self-caps on large inputs (see diff-compute.ts).
+        <DiffView before="" after={content} isDark={isDark} />
       )}
     </View>
   )
@@ -190,9 +192,19 @@ function WebfetchDetail({ input, isDark }: { input: unknown; isDark: boolean }) 
   return (
     <View style={s.detailSection}>
       {typeof url === "string" && (
-        <Text style={[s.detailFile, isDark && s.detailFileDark, { color: "#8b5cf6" }]} selectable numberOfLines={3}>
-          {url}
-        </Text>
+        // Tappable, not just legible: the point of seeing what the agent
+        // fetched is being able to look at the same page yourself.
+        <TouchableOpacity
+          style={s.urlRow}
+          onPress={() => Linking.openURL(url).catch(() => {})}
+          activeOpacity={0.7}
+          testID="webfetch-open-url"
+        >
+          <Text style={[s.detailFile, isDark && s.detailFileDark, { color: "#8b5cf6", flex: 1 }]} numberOfLines={3}>
+            {url}
+          </Text>
+          <Ionicons name="open-outline" size={14} color="#8b5cf6" />
+        </TouchableOpacity>
       )}
     </View>
   )
@@ -210,6 +222,7 @@ function TaskDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
   const link = subagentLinkFrom(tool)
   const badge = link ? subagentBadge(link) : undefined
   const directory = useSessions((st) => st.currentSession?.directory)
+  const providers = useCatalog((c) => c.providers)
 
   const openSubagent = useCallback(() => {
     if (!link) return
@@ -245,10 +258,12 @@ function TaskDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
             </View>
           )}
           {/* The swarm facade hides which model actually ran; this is the
-              only place it surfaces. */}
+              only place it surfaces. Resolve to the catalog's display name —
+              the raw id was the last swm_/model handle still visible in a
+              transcript. */}
           {link.modelID && (
             <Text style={[s.subagentModel, isDark && s.detailMetaDark]} numberOfLines={1}>
-              {link.modelID}
+              {modelIDDisplayLabel(providers, link.modelID)}
             </Text>
           )}
           <Ionicons name="chevron-forward" size={14} color="#8b5cf6" />
@@ -553,6 +568,7 @@ const s = StyleSheet.create({
     backgroundColor: "#f5f3ff",
   },
   openOutputText: { fontSize: 12, fontWeight: "600", color: "#6d28d9" },
+  urlRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   detailMeta: { fontSize: 12, color: "#666666", lineHeight: 18 },
   detailMetaDark: { color: "#888888" },
   // Subagent entry point. Purple matches the swarm accent used on session
