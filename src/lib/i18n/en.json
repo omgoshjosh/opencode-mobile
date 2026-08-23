@@ -90,9 +90,8 @@
       "title": "Timestamp time zone",
       "local": "Local",
       "utc": "UTC",
-      "specificDisabled": "Specific time zone (unavailable)",
-      "specificSoonTitle": "Not available yet",
-      "specificSoonMessage": "Choosing a specific time zone is coming later. Local and UTC work today."
+      "specific": "Specific time zone…",
+      "searchPlaceholder": "Search time zones…"
     },
     "clock": {
       "label": "Clock",

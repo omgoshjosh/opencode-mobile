@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { resolveClockMode, shorthandTimestamp } from "./timestamp-shorthand.ts"
+import { resolveClockMode, shorthandTimestamp, isSpecificZone, isValidZone } from "./timestamp-shorthand.ts"
 
 // Fixed reference: 2026-08-17 14:30 local.
 const now = new Date(2026, 7, 17, 14, 30).getTime()
@@ -69,4 +69,37 @@ test("clock preference resolution: system follows the device, unknown keeps 24h"
   assert.equal(resolveClockMode("system", false), "12h")
   assert.equal(resolveClockMode("system", true), "24h")
   assert.equal(resolveClockMode("system", null), "24h")
+})
+
+// --- specific IANA zones ---
+
+test("a specific zone renders in that zone with its own label", () => {
+  // 2026-01-15T20:00:00Z -> 12:00 PST (UTC-8, winter).
+  const ts = Date.UTC(2026, 0, 15, 20, 0)
+  const now = Date.UTC(2026, 0, 15, 22, 0)
+  assert.equal(shorthandTimestamp(ts, now, "America/Los_Angeles", "24h"), "12:00 PST")
+})
+
+test("specific-zone 'today' collapses by that zone's calendar, not the device's", () => {
+  // 2026-06-10T02:00:00Z is still June 9 in Los Angeles (PDT, UTC-7).
+  const ts = Date.UTC(2026, 5, 10, 2, 0)
+  const now = Date.UTC(2026, 5, 10, 3, 0) // also June 9 in LA -> same day
+  assert.equal(shorthandTimestamp(ts, now, "America/Los_Angeles", "24h"), "19:00 PDT")
+  // From a `now` that is June 10 in LA, the date appears.
+  const later = Date.UTC(2026, 5, 10, 20, 0)
+  assert.equal(shorthandTimestamp(ts, later, "America/Los_Angeles", "24h"), "Jun 9, 19:00 PDT")
+})
+
+test("an unresolvable zone falls back to UTC and says UTC — never a mislabeled clock", () => {
+  const ts = Date.UTC(2026, 0, 15, 20, 0)
+  const now = Date.UTC(2026, 0, 15, 22, 0)
+  assert.equal(shorthandTimestamp(ts, now, "Not/A_Zone", "24h"), "20:00 UTC")
+})
+
+test("isSpecificZone and isValidZone classify correctly", () => {
+  assert.equal(isSpecificZone("local"), false)
+  assert.equal(isSpecificZone("utc"), false)
+  assert.equal(isSpecificZone("Asia/Tokyo"), true)
+  assert.equal(isValidZone("Asia/Tokyo"), true)
+  assert.equal(isValidZone("Not/A_Zone"), false)
 })

@@ -28,6 +28,8 @@ import { hasTelemetryConsent, setTelemetryConsent } from "../../src/lib/telemetr
 import { PRIVACY_POLICY_URL } from "../../src/lib/links"
 import { CURRENT_VERSION } from "../../src/lib/update-check"
 import { useUpdate } from "../../src/stores/update"
+import { isSpecificZone } from "../../src/lib/timestamp-shorthand"
+import { zoneDisplayLabel } from "../../src/lib/zone-list"
 import type { LocalePreference } from "../../src/lib/i18n/locale-resolve"
 
 function SettingRow({
@@ -208,25 +210,24 @@ export default function SettingsScreen() {
     ])
   }, [t, setClock, clockLabels])
 
-  const timeZoneLabels: Record<typeof timeZone, string> = {
-    local: t("settings.timezone.local"),
-    utc: t("settings.timezone.utc"),
-  }
+  // A specific IANA zone labels itself by city ("Los Angeles · America");
+  // local/utc keep their translated names.
+  const timeZoneLabel = isSpecificZone(timeZone)
+    ? zoneDisplayLabel(timeZone)
+    : timeZone === "utc"
+      ? t("settings.timezone.utc")
+      : t("settings.timezone.local")
 
-  // Single-select: Local and UTC are live; "Specific time zone" is listed
-  // but disabled — choosing it explains itself instead of silently no-oping.
+  // Single-select: Local and UTC inline; "Specific…" opens the searchable
+  // picker (app/timezone.tsx) — an Alert can't hold 400 zones.
   const handleTimeZonePress = useCallback(() => {
     Alert.alert(t("settings.timezone.title"), undefined, [
-      { text: timeZoneLabels.local, onPress: () => setTimeZone("local") },
-      { text: timeZoneLabels.utc, onPress: () => setTimeZone("utc") },
-      {
-        text: t("settings.timezone.specificDisabled"),
-        onPress: () =>
-          Alert.alert(t("settings.timezone.specificSoonTitle"), t("settings.timezone.specificSoonMessage")),
-      },
+      { text: t("settings.timezone.local"), onPress: () => setTimeZone("local") },
+      { text: t("settings.timezone.utc"), onPress: () => setTimeZone("utc") },
+      { text: t("settings.timezone.specific"), onPress: () => router.push("/timezone") },
       { text: t("common.cancel"), style: "cancel" },
     ])
-  }, [t, setTimeZone, timeZoneLabels])
+  }, [t, setTimeZone])
 
   return (
     <ScrollView style={[styles.container, isDark && styles.containerDark]} contentContainerStyle={styles.content}>
@@ -402,7 +403,7 @@ export default function SettingsScreen() {
         <SettingRow
           icon="time"
           label={t("settings.timezone.label")}
-          description={timeZoneLabels[timeZone]}
+          description={timeZoneLabel}
           isDark={isDark}
           onPress={handleTimeZonePress}
           right={<Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
