@@ -296,3 +296,29 @@ export function unusedSkills(skills: Skill[], roles: RoleInput[]): Skill[] {
   const used = new Set((roles ?? []).map((role) => role.skill).filter(Boolean))
   return (skills ?? []).filter((skill) => !used.has(skill.name))
 }
+
+/**
+ * The server's own words for why a write was refused, when it gave any.
+ *
+ * Found on-device (Pixel 8 Pro): a create rejected with a real validation
+ * message ("A swarm requires the first role to be the Orchestrator") was
+ * reported as "this server can't create swarm teams" — the catch treated
+ * every 400 as the bulk-roles capability gap and hid the fixable reason.
+ * request() embeds the response body in the error message after "API Error:
+ * <status> - "; this digs a {message} out of that JSON. Returns null for
+ * bare/unparseable bodies (the actual capability-gap shape), letting callers
+ * fall back to the capability explanation only when the server truly said
+ * nothing.
+ */
+export function serverMessageFrom(error: unknown): string | null {
+  const text = error instanceof Error ? error.message : typeof error === "string" ? error : ""
+  const start = text.indexOf("{")
+  if (start < 0) return null
+  try {
+    const parsed = JSON.parse(text.slice(start))
+    const message = typeof parsed?.message === "string" ? parsed.message.trim() : ""
+    return message || null
+  } catch {
+    return null
+  }
+}

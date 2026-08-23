@@ -158,6 +158,20 @@ export const useCatalog = create<CatalogState>((set, get) => ({
           .filter((p) => p.models.length > 0)
       : []
 
+    // Found on-device (Pixel 8 Pro, offline cold start): provider.list()
+    // fails → raw is null → providers parses to [] → the set() below stomped
+    // the disk-hydrated names and every swarm badge fell back to its raw
+    // swm_ handle. A failed fetch is not an empty catalog: keep whatever
+    // names we have (snapshot or previous load) and let the next successful
+    // load replace them. `loaded` stays false so nothing mistakes the
+    // fallback for live data.
+    const fetchFailed = providerResult === null
+    if (fetchFailed && get().providers.length > 0) {
+      // agents/commands failed the same way ([] via their catches) — don't
+      // stomp those either. Nothing to commit from this failed load.
+      return
+    }
+
     // Filter out hidden agents
     const visible = agents.filter((a) => !a.hidden)
 

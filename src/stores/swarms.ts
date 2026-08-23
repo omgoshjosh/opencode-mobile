@@ -4,6 +4,7 @@ import { useCatalog } from "./catalog"
 import {
   applyPerRoleFallback,
   canSaveRoles,
+  serverMessageFrom,
   toRoleInput,
   type RoleInput,
   type Swarm,
@@ -89,11 +90,20 @@ export const useSwarms = create<SwarmsState>((set, get) => ({
         saved = swarmID
           ? await api.swarm.update(swarmID, { title, roles: payload })
           : await api.swarm.create({ title, roles: payload })
-      } catch {
-        // The bulk roles array was refused — server builds with the per-role
-        // contract. Create has no honest fallback there: those builds
-        // auto-seed a default team that no route can delete, so "creating"
-        // would silently ship the wrong team. Say so and stop.
+      } catch (err) {
+        // A refusal WITH a server message is a validation failure the user
+        // can fix (e.g. "first role must be the Orchestrator") — show the
+        // server's words, not a capability verdict (found on Pixel 8 Pro:
+        // every 400 was blamed on the server's contract).
+        const serverMessage = serverMessageFrom(err)
+        if (serverMessage) {
+          set({ isSaving: false, error: serverMessage })
+          return null
+        }
+        // A BARE refusal is the bulk-roles capability gap — server builds
+        // with the per-role contract. Create has no honest fallback there:
+        // those builds auto-seed a default team that no route can delete, so
+        // "creating" would silently ship the wrong team. Say so and stop.
         if (!swarmID) {
           set({
             isSaving: false,

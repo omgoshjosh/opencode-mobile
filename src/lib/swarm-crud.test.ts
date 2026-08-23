@@ -12,6 +12,7 @@ import {
   reconcileRoles,
   removeRole,
   roleFromSkill,
+  serverMessageFrom,
   swarmBlocker,
   toRoleInput,
   unusedSkills,
@@ -326,4 +327,17 @@ test("a mid-write failure reports what landed before it stopped", async () => {
   if (out.ok) return
   assert.equal(out.phase, "write")
   assert.match(out.detail, /after 1 updated, 0 added/)
+})
+
+test("serverMessageFrom digs the server's validation message out of a request() error", () => {
+  const err = new Error('API Error: 400 - {"_tag":"ValidationError","message":"A swarm requires the first role to be the Orchestrator."}')
+  assert.equal(serverMessageFrom(err), "A swarm requires the first role to be the Orchestrator.")
+})
+
+test("serverMessageFrom returns null for bare or unparseable bodies (the capability-gap shape)", () => {
+  assert.equal(serverMessageFrom(new Error("API Error: 400 - ")), null)
+  assert.equal(serverMessageFrom(new Error("API Error: 400 - Bad Request")), null)
+  assert.equal(serverMessageFrom(new Error('API Error: 400 - {"message":""}')), null)
+  assert.equal(serverMessageFrom(new Error('API Error: 400 - {broken')), null)
+  assert.equal(serverMessageFrom(undefined), null)
 })
