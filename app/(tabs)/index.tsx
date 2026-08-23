@@ -23,6 +23,8 @@ import { useSessions } from "../../src/stores/sessions"
 import { useConnections } from "../../src/stores/connections"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 import { useEvents } from "../../src/stores/events"
+import { useRestHealth } from "../../src/stores/rest-health"
+import { listFreshness, ageLabel } from "../../src/lib/list-freshness"
 import { isHealthy } from "../../src/lib/sse-liveness"
 import { useCatalog } from "../../src/stores/catalog"
 import type BottomSheet from "@gorhom/bottom-sheet"
@@ -467,6 +469,12 @@ export default function SessionsScreen() {
   const [serverProjects, setServerProjects] = useState<Project[]>([])
 
   const { sessions, isLoading, error, loadSessions, createSession, deleteSession } = useSessions()
+  const listSource = useSessions((s) => s.listSource)
+  const listAsOf = useSessions((s) => s.listAsOf)
+  const listLoadFailed = useSessions((s) => s.listLoadFailed)
+  // REST latency verdict, separate from SSE liveness: slow and dead must
+  // read differently (see src/lib/rest-latency.ts).
+  const restSlow = useRestHealth((s) => s.slow)
   const {
     activeConnection,
     client,
@@ -998,12 +1006,18 @@ export default function SessionsScreen() {
               selected". This was hardcoded green, so the indicator claimed
               health even while the stream was dead. */}
           <View
-            style={[styles.connectionDot, { backgroundColor: transportHealthy ? "#22c55e" : "#f59e0b" }]}
+            // Amber for EITHER failure mode; the "slow" chip below says which.
+            style={[styles.connectionDot, { backgroundColor: transportHealthy && !restSlow ? "#22c55e" : "#f59e0b" }]}
             testID="connection-status-dot"
           />
           <Text style={[styles.connectionName, isDark && styles.textDark]} numberOfLines={1}>
             {activeConnection.name}
           </Text>
+          {restSlow && (
+            <View style={styles.slowChip} testID="rest-slow-chip">
+              <Text style={styles.slowChipText}>slow</Text>
+            </View>
+          )}
           {shortPath && (
             <>
               <Ionicons name="folder" size={14} color={isDark ? "#888888" : "#666666"} />
@@ -1016,11 +1030,38 @@ export default function SessionsScreen() {
         <Ionicons name="swap-horizontal-outline" size={16} color={isDark ? "#9a9a9a" : "#999999"} />
       </TouchableOpacity>
 
-      {error && (
-        <View style={styles.errorBar}>
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      )}
+      {/* Staleness banner: rows from a disk snapshot or surviving a failed
+          refresh must say so — the freshness banner replaces the bare error
+          bar for list-load failures because it adds the age and the Retry. */}
+      {(() => {
+        const freshness = listFreshness({
+          hasSessions: sessions.length > 0,
+          source: listSource,
+          asOf: listAsOf,
+          loadFailed: listLoadFailed,
+        })
+        if (freshness) {
+          return (
+            <View style={[styles.staleBar, isDark && styles.staleBarDark]} testID="list-freshness-banner">
+              <Text style={[styles.staleBarText, isDark && styles.staleBarTextDark]} numberOfLines={1}>
+                {freshness.kind === "refresh-failed"
+                  ? `Couldn't refresh — showing sessions from ${ageLabel(freshness.asOf, Date.now())}`
+                  : `Showing sessions from ${ageLabel(freshness.asOf, Date.now())} — updating…`}
+              </Text>
+              {freshness.kind === "refresh-failed" && (
+                <TouchableOpacity onPress={reloadSessions} hitSlop={8} testID="list-freshness-retry">
+                  <Text style={[styles.staleBarRetry, isDark && styles.staleBarRetryDark]}>Retry</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )
+        }
+        return error ? (
+          <View style={styles.errorBar}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null
+      })()}
 
       <UpdateBanner isDark={isDark} />
 
@@ -1642,6 +1683,31 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#fecaca",
   },
+  // Staleness banner — amber, not red: the data shown is real, just old.
+  staleBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#fffbeb",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#fde68a",
+  },
+  staleBarDark: { backgroundColor: "#2a2205", borderBottomColor: "#4a3a08" },
+  staleBarText: { flex: 1, fontSize: 13, color: "#92400e" },
+  staleBarTextDark: { color: "#fbbf24" },
+  staleBarRetry: { fontSize: 13, fontWeight: "600", color: "#6d28d9" },
+  staleBarRetryDark: { color: "#a78bfa" },
+  // "slow" chip next to the connection name: the dot alone can't say WHICH
+  // path is unhealthy (stream vs request latency).
+  slowChip: {
+    backgroundColor: "#f59e0b",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  slowChipText: { fontSize: 10, fontWeight: "700", color: "#000000" },
   errorText: {
     color: "#dc2626",
     fontSize: 14,
