@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { useConnections } from "./connections"
+import { useCatalog } from "./catalog"
 import {
   applyPerRoleFallback,
   canSaveRoles,
@@ -130,6 +131,7 @@ export const useSwarms = create<SwarmsState>((set, get) => ({
         try {
           refreshed = await api.swarm.get(swarmID)
         } catch {
+          void useCatalog.getState().refreshSwarms()
           set({
             isSaving: false,
             error: "Saved, but couldn't reload the swarm — pull to refresh",
@@ -149,7 +151,10 @@ export const useSwarms = create<SwarmsState>((set, get) => ({
       }
 
       // Replace in place when it already existed so list order doesn't jump
-      // under the user on a rename.
+      // under the user on a rename. The catalog bakes swarm titles into the
+      // model picker / chips / session headers, so it must re-read them too —
+      // otherwise the rename shows only here in Settings.
+      void useCatalog.getState().refreshSwarms()
       set((state) => ({
         isSaving: false,
         swarms: state.swarms.some((s) => s.id === saved!.id)
@@ -171,6 +176,9 @@ export const useSwarms = create<SwarmsState>((set, get) => ({
     }
     try {
       await api.swarm.delete(swarmID)
+      // A deleted team must also leave the model picker and chips, not just
+      // this list.
+      void useCatalog.getState().refreshSwarms()
       set((state) => ({ swarms: state.swarms.filter((s) => s.id !== swarmID) }))
       return true
     } catch {

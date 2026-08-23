@@ -1,6 +1,13 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { catalogModelName, DEFAULT_MODEL_LABEL, modelDisplayLabel, type ProviderRef } from "./model-label.ts"
+import {
+  applySwarmTitles,
+  catalogModelName,
+  DEFAULT_MODEL_LABEL,
+  modelDisplayLabel,
+  type ProviderRef,
+  type SwarmRef,
+} from "./model-label.ts"
 
 const SWARM_ID = "swm_0043e3dd30010PKhr4pCJWdlMN"
 
@@ -60,4 +67,54 @@ test("no selection means the server default", () => {
 test("a whitespace-only catalog name does not blank the chip", () => {
   const odd: ProviderRef[] = [{ id: "p", models: [{ id: "m", name: "   " }] }]
   assert.equal(modelDisplayLabel(odd, { providerID: "p", modelID: "m" }), "m")
+})
+
+// --- applySwarmTitles: the rename-propagation fix ---
+
+const RENAMED: SwarmRef[] = [
+  { id: SWARM_ID, title: "Fable Bowser Dev Team v2" },
+  { id: "swm_ffefa457c001emtwoJaqlAMiB1", title: "OpenCodeX Reliability Team" },
+]
+
+test("a swarm rename propagates into the catalog's display names", () => {
+  const next = applySwarmTitles(providers, RENAMED)
+  assert.equal(
+    modelDisplayLabel(next, { providerID: "swarm", modelID: SWARM_ID }),
+    "Fable Bowser Dev Team v2",
+  )
+})
+
+test("only the swarm provider is touched and unchanged models keep identity", () => {
+  const next = applySwarmTitles(providers, RENAMED)
+  // untouched providers are the same object references
+  assert.equal(next[1], providers[1])
+  assert.equal(next[2], providers[2])
+  // the renamed provider is a new object, the still-named model is not
+  const swarmProvider = next.find((p) => p.id === "swarm")!
+  assert.notEqual(swarmProvider, providers[0])
+  const reliability = swarmProvider.models.find((m) => m.id === "swm_ffefa457c001emtwoJaqlAMiB1")!
+  assert.equal(reliability, providers[0].models[1])
+})
+
+test("no changes means the same array comes back, so subscribers don't re-render", () => {
+  const same: SwarmRef[] = [
+    { id: SWARM_ID, title: "Fable Bowser Dev Team" },
+    { id: "swm_ffefa457c001emtwoJaqlAMiB1", title: "OpenCodeX Reliability Team" },
+  ]
+  assert.equal(applySwarmTitles(providers, same), providers)
+  assert.equal(applySwarmTitles(providers, []), providers)
+  assert.equal(applySwarmTitles(providers, null), providers)
+  assert.equal(applySwarmTitles(providers, undefined), providers)
+})
+
+test("a deleted team keeps its last catalog name rather than going blank", () => {
+  const next = applySwarmTitles(providers, [{ id: SWARM_ID, title: "Fable Bowser Dev Team v2" }])
+  const gone = next.find((p) => p.id === "swarm")!.models.find((m) => m.id === "swm_ffefa457c001emtwoJaqlAMiB1")!
+  assert.equal(gone.name, "OpenCodeX Reliability Team")
+})
+
+test("whitespace-only titles never blank a label", () => {
+  const odd = applySwarmTitles(providers, [{ id: SWARM_ID, title: "   " }])
+  const model = odd.find((p) => p.id === "swarm")!.models.find((m) => m.id === SWARM_ID)!
+  assert.equal(model.name, "Fable Bowser Dev Team")
 })

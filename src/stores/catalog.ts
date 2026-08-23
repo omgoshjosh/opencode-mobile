@@ -2,7 +2,7 @@ import { create } from "zustand"
 import { useConnections } from "./connections"
 import type { Agent, Command } from "../lib/sdk"
 import { chooseModelSelection } from "../lib/model-selection"
-import { catalogModelName } from "../lib/model-label"
+import { applySwarmTitles, catalogModelName } from "../lib/model-label"
 
 export interface ProviderModel {
   id: string
@@ -42,6 +42,15 @@ interface CatalogState {
 
   // Actions
   load: () => Promise<void>
+  /**
+   * Re-read swarm titles and patch the catalog's swarm provider names.
+   *
+   * Swarm edits used to leave every surface outside Settings (composer chip,
+   * model picker, session list headers) showing the stale team name, because
+   * titles are baked in at load time. Cheap targeted refresh after a save or
+   * delete; no-op before any connection exists.
+   */
+  refreshSwarms: () => Promise<void>
   setAgent: (name: string) => void
   restoreAgent: (name: string) => void
   setModel: (selection: ModelSelection | null) => void
@@ -130,6 +139,15 @@ export const useCatalog = create<CatalogState>((set, get) => ({
       variant: sameModel(state.model, model) ? state.variant : null,
       loaded: true,
     }))
+  },
+
+  refreshSwarms: async () => {
+    const connections = useConnections.getState()
+    const globalClient = connections.clientForDirectory(undefined) || connections.client
+    if (!globalClient) return
+    const swarms = await globalClient.swarm.list().catch(() => null)
+    if (!swarms) return
+    set((state) => ({ providers: applySwarmTitles(state.providers, swarms) }))
   },
 
   setAgent: (name) => {
