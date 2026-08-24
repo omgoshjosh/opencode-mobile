@@ -184,6 +184,14 @@ export default function SessionHubScreen() {
                         {owner}
                       </Text>
                     </View>
+                    {/* Watchers are EXPECTED to be long-lived — labeling them
+                        keeps a 20-minute monitor from reading like a 20-minute
+                        problem. Workers get no chip; their age speaks. */}
+                    {tool.tool === "monitor" && (
+                      <View style={s.watchChip}>
+                        <Text style={s.watchChipText}>watching</Text>
+                      </View>
+                    )}
                     {looksLikeCIWait(tool.title) && (
                       <View style={s.ciChip}>
                         <Text style={s.ciChipText}>CI</Text>
@@ -287,6 +295,8 @@ const s = StyleSheet.create({
   waitElapsed: { fontSize: 13, fontWeight: "700", color: "#f59e0b", fontVariant: ["tabular-nums"], minWidth: 44 },
   ciChip: { backgroundColor: "#dbeafe", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
   ciChipText: { fontSize: 10, fontWeight: "700", color: "#1d4ed8" },
+  watchChip: { backgroundColor: "#fef3c7", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
+  watchChipText: { fontSize: 10, fontWeight: "700", color: "#92400e" },
   childTitle: { fontSize: 14, fontWeight: "600", color: "#0a0a0a" },
   childPreview: { fontSize: 12, color: "#888888" },
 })
