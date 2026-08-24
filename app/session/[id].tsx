@@ -295,6 +295,18 @@ export default function SessionScreen() {
   const inFlightCreatedAt = useMemo(() => inFlightUserCreatedAt(messages), [messages])
   const sessionBusy = serverStatus === "busy" || serverStatus === "retry"
 
+  // Is any tool call still running in the newest message? Feeds the quiet
+  // hint: a silent stream during a long bash is legitimate (the tool card
+  // shows a live clock), silent-with-nothing-running is the stuck signal.
+  const hasRunningTool = useMemo(() => {
+    const last = messages?.[messages.length - 1]
+    if (!last) return false
+    return (parts?.[last.id] ?? []).some((p) => {
+      const status = (p as { state?: { status?: string } }).state?.status
+      return p.type === "tool" && (status === "running" || status === "pending")
+    })
+  }, [messages, parts])
+
   // Inverted FlatList: data is reversed (newest first) so newest renders at bottom
   const messageData = useMemo(
     () =>
@@ -1088,7 +1100,9 @@ export default function SessionScreen() {
         )}
 
         {/* Status */}
-        {currentSession && <StatusIndicator sessionID={currentSession.id} isDark={isDark} />}
+        {currentSession && (
+          <StatusIndicator sessionID={currentSession.id} isDark={isDark} hasRunningTool={hasRunningTool} />
+        )}
 
         {/* Permissions */}
         {permissions.map((perm) => (

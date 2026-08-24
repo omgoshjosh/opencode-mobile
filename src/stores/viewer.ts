@@ -17,12 +17,24 @@ interface ViewerState {
     input: string | null
     output: string
   } | null
+  // Same staging pattern for images: a data: URI can be megabytes — never
+  // route-param material. The viewer route reads it; popping the route
+  // destroys nothing but the reference.
+  image: {
+    uri: string
+    filename?: string
+  } | null
   showToolOutput: (payload: { title: string; input: string | null; output: string }) => void
   clearToolOutput: () => void
+  showImage: (payload: { uri: string; filename?: string }) => void
+  clearImage: () => void
 }
 
 export const useViewer = create<ViewerState>((set) => ({
   toolOutput: null,
+  image: null,
   showToolOutput: (payload) => set({ toolOutput: payload }),
   clearToolOutput: () => set({ toolOutput: null }),
+  showImage: (payload) => set({ image: payload }),
+  clearImage: () => set({ image: null }),
 }))

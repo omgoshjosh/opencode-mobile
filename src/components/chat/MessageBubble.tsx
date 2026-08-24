@@ -11,6 +11,7 @@ import { shouldCollapseToolRun, summarizeToolRun } from "../../lib/tool-titles"
 import { router } from "expo-router"
 import type { Message, Part } from "../../lib/sdk"
 import { useCatalog } from "../../stores/catalog"
+import { useViewer } from "../../stores/viewer"
 import { modelDisplayLabel } from "../../lib/model-label"
 import { deliveryState } from "../../lib/message-delivery"
 import { resolveClockMode, shorthandTimestamp } from "../../lib/timestamp-shorthand"
@@ -138,14 +139,27 @@ export const MessageBubble = memo(
             style={s.imageScroll}
           >
             {fileParts.map((fp) => (
-              <View key={fp.id} style={s.imageWrap}>
+              <TouchableOpacity
+                key={fp.id}
+                style={s.imageWrap}
+                activeOpacity={0.8}
+                // Full-screen on the nav stack: back pops it like any screen.
+                // The URI goes via the viewer store, not route params — data:
+                // URIs are megabytes.
+                onPress={() => {
+                  if (!fp.url) return
+                  useViewer.getState().showImage({ uri: fp.url, filename: fp.filename })
+                  router.push("/image-viewer")
+                }}
+                testID={`open-image-${fp.id}`}
+              >
                 <Image source={{ uri: fp.url }} style={s.attachedImage} resizeMode="cover" />
                 {fp.filename && (
                   <Text style={[s.imageLabel, isDark && s.imageLabelDark]} numberOfLines={1}>
                     {fp.filename}
                   </Text>
                 )}
-              </View>
+              </TouchableOpacity>
             ))}
           </ScrollView>
         )}
