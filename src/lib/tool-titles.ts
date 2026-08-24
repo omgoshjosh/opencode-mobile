@@ -35,6 +35,31 @@ function firstLine(text: string, max = 60): string {
 }
 
 /**
+ * Skip a command's environment preamble to reach its intent.
+ *
+ * Agents habitually prefix real work with setup — `export PATH=…; cd …deep
+ * path… && VAR=x actual-command` — and the card titled itself with the
+ * `export` (seen on device: a 46-minute task running under a title of
+ * `export PATH="/opt/homebre…`). The preamble is the least informative part
+ * of the line; step over leading `export X=…`, `cd …`, and bare `VAR=…`
+ * assignments (each ended by `;` or `&&`) until something else appears.
+ * A line that is ONLY preamble keeps its head — an honest nothing.
+ */
+export function commandIntent(command: string): string {
+  const line = command.split("\n")[0]
+  const segments = line.split(/\s*(?:;|&&)\s*/)
+  let index = 0
+  while (
+    index < segments.length - 1 &&
+    /^(export\s+[A-Za-z_][A-Za-z0-9_]*=|cd\s|[A-Za-z_][A-Za-z0-9_]*=\S*$)/.test(segments[index].trim())
+  ) {
+    index++
+  }
+  const rest = segments.slice(index).join(" && ").trim()
+  return rest || line.trim()
+}
+
+/**
  * A one-line description of the call.
  *
  * Preference order: the server's own title (it is written for humans), then
@@ -57,7 +82,7 @@ export function toolCallTitle(part: ToolLike): string {
   switch (tool) {
     case "bash": {
       const command = str(input?.command)
-      if (command) return firstLine(command)
+      if (command) return firstLine(commandIntent(command))
       break
     }
     case "read":
@@ -90,12 +115,36 @@ export function toolCallTitle(part: ToolLike): string {
       break
     }
     case "task": {
-      const description = str(input?.description)
+      // The swarm dispatch path sends no description — the card sat on the
+      // bare floor ("task") for a 46-minute run while every OTHER surface
+      // showed the spawned session's real name. The session-title lookup
+      // needs the store, so it lives in ToolCallCard (taskTitleFrom below
+      // ranks what THIS pure layer can know).
+      const description = str(input?.description) ?? str(input?.summary)
       if (description) return description
+      const prompt = str(input?.prompt)
+      if (prompt) return firstLine(prompt)
       break
     }
     case "todowrite":
       return "update todos"
+    case "skill": {
+      const name = str(input?.name) ?? str(input?.skill)
+      if (name) return `skill: ${name}`
+      break
+    }
+    case "graph_plan": {
+      const goal = str(input?.goal)
+      if (goal) return firstLine(goal)
+      break
+    }
+    case "sendmessage": {
+      const to = str(input?.to)
+      const summary = str(input?.summary)
+      if (summary) return firstLine(summary)
+      if (to) return `message ${firstLine(to, 30)}`
+      break
+    }
   }
 
   return tool || "tool"

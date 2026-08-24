@@ -32,6 +32,9 @@ const TOOL_ICONS: Record<string, string> = {
   question: "chatbubble-ellipses-outline",
   codesearch: "search-outline",
   websearch: "globe-outline",
+  sendmessage: "paper-plane-outline",
+  skill: "sparkles-outline",
+  graph_plan: "git-network-outline",
 }
 
 const mono = Platform.OS === "ios" ? "Menlo" : "monospace"
@@ -281,6 +284,84 @@ function TaskDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
   )
 }
 
+function SendMessageDetail({ input, isDark }: { input: unknown; isDark: boolean }) {
+  const rec = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : undefined
+  const to = typeof rec?.to === "string" ? rec.to : undefined
+  const message = typeof rec?.message === "string" ? rec.message : undefined
+  return (
+    <View style={s.detailSection}>
+      {/* Agent-to-agent mail: WHO it went to is the headline, the body is
+          prose (it's written by one agent for another, not machine output). */}
+      {to && (
+        <View style={s.toChipRow}>
+          <Text style={[s.detailMeta, isDark && s.detailMetaDark]}>To:</Text>
+          <View style={s.toChip}>
+            <Text style={s.toChipText} numberOfLines={1}>
+              {to}
+            </Text>
+          </View>
+        </View>
+      )}
+      {message && (
+        <Text style={[s.proseBody, isDark && s.proseBodyDark]} selectable>
+          {message}
+        </Text>
+      )}
+    </View>
+  )
+}
+
+function SkillDetail({ input, output, isDark }: { input: unknown; output: unknown; isDark: boolean }) {
+  const rec = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : undefined
+  // Two shapes in the wild: {name} (OpencodeX roles) and {skill, args}
+  // (Claude harness) — accept both.
+  const name = typeof rec?.name === "string" ? rec.name : typeof rec?.skill === "string" ? rec.skill : undefined
+  const args = typeof rec?.args === "string" ? rec.args : undefined
+  const out = typeof output === "string" ? output : undefined
+  return (
+    <View style={s.detailSection}>
+      {name && (
+        <Text style={[s.detailFile, isDark && s.detailFileDark]} selectable numberOfLines={1}>
+          {name}
+        </Text>
+      )}
+      {args && <Text style={[s.detailMeta, isDark && s.detailMetaDark]}>{args}</Text>}
+      {out && out.length > 0 && (
+        <View style={[s.codeBlock, isDark && s.codeBlockDark, { marginTop: 6 }]}>
+          <Text style={[s.codePre, isDark && s.codePteDark]} selectable numberOfLines={30}>
+            {out}
+          </Text>
+        </View>
+      )}
+    </View>
+  )
+}
+
+function GraphPlanDetail({ input, isDark }: { input: unknown; isDark: boolean }) {
+  const rec = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : undefined
+  const goal = typeof rec?.goal === "string" ? rec.goal : undefined
+  const criteria = Array.isArray(rec?.successCriteria)
+    ? (rec.successCriteria as unknown[]).filter((c): c is string => typeof c === "string")
+    : []
+  return (
+    <View style={s.detailSection}>
+      {goal && (
+        <Text style={[s.proseBody, isDark && s.proseBodyDark]} selectable>
+          {goal}
+        </Text>
+      )}
+      {criteria.map((criterion, index) => (
+        <View key={index} style={s.todoRow}>
+          <Ionicons name="flag-outline" size={14} color="#8b5cf6" />
+          <Text style={[s.todoText, isDark && s.todoTextDark]} numberOfLines={3}>
+            {criterion}
+          </Text>
+        </View>
+      ))}
+    </View>
+  )
+}
+
 function TodoDetail({ input, isDark }: { input: unknown; isDark: boolean }) {
   const todos = typeof input === "object" && input !== null ? (input as Record<string, unknown>).todos : undefined
   if (!Array.isArray(todos)) return null
@@ -353,6 +434,12 @@ function ToolDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
       return <WebfetchDetail input={input} isDark={isDark} />
     case "task":
       return <TaskDetail tool={tool} isDark={isDark} />
+    case "sendmessage":
+      return <SendMessageDetail input={input} isDark={isDark} />
+    case "skill":
+      return <SkillDetail input={input} output={output} isDark={isDark} />
+    case "graph_plan":
+      return <GraphPlanDetail input={input} isDark={isDark} />
     case "todowrite":
       return <TodoDetail input={input} isDark={isDark} />
     default:
@@ -420,6 +507,22 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded, fallbackStartTim
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(initiallyExpanded ?? false)
   const icon = (tool.tool && TOOL_ICONS[tool.tool]) || "extension-puzzle-outline"
+  // A task with no explicit description used to sit on the bare floor
+  // ("task") while the spawned session carried a real, server-generated
+  // name everywhere else. The card already knows the child's sessionID
+  // (the Watch-subagent link) — use its title. An explicit description
+  // still wins: the orchestrator wrote it for exactly this purpose.
+  const taskLink = tool.tool === "task" ? subagentLinkFrom(tool) : null
+  const spawnedTitle = useSessions((st) =>
+    taskLink ? st.sessions.find((x) => x.id === taskLink.sessionID)?.title : undefined,
+  )
+  const taskInput = tool.tool === "task" ? (tool.state?.input as Record<string, unknown> | undefined) : undefined
+  const hasExplicitName =
+    typeof taskInput?.description === "string" || typeof taskInput?.summary === "string"
+  const cardTitle =
+    tool.tool === "task" && !hasExplicitName && spawnedTitle?.trim()
+      ? spawnedTitle
+      : toolCallTitle(tool)
   const status = tool.state?.status || "pending"
   const color = statusColor(status)
   const error = tool.state?.error?.message
@@ -457,7 +560,7 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded, fallbackStartTim
           {/* What the call is FOR, not just which tool ran — "git status
               --porcelain" instead of a thirteenth card reading "bash". */}
           <Text style={[s.name, isDark && s.nameDark]} numberOfLines={1}>
-            {toolCallTitle(tool) || t("chat.toolCallCard.fallbackTitle")}
+            {cardTitle || t("chat.toolCallCard.fallbackTitle")}
           </Text>
           {calledAt && <Text style={[s.elapsed, isDark && s.elapsedDark]}>{calledAt}</Text>}
           {elapsed && (
@@ -569,6 +672,12 @@ const s = StyleSheet.create({
   },
   openOutputText: { fontSize: 12, fontWeight: "600", color: "#6d28d9" },
   urlRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  // sendmessage
+  toChipRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  toChip: { backgroundColor: "#ede9fe", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, flexShrink: 1 },
+  toChipText: { fontSize: 11, fontWeight: "600", color: "#6d28d9" },
+  proseBody: { fontSize: 13, color: "#0a0a0a", lineHeight: 19, marginTop: 4 },
+  proseBodyDark: { color: "#e5e5e5" },
   detailMeta: { fontSize: 12, color: "#666666", lineHeight: 18 },
   detailMetaDark: { color: "#888888" },
   // Subagent entry point. Purple matches the swarm accent used on session

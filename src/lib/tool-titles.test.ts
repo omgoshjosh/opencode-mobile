@@ -2,6 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
   TOOL_RUN_COLLAPSE_THRESHOLD,
+  commandIntent,
   shouldCollapseToolRun,
   summarizeToolRun,
   toolCallTitle,
@@ -102,4 +103,51 @@ test("a server title that just repeats the tool name is treated as absent", () =
     "npm test",
   )
   assert.equal(toolCallTitle({ tool: "write", state: { title: "write", input: {} } }), "write")
+})
+
+// --- commandIntent: env preamble stripping ---
+
+test("commandIntent steps over export/cd/VAR= preamble to the real command", () => {
+  assert.equal(
+    commandIntent('export PATH="/opt/homebrew/bin:$PATH"; cd /deep/path && npm test'),
+    "npm test",
+  )
+  assert.equal(commandIntent("cd /w && FOO=1 BAR=2"), "FOO=1 BAR=2")
+  assert.equal(commandIntent("npm run build"), "npm run build")
+})
+
+test("commandIntent keeps a preamble-only line rather than showing nothing", () => {
+  assert.equal(commandIntent('export PATH="/x"'), 'export PATH="/x"')
+})
+
+test("bash titles use the stripped intent", () => {
+  const part = { tool: "bash", state: { title: "bash", input: { command: 'export A=1; cd /x && git status' } } }
+  assert.equal(toolCallTitle(part), "git status")
+})
+
+// --- task fallbacks ---
+
+test("task falls back description -> summary -> prompt first line", () => {
+  assert.equal(toolCallTitle({ tool: "task", state: { input: { description: "Fix drain races" } } }), "Fix drain races")
+  assert.equal(toolCallTitle({ tool: "task", state: { input: { summary: "QA pass" } } }), "QA pass")
+  assert.equal(
+    toolCallTitle({ tool: "task", state: { input: { prompt: "Review the uncommitted diff\nlots more" } } }),
+    "Review the uncommitted diff",
+  )
+  assert.equal(toolCallTitle({ tool: "task", state: { input: {} } }), "task")
+})
+
+// --- new tools ---
+
+test("skill, graph_plan and sendmessage derive titles from their inputs", () => {
+  assert.equal(toolCallTitle({ tool: "skill", state: { input: { name: "code-reviewer" } } }), "skill: code-reviewer")
+  assert.equal(
+    toolCallTitle({ tool: "graph_plan", state: { input: { goal: "Ship the drain feature safely" } } }),
+    "Ship the drain feature safely",
+  )
+  assert.equal(
+    toolCallTitle({ tool: "sendmessage", state: { input: { to: "agents-f3", summary: "Yondi coordination check" } } }),
+    "Yondi coordination check",
+  )
+  assert.equal(toolCallTitle({ tool: "sendmessage", state: { input: { to: "agents-f3" } } }), "message agents-f3")
 })
