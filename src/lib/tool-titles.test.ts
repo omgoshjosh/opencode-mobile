@@ -183,3 +183,10 @@ test("the long-tail tools derive titles from their real payload shapes", () => {
     "toolsearch select:TaskStop",
   )
 })
+
+test("commandIntent skips whole preamble lines to find the working line", () => {
+  assert.equal(commandIntent('export PATH="/x"; S=38141FDJG00BG7\nadb -s $S install app.apk'), "adb -s $S install app.apk")
+  assert.equal(commandIntent('export A=1\ncd /w\ngit push'), "git push")
+  // All preamble everywhere: keep the first line rather than showing nothing.
+  assert.equal(commandIntent('export A=1\nB=2'), "export A=1")
+})

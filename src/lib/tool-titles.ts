@@ -46,17 +46,20 @@ function firstLine(text: string, max = 60): string {
  * A line that is ONLY preamble keeps its head — an honest nothing.
  */
 export function commandIntent(command: string): string {
-  const line = command.split("\n")[0]
-  const segments = line.split(/\s*(?:;|&&)\s*/)
-  let index = 0
-  while (
-    index < segments.length - 1 &&
-    /^(export\s+[A-Za-z_][A-Za-z0-9_]*=|cd\s|[A-Za-z_][A-Za-z0-9_]*=\S*$)/.test(segments[index].trim())
-  ) {
-    index++
+  const preamble = /^(export\s+[A-Za-z_][A-Za-z0-9_]*=|cd\s|[A-Za-z_][A-Za-z0-9_]*=\S*$)/
+  // Scan LINES too, not just the first: scripts often spend line one entirely
+  // on env setup (`export PATH=…; S=…`) and do the work on line two — seen on
+  // device as a card titled "S=38141FDJG00BG7".
+  for (const rawLine of command.split("\n")) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const segments = line.split(/\s*(?:;|&&)\s*/)
+    let index = 0
+    while (index < segments.length && preamble.test(segments[index].trim())) index++
+    const rest = segments.slice(index).join(" && ").trim()
+    if (rest) return rest
   }
-  const rest = segments.slice(index).join(" && ").trim()
-  return rest || line.trim()
+  return command.split("\n")[0].trim()
 }
 
 /**
