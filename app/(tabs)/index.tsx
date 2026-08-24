@@ -25,6 +25,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage"
 import { useEvents } from "../../src/stores/events"
 import { useRestHealth } from "../../src/stores/rest-health"
 import { listFreshness, ageLabel } from "../../src/lib/list-freshness"
+import { quietLabel } from "../../src/lib/quiet-hint"
 import { isHealthy } from "../../src/lib/sse-liveness"
 import { useCatalog } from "../../src/stores/catalog"
 import type BottomSheet from "@gorhom/bottom-sheet"
@@ -118,11 +119,15 @@ function formatTime(timestamp: number, t: (key: string, opts?: Record<string, un
 const SessionItem = memo(function SessionItem({
   session,
   isDark,
+  now,
   onRename,
   onDelete,
 }: {
   session: Session
   isDark: boolean
+  /** Minute-granular clock from the screen's ticker — a busy-but-silent
+   *  session produces no store events, so quiet labels need external time. */
+  now: number
   onRename: (session: Session) => void
   onDelete: (session: Session) => void
 }) {
@@ -155,6 +160,12 @@ const SessionItem = memo(function SessionItem({
       ? modelDisplayLabel(providers, { providerID: session.model.providerID, modelID: session.model.id })
       : null
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
+  // Enriched-status fields (server contract, optional): when the server says
+  // when this session last did anything, trust it over time.updated.
+  const busyMeta = useEvents((s) => {
+    const st = s.sessionStatus[session.id]
+    return st?.type === "busy" ? st : undefined
+  })
   const preview = useSessions((s) => s.previews[session.id]?.text)
   // An unsent draft is YOUR unfinished work in this session — worth a badge
   // distinct from the run status (which is the AGENT's state).
@@ -227,7 +238,15 @@ const SessionItem = memo(function SessionItem({
               {(attention === "busy" || attention === "retry") && (
                 <PulsingDot color={attention === "busy" ? "#16a34a" : "#b45309"} size={5} active />
               )}
-              <Text style={[styles.statusBadgeText, ATTENTION_TEXT[attention]]}>{attentionLabel(attention)}</Text>
+              <Text style={[styles.statusBadgeText, ATTENTION_TEXT[attention]]}>
+                {attentionLabel(attention)}
+                {/* Stuck-vs-working at the glance layer — see the V2 twin. */}
+                {attention === "busy" &&
+                  (() => {
+                    const quiet = quietLabel({ lastTextAt: busyMeta?.lastActivityAt ?? session.time.updated, hasRunningTool: Boolean(busyMeta?.runningTool), now })
+                    return quiet ? ` · ${quiet}` : ""
+                  })()}
+              </Text>
             </View>
           )}
           {shortDir && (
@@ -252,11 +271,14 @@ const SessionItem = memo(function SessionItem({
 const SessionRowV2 = memo(function SessionRowV2({
   session,
   isDark,
+  now,
   onRename,
   onDelete,
 }: {
   session: Session
   isDark: boolean
+  /** See SessionItem: external clock for quiet labels on silent sessions. */
+  now: number
   onRename: (session: Session) => void
   onDelete: (session: Session) => void
 }) {
@@ -264,6 +286,12 @@ const SessionRowV2 = memo(function SessionRowV2({
   const providers = useCatalog((c) => c.providers)
   const preview = useSessions((s) => s.previews[session.id]?.text)
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
+  // Enriched-status fields (server contract, optional): when the server says
+  // when this session last did anything, trust it over time.updated.
+  const busyMeta = useEvents((s) => {
+    const st = s.sessionStatus[session.id]
+    return st?.type === "busy" ? st : undefined
+  })
   const pendingPermissions = useEvents((s) => s.permissions[session.id]?.length ?? 0)
   const pendingQuestions = useEvents((s) => s.questions[session.id]?.length ?? 0)
   const lastViewedAt = useSessions((s) => s.lastViewed[session.id])
@@ -321,7 +349,18 @@ const SessionRowV2 = memo(function SessionRowV2({
           {session.title || t("sessionsList.untitledSession")}
         </Text>
         {dot.label && <Text style={[styles.rowV2StateLabel, { color: dot.color }]}>{dot.label}</Text>}
-        <Text style={[styles.rowV2Time, isDark && styles.metaDark]}>{formatTime(session.time.updated, t)}</Text>
+        <Text style={[styles.rowV2Time, isDark && styles.metaDark]}>
+          {formatTime(session.time.updated, t)}
+          {/* Stuck-vs-working, farm-wide: a busy row that hasn't produced
+              anything says for how long ("· quiet 18m"). time.updated is the
+              only per-session activity signal available for EVERY row; the
+              precise per-tool version lives in the transcript's quiet hint. */}
+          {attention === "busy" &&
+            (() => {
+              const quiet = quietLabel({ lastTextAt: busyMeta?.lastActivityAt ?? session.time.updated, hasRunningTool: Boolean(busyMeta?.runningTool), now })
+              return quiet ? ` · ${quiet}` : ""
+            })()}
+        </Text>
       </View>
       {subtitle && (
         <Text
@@ -560,6 +599,15 @@ export default function SessionsScreen() {
   // before the first list render or every row briefly claims to be unread.
   useEffect(() => {
     useSessions.getState().loadLastViewed()
+  }, [])
+
+  // Minute clock for quiet labels: a busy-but-SILENT session emits no store
+  // events, so nothing re-renders its row — exactly when the label must grow.
+  // One re-render per minute for all rows is the whole cost.
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNowTick(Date.now()), 60_000)
+    return () => clearInterval(timer)
   }, [])
 
   // Persist the choice so the list doesn't reset to Directory on every launch.
@@ -1308,9 +1356,9 @@ export default function SessionsScreen() {
           row.type === "header" ? (
             <GroupHeader row={row} isDark={isDark} onToggle={() => toggleGroup(row.directory)} />
           ) : listV2 ? (
-            <SessionRowV2 session={row.session} isDark={isDark} onRename={handleRename} onDelete={handleDelete} />
+            <SessionRowV2 session={row.session} isDark={isDark} now={nowTick} onRename={handleRename} onDelete={handleDelete} />
           ) : (
-            <SessionItem session={row.session} isDark={isDark} onRename={handleRename} onDelete={handleDelete} />
+            <SessionItem session={row.session} isDark={isDark} now={nowTick} onRename={handleRename} onDelete={handleDelete} />
           )
         }
         refreshControl={

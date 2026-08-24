@@ -1,15 +1,18 @@
-import { useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from "react-native"
 import { Stack, router, useLocalSearchParams } from "expo-router"
 import { Ionicons } from "@expo/vector-icons"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useSessions } from "../../src/stores/sessions"
+import { useEvents } from "../../src/stores/events"
 import { useCatalog } from "../../src/stores/catalog"
 import { sessionStats, compactNumber } from "../../src/lib/session-stats"
 import { getTranscript } from "../../src/lib/transcript-cache"
 import { modelDisplayLabel, modelIDDisplayLabel } from "../../src/lib/model-label"
 import { SWARM_PROVIDER_ID } from "../../src/lib/swarm-model"
 import { indexByID, depthOf } from "../../src/lib/session-tree"
+import { looksLikeCIWait, type RunningTool } from "../../src/lib/running-tools"
+import { formatElapsed } from "../../src/lib/elapsed-format"
 
 /**
  * The session's own page: everything ABOUT the session, so the transcript can
@@ -55,6 +58,50 @@ export default function SessionHubScreen() {
     const byID = indexByID(sessions)
     return sessions.filter((s) => s.parentID === id).map((s) => ({ ...s, depth: depthOf(s, byID) }))
   }, [sessions, id])
+
+  // WAITING ON — every in-flight tool call for this session and its direct
+  // children, streamed live off the global SSE feed (src/lib/running-tools).
+  // This answers "what exactly is the farm chewing on" without opening each
+  // subagent; elapsed ticks so a hung call visibly ages.
+  const runningTools = useSessions((s) => s.runningTools)
+  const sessionStatus = useEvents((s) => s.sessionStatus)
+  const waiting = useMemo(() => {
+    const scope = [id, ...children.map((c) => c.id)].filter(Boolean) as string[]
+    const titleFor = (sid: string) =>
+      sid === id ? "this session" : (sessions.find((x) => x.id === sid)?.title ?? sid)
+    return scope.flatMap((sid) => {
+      const tracked = runningTools[sid] ?? []
+      if (tracked.length > 0) return tracked.map((tool) => ({ tool, owner: titleFor(sid), sid }))
+      // Enriched-status fallback (server contract, optional): the server can
+      // name a running tool this client never saw start.
+      const status = sessionStatus[sid]
+      const serverTool = status?.type === "busy" ? status.runningTool : undefined
+      if (serverTool?.title) {
+        return [
+          {
+            tool: {
+              partID: `status-${sid}`,
+              messageID: "",
+              sessionID: sid,
+              title: serverTool.title,
+              tool: "",
+              startedAt: serverTool.startedAt ?? Date.now(),
+            } satisfies RunningTool,
+            owner: titleFor(sid),
+            sid,
+          },
+        ]
+      }
+      return []
+    })
+  }, [runningTools, sessionStatus, id, children, sessions])
+  // 1s tick only while something is actually in flight.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (waiting.length === 0) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [waiting.length > 0])
 
   return (
     <>
@@ -108,6 +155,43 @@ export default function SessionHubScreen() {
                     </View>
                   ))}
                 </View>
+              </>
+            )}
+
+            {waiting.length > 0 && (
+              <>
+                <Text style={[s.label, isDark && s.dim]}>WAITING ON ({waiting.length})</Text>
+                {waiting.map(({ tool, owner, sid }) => (
+                  <TouchableOpacity
+                    key={tool.partID}
+                    style={[s.waitRow, isDark && s.cardDark]}
+                    onPress={() =>
+                      sid !== id &&
+                      router.push({
+                        pathname: "/session/[id]",
+                        params: { id: sid, ...(session?.directory ? { directory: session.directory } : {}) },
+                      })
+                    }
+                    activeOpacity={sid === id ? 1 : 0.7}
+                    testID={`waiting-${tool.partID}`}
+                  >
+                    <Text style={[s.waitElapsed]}>{formatElapsed(Math.max(0, now - tool.startedAt))}</Text>
+                    <View style={s.childText}>
+                      <Text style={[s.childTitle, isDark && s.light]} numberOfLines={1}>
+                        {tool.title}
+                      </Text>
+                      <Text style={[s.childPreview, isDark && s.dim]} numberOfLines={1}>
+                        {owner}
+                      </Text>
+                    </View>
+                    {looksLikeCIWait(tool.title) && (
+                      <View style={s.ciChip}>
+                        <Text style={s.ciChipText}>CI</Text>
+                      </View>
+                    )}
+                    {sid !== id && <Ionicons name="chevron-forward" size={16} color={isDark ? "#666" : "#999"} />}
+                  </TouchableOpacity>
+                ))}
               </>
             )}
 
@@ -189,6 +273,20 @@ const s = StyleSheet.create({
     marginBottom: 6,
   },
   childText: { flex: 1, gap: 1 },
+  // Waiting-on rows: elapsed leads — the age of a wait is the datum.
+  waitRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#fafafa",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 6,
+  },
+  waitElapsed: { fontSize: 13, fontWeight: "700", color: "#f59e0b", fontVariant: ["tabular-nums"], minWidth: 44 },
+  ciChip: { backgroundColor: "#dbeafe", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
+  ciChipText: { fontSize: 10, fontWeight: "700", color: "#1d4ed8" },
   childTitle: { fontSize: 14, fontWeight: "600", color: "#0a0a0a" },
   childPreview: { fontSize: 12, color: "#888888" },
 })

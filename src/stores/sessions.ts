@@ -13,6 +13,8 @@ import { canRenderFromCache, dropTranscript, getTranscript, putTranscript, type 
 import { dropPreview, parsePreviewMap, previewFromParts, previewText, putPreview, type PreviewMap } from "../lib/session-preview"
 import { markViewed, parseLastViewed, type LastViewedMap } from "../lib/session-attention"
 import { serializeSnapshot, parseSnapshot } from "../lib/list-freshness"
+import { trackToolPart, clearSessionTools, type RunningToolMap } from "../lib/running-tools"
+import { toolCallTitle } from "../lib/tool-titles"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Helper to convert API response to our internal format
@@ -97,6 +99,9 @@ interface SessionsState {
   // Last line of text seen per session, harvested from the global SSE stream.
   // A label, not a cache — see src/lib/session-preview.ts.
   previews: PreviewMap
+  // In-flight tool calls per session, farm-wide, from the global stream.
+  // Feeds the hub's waiting-on panel. Bounded — see src/lib/running-tools.ts.
+  runningTools: RunningToolMap
   // sessionID -> when this client last opened it. Turns "session was updated"
   // into "updated since you looked", which is what separates a finished run
   // you still need to read from one you're done with.
@@ -133,6 +138,9 @@ interface SessionsState {
 
   // Event handling
   handleEvent: (event: Event) => void
+  /** Idle is authoritative — completions can be lost across reconnects, so
+   *  events.ts calls this on busy→idle to drop any running-tool stragglers. */
+  clearRunningTools: (sessionID: string) => void
 }
 
 export type RevertResult = ({ ok: true } & PromptFromParts) | { ok: false; reason: "unsupported" | "auth" | "error" }
@@ -178,6 +186,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
   transcriptCache: {},
   previews: {},
   lastViewed: {},
+  runningTools: {},
   error: null,
   listSource: null,
   listAsOf: null,
@@ -355,6 +364,16 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // without this every row stays blank until traffic happens to arrive.
       const seed = previewFromParts(Object.values(parts).flat())
 
+      // Same cold-start gap for the waiting-on panel: a tool that started
+      // BEFORE this app connected never emitted a running event to us. The
+      // fetched transcript knows — feed every tool part through the tracker
+      // (running adds, completed is a no-op or clears a straggler).
+      const seedRunning = (map: RunningToolMap) =>
+        Object.values(parts)
+          .flat()
+          .filter((p) => p.type === "tool")
+          .reduce((acc, p) => trackToolPart(acc, p, toolCallTitle(p), Date.now()), map)
+
       // Mark it read. Stamped from the session's own updated time rather than
       // `Date.now()`: anything the server writes *after* this fetch is content
       // the user has genuinely not seen, and a wall-clock stamp would mark it
@@ -366,6 +385,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
       set((state) => ({
         lastViewed: nextViewed,
         ...(seed ? { previews: persistedPutPreview(state.previews, sessionID, seed) } : null),
+        runningTools: seedRunning(state.runningTools),
         currentSession: session,
         messages,
         parts,
@@ -578,6 +598,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
     }
   },
 
+  clearRunningTools: (sessionID) => {
+    set((state) => ({ runningTools: clearSessionTools(state.runningTools, sessionID) }))
+  },
+
   abortSession: async () => {
     const client = clientFor(get().currentSession?.directory)
     const session = get().currentSession
@@ -685,6 +709,13 @@ export const useSessions = create<SessionsState>((set, get) => ({
           }))
           schedulePersistPreviews()
         }
+      }
+      // Farm-wide in-flight tool map (waiting-on panel). Rides the same
+      // global stream as the preview harvest; bounded in running-tools.ts.
+      if (part?.sessionID && part.type === "tool") {
+        set((state) => ({
+          runningTools: trackToolPart(state.runningTools, part, toolCallTitle(part), Date.now()),
+        }))
       }
     }
 

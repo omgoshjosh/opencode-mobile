@@ -32,7 +32,19 @@ import { RECONCILE_MESSAGE_LIMIT } from "../lib/message-page"
 import type { Client, Part, Session, Message } from "../lib/sdk"
 
 // Session status from the server
-type SessionStatus = { type: "idle" } | { type: "busy" } | { type: "retry"; attempt: number; message: string }
+type SessionStatus =
+  | { type: "idle" }
+  // since/lastActivityAt/runningTool are the enriched-status contract
+  // requested from the server team (2026-08-24): optional, read defensively,
+  // inert until their build ships. When present they replace client-side
+  // inference (session.time.updated) for stuck-vs-working labels.
+  | {
+      type: "busy"
+      since?: number
+      lastActivityAt?: number
+      runningTool?: { title?: string; startedAt?: number }
+    }
+  | { type: "retry"; attempt: number; message: string }
 
 interface EventsState {
   /**
@@ -340,6 +352,12 @@ export const useEvents = create<EventsState>((set, get) => ({
               if (status.type === "busy") {
                 erroredSessions.delete(sessionID)
                 abortedSessions.delete(sessionID)
+              }
+              // Idle is authoritative for the waiting-on panel: any tool
+              // still marked running for this session is a straggler from a
+              // lost completion event.
+              if (status.type === "idle") {
+                useSessions.getState().clearRunningTools(sessionID)
               }
 
               set((state) => ({
