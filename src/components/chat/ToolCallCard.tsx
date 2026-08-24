@@ -35,6 +35,16 @@ const TOOL_ICONS: Record<string, string> = {
   sendmessage: "paper-plane-outline",
   skill: "sparkles-outline",
   graph_plan: "git-network-outline",
+  graph_status: "git-network-outline",
+  agent: "person-circle-outline",
+  monitor: "pulse-outline",
+  taskcreate: "add-circle-outline",
+  taskupdate: "checkmark-done-outline",
+  taskstop: "stop-circle-outline",
+  schedulewakeup: "alarm-outline",
+  opencodex_swarm_create: "people-circle-outline",
+  browser_navigate: "compass-outline",
+  toolsearch: "search-outline",
 }
 
 const mono = Platform.OS === "ios" ? "Menlo" : "monospace"
@@ -362,6 +372,129 @@ function GraphPlanDetail({ input, isDark }: { input: unknown; isDark: boolean })
   )
 }
 
+function AgentDetail({ input, isDark }: { input: unknown; isDark: boolean }) {
+  const rec = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : undefined
+  const description = typeof rec?.description === "string" ? rec.description : undefined
+  const subagentType = typeof rec?.subagent_type === "string" ? rec.subagent_type : undefined
+  const model = typeof rec?.model === "string" ? rec.model : undefined
+  const prompt = typeof rec?.prompt === "string" ? rec.prompt : undefined
+  return (
+    <View style={s.detailSection}>
+      {description && <Text style={[s.detailMeta, isDark && s.detailMetaDark]}>{description}</Text>}
+      {(subagentType || model) && (
+        <View style={s.toChipRow}>
+          {subagentType && (
+            <View style={s.toChip}>
+              <Text style={s.toChipText}>{subagentType}</Text>
+            </View>
+          )}
+          {model && (
+            <View style={s.toChip}>
+              <Text style={s.toChipText}>{model}</Text>
+            </View>
+          )}
+        </View>
+      )}
+      {prompt && (
+        <View style={[s.codeBlock, isDark && s.codeBlockDark, { marginTop: 6 }]}>
+          <Text style={[s.codePre, isDark && s.codePteDark]} selectable numberOfLines={20}>
+            {prompt}
+          </Text>
+        </View>
+      )}
+    </View>
+  )
+}
+
+function QuestionDetail({ input, isDark }: { input: unknown; isDark: boolean }) {
+  const rec = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : undefined
+  const questions = Array.isArray(rec?.questions) ? (rec.questions as Record<string, unknown>[]) : []
+  return (
+    <View style={s.detailSection}>
+      {questions.map((q, i) => {
+        const options = Array.isArray(q?.options) ? (q.options as Record<string, unknown>[]) : []
+        return (
+          <View key={i} style={{ gap: 3 }}>
+            {typeof q?.question === "string" && (
+              <Text style={[s.proseBody, isDark && s.proseBodyDark]} selectable>
+                {q.question}
+              </Text>
+            )}
+            {options.map((option, j) =>
+              typeof option?.label === "string" ? (
+                <View key={j} style={s.todoRow}>
+                  <Ionicons name="ellipse-outline" size={12} color="#8b5cf6" />
+                  <Text style={[s.todoText, isDark && s.todoTextDark]} numberOfLines={2}>
+                    {option.label}
+                  </Text>
+                </View>
+              ) : null,
+            )}
+          </View>
+        )
+      })}
+    </View>
+  )
+}
+
+function TaskListDetail({ input, isDark }: { input: unknown; isDark: boolean }) {
+  const rec = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : undefined
+  const subject = typeof rec?.subject === "string" ? rec.subject : undefined
+  const description = typeof rec?.description === "string" ? rec.description : undefined
+  const taskID = typeof rec?.taskId === "string" ? rec.taskId : undefined
+  const status = typeof rec?.status === "string" ? rec.status : undefined
+  return (
+    <View style={s.detailSection}>
+      {subject && (
+        <Text style={[s.proseBody, isDark && s.proseBodyDark]} selectable>
+          {subject}
+        </Text>
+      )}
+      {(taskID || status) && (
+        <Text style={[s.detailMeta, isDark && s.detailMetaDark]}>
+          {taskID ? `#${taskID}` : ""}
+          {taskID && status ? " → " : ""}
+          {status ?? ""}
+        </Text>
+      )}
+      {description && <Text style={[s.detailMeta, isDark && s.detailMetaDark]}>{description}</Text>}
+    </View>
+  )
+}
+
+function WakeupDetail({ input, isDark }: { input: unknown; isDark: boolean }) {
+  const rec = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : undefined
+  const stop = rec?.stop === true
+  const delay = typeof rec?.delaySeconds === "number" ? rec.delaySeconds : undefined
+  const reason = typeof rec?.reason === "string" ? rec.reason : undefined
+  return (
+    <View style={s.detailSection}>
+      <Text style={[s.detailMeta, isDark && s.detailMetaDark]}>
+        {stop ? "Loop stopped." : delay !== undefined ? `Wakes in ${formatElapsed(delay * 1000)}` : "Wakeup"}
+      </Text>
+      {reason && (
+        <Text style={[s.proseBody, isDark && s.proseBodyDark]} selectable>
+          {reason}
+        </Text>
+      )}
+    </View>
+  )
+}
+
+function SwarmCreateDetail({ input, isDark }: { input: unknown; isDark: boolean }) {
+  const rec = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : undefined
+  const prompt = typeof rec?.prompt === "string" ? rec.prompt : undefined
+  return (
+    <View style={s.detailSection}>
+      {prompt && (
+        <Text style={[s.proseBody, isDark && s.proseBodyDark]} selectable>
+          {prompt}
+        </Text>
+      )}
+    </View>
+  )
+}
+
 function TodoDetail({ input, isDark }: { input: unknown; isDark: boolean }) {
   const todos = typeof input === "object" && input !== null ? (input as Record<string, unknown>).todos : undefined
   if (!Array.isArray(todos)) return null
@@ -408,43 +541,54 @@ function GenericDetail({ input, output, isDark }: { input: unknown; output: unkn
   )
 }
 
-function ToolDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
-  const name = tool.tool || ""
-  const input = tool.state?.input
-  const output = tool.state?.output
+// --- Renderer registry ---
+//
+// The interface for tool-specific rendering: one function per tool name,
+// all taking the same props. Adding a tool = one detail function + one
+// entry here (+ optionally an icon in TOOL_ICONS and a title case in
+// tool-titles.ts). Unknown tools fall to GenericDetail — the JSON dump is
+// the floor, never a crash. Deliberately NOT a plugin system: a flat map
+// in the one file that uses it is all the abstraction this needs.
+interface ToolDetailProps {
+  tool: Part
+  input: unknown
+  output: unknown
+  isDark: boolean
+}
 
-  switch (name) {
-    case "bash":
-      return <BashDetail input={input} output={output} isDark={isDark} />
-    case "read":
-      return <ReadDetail input={input} isDark={isDark} />
-    case "write":
-      return <WriteDetail input={input} isDark={isDark} />
-    case "edit":
-      return <EditDetail input={input} output={output} isDark={isDark} />
-    case "apply_patch":
-      return <PatchDetail input={input} isDark={isDark} />
-    case "glob":
-    case "grep":
-    case "list":
-    case "codesearch":
-      return <GlobGrepDetail input={input} output={output} isDark={isDark} />
-    case "webfetch":
-    case "websearch":
-      return <WebfetchDetail input={input} isDark={isDark} />
-    case "task":
-      return <TaskDetail tool={tool} isDark={isDark} />
-    case "sendmessage":
-      return <SendMessageDetail input={input} isDark={isDark} />
-    case "skill":
-      return <SkillDetail input={input} output={output} isDark={isDark} />
-    case "graph_plan":
-      return <GraphPlanDetail input={input} isDark={isDark} />
-    case "todowrite":
-      return <TodoDetail input={input} isDark={isDark} />
-    default:
-      return <GenericDetail input={input} output={output} isDark={isDark} />
-  }
+const TOOL_DETAILS: Record<string, (props: ToolDetailProps) => React.ReactElement | null> = {
+  bash: ({ input, output, isDark }) => <BashDetail input={input} output={output} isDark={isDark} />,
+  monitor: ({ input, output, isDark }) => <BashDetail input={input} output={output} isDark={isDark} />,
+  read: ({ input, isDark }) => <ReadDetail input={input} isDark={isDark} />,
+  write: ({ input, isDark }) => <WriteDetail input={input} isDark={isDark} />,
+  edit: ({ input, output, isDark }) => <EditDetail input={input} output={output} isDark={isDark} />,
+  apply_patch: ({ input, isDark }) => <PatchDetail input={input} isDark={isDark} />,
+  glob: ({ input, output, isDark }) => <GlobGrepDetail input={input} output={output} isDark={isDark} />,
+  grep: ({ input, output, isDark }) => <GlobGrepDetail input={input} output={output} isDark={isDark} />,
+  list: ({ input, output, isDark }) => <GlobGrepDetail input={input} output={output} isDark={isDark} />,
+  codesearch: ({ input, output, isDark }) => <GlobGrepDetail input={input} output={output} isDark={isDark} />,
+  toolsearch: ({ input, output, isDark }) => <GlobGrepDetail input={input} output={output} isDark={isDark} />,
+  webfetch: ({ input, isDark }) => <WebfetchDetail input={input} isDark={isDark} />,
+  websearch: ({ input, isDark }) => <WebfetchDetail input={input} isDark={isDark} />,
+  browser_navigate: ({ input, isDark }) => <WebfetchDetail input={input} isDark={isDark} />,
+  task: ({ tool, isDark }) => <TaskDetail tool={tool} isDark={isDark} />,
+  agent: ({ input, isDark }) => <AgentDetail input={input} isDark={isDark} />,
+  sendmessage: ({ input, isDark }) => <SendMessageDetail input={input} isDark={isDark} />,
+  skill: ({ input, output, isDark }) => <SkillDetail input={input} output={output} isDark={isDark} />,
+  graph_plan: ({ input, isDark }) => <GraphPlanDetail input={input} isDark={isDark} />,
+  question: ({ input, isDark }) => <QuestionDetail input={input} isDark={isDark} />,
+  taskcreate: ({ input, isDark }) => <TaskListDetail input={input} isDark={isDark} />,
+  taskupdate: ({ input, isDark }) => <TaskListDetail input={input} isDark={isDark} />,
+  schedulewakeup: ({ input, isDark }) => <WakeupDetail input={input} isDark={isDark} />,
+  opencodex_swarm_create: ({ input, isDark }) => <SwarmCreateDetail input={input} isDark={isDark} />,
+  todowrite: ({ input, isDark }) => <TodoDetail input={input} isDark={isDark} />,
+}
+
+function ToolDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
+  const render = (tool.tool && TOOL_DETAILS[tool.tool]) || undefined
+  const props: ToolDetailProps = { tool, input: tool.state?.input, output: tool.state?.output, isDark }
+  if (render) return render(props)
+  return <GenericDetail input={props.input} output={props.output} isDark={isDark} />
 }
 
 function openFullOutput(tool: Part) {

@@ -151,3 +151,35 @@ test("skill, graph_plan and sendmessage derive titles from their inputs", () => 
   )
   assert.equal(toolCallTitle({ tool: "sendmessage", state: { input: { to: "agents-f3" } } }), "message agents-f3")
 })
+
+test("the long-tail tools derive titles from their real payload shapes", () => {
+  assert.equal(
+    toolCallTitle({ tool: "agent", state: { input: { description: "Implement CI hosted-outage fallback" } } }),
+    "Implement CI hosted-outage fallback",
+  )
+  assert.equal(
+    toolCallTitle({ tool: "monitor", state: { input: { command: "export A=1; tail -f x.log" } } }),
+    "watch: tail -f x.log",
+  )
+  assert.equal(
+    toolCallTitle({ tool: "question", state: { input: { questions: [{ question: "Merge now?" }] } } }),
+    "Merge now?",
+  )
+  assert.equal(toolCallTitle({ tool: "taskcreate", state: { input: { subject: "Fix races" } } }), "+ Fix races")
+  assert.equal(
+    toolCallTitle({ tool: "taskupdate", state: { input: { taskId: "11", status: "completed" } } }),
+    "task #11 → completed",
+  )
+  assert.equal(toolCallTitle({ tool: "taskstop", state: { input: { task_id: "b1" } } }), "stop background task")
+  assert.equal(toolCallTitle({ tool: "schedulewakeup", state: { input: { stop: true } } }), "stop loop")
+  assert.equal(toolCallTitle({ tool: "schedulewakeup", state: { input: { delaySeconds: 240 } } }), "wake in 4m")
+  assert.equal(
+    toolCallTitle({ tool: "browser_navigate", state: { input: { url: "https://www.reddit.com/r/x/1" } } }),
+    "open www.reddit.com",
+  )
+  assert.equal(toolCallTitle({ tool: "graph_status", state: { input: { nodeID: "p16-build" } } }), "graph status p16-build")
+  assert.equal(
+    toolCallTitle({ tool: "toolsearch", state: { input: { query: "select:TaskStop" } } }),
+    "toolsearch select:TaskStop",
+  )
+})

@@ -145,6 +145,73 @@ export function toolCallTitle(part: ToolLike): string {
       if (to) return `message ${firstLine(to, 30)}`
       break
     }
+    case "agent": {
+      const description = str(input?.description)
+      if (description) return description
+      const prompt = str(input?.prompt)
+      if (prompt) return firstLine(prompt)
+      break
+    }
+    case "monitor": {
+      const description = str(input?.description)
+      if (description) return `watch: ${firstLine(description, 50)}`
+      const command = str(input?.command)
+      if (command) return `watch: ${firstLine(commandIntent(command), 50)}`
+      break
+    }
+    case "question": {
+      const questions = input?.questions
+      if (Array.isArray(questions)) {
+        const first = record(questions[0])
+        const text = str(first?.question) ?? str(first?.header)
+        if (text) return firstLine(text)
+      }
+      break
+    }
+    case "taskcreate": {
+      const subject = str(input?.subject)
+      if (subject) return `+ ${firstLine(subject, 50)}`
+      break
+    }
+    case "taskupdate": {
+      const id = str(input?.taskId)
+      const status = str(input?.status)
+      if (id) return `task #${id}${status ? ` → ${status}` : ""}`
+      break
+    }
+    case "taskstop":
+      return "stop background task"
+    case "schedulewakeup": {
+      if (input?.stop === true) return "stop loop"
+      const delay = input?.delaySeconds
+      if (typeof delay === "number") return `wake in ${Math.round(delay / 60)}m`
+      break
+    }
+    case "opencodex_swarm_create": {
+      const prompt = str(input?.prompt)
+      if (prompt) return firstLine(prompt)
+      break
+    }
+    case "browser_navigate": {
+      const url = str(input?.url)
+      if (url) {
+        try {
+          return `open ${new URL(url).hostname}`
+        } catch {
+          return `open ${firstLine(url, 40)}`
+        }
+      }
+      break
+    }
+    case "graph_status": {
+      const node = str(input?.nodeID)
+      return node ? `graph status ${node}` : "graph status"
+    }
+    case "toolsearch": {
+      const query = str(input?.query)
+      if (query) return `toolsearch ${firstLine(query, 40)}`
+      break
+    }
   }
 
   return tool || "tool"
