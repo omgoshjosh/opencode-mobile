@@ -12,6 +12,7 @@ import { modelDisplayLabel, modelIDDisplayLabel } from "../../src/lib/model-labe
 import { SWARM_PROVIDER_ID } from "../../src/lib/swarm-model"
 import { indexByID, depthOf } from "../../src/lib/session-tree"
 import { looksLikeCIWait, type RunningTool } from "../../src/lib/running-tools"
+import { pendingWakeFor, wakeCountdownLabel } from "../../src/lib/pending-wakes"
 import { formatElapsed } from "../../src/lib/elapsed-format"
 
 /**
@@ -95,13 +96,27 @@ export default function SessionHubScreen() {
       return []
     })
   }, [runningTools, sessionStatus, id, children, sessions])
-  // 1s tick only while something is actually in flight.
+  // The OTHER wait mechanism: sessions that will receive a scheduled wake.
+  // Same scope as the tool rows; client-derived until the server's
+  // pendingWake field ships (see src/lib/pending-wakes.ts for the honesty
+  // contract — these rows say "wakes in", never "running").
+  const pendingWakes = useSessions((s) => s.pendingWakes)
   const [now, setNow] = useState(() => Date.now())
+  const wakes = useMemo(() => {
+    const scope = [id, ...children.map((c) => c.id)].filter(Boolean) as string[]
+    const titleFor = (sid: string) =>
+      sid === id ? "this session" : (sessions.find((x) => x.id === sid)?.title ?? sid)
+    return scope.flatMap((sid) => {
+      const wake = pendingWakeFor(pendingWakes, sid, now)
+      return wake ? [{ wake, owner: titleFor(sid), sid }] : []
+    })
+  }, [pendingWakes, id, children, sessions, now])
+  // 1s tick only while something is actually in flight or scheduled.
   useEffect(() => {
-    if (waiting.length === 0) return
+    if (waiting.length === 0 && wakes.length === 0) return
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [waiting.length > 0])
+  }, [waiting.length > 0, wakes.length > 0])
 
   return (
     <>
@@ -158,9 +173,39 @@ export default function SessionHubScreen() {
               </>
             )}
 
-            {waiting.length > 0 && (
+            {(waiting.length > 0 || wakes.length > 0) && (
               <>
-                <Text style={[s.label, isDark && s.dim]}>WAITING ON ({waiting.length})</Text>
+                <Text style={[s.label, isDark && s.dim]}>WAITING ON ({waiting.length + wakes.length})</Text>
+                {wakes.map(({ wake, owner, sid }) => (
+                  <TouchableOpacity
+                    key={`wake-${sid}`}
+                    style={[s.waitRow, isDark && s.cardDark]}
+                    onPress={() =>
+                      sid !== id &&
+                      router.push({
+                        pathname: "/session/[id]",
+                        params: { id: sid, ...(session?.directory ? { directory: session.directory } : {}) },
+                      })
+                    }
+                    activeOpacity={sid === id ? 1 : 0.7}
+                    testID={`wake-${sid}`}
+                  >
+                    <Ionicons name="alarm-outline" size={16} color="#8b5cf6" />
+                    <View style={s.childText}>
+                      <Text style={[s.childTitle, isDark && s.light]} numberOfLines={1}>
+                        {wakeCountdownLabel(wake, now)}
+                        {wake.reason ? ` — ${wake.reason}` : ""}
+                      </Text>
+                      <Text style={[s.childPreview, isDark && s.dim]} numberOfLines={1}>
+                        {owner}
+                      </Text>
+                    </View>
+                    <View style={s.wakeChip}>
+                      <Text style={s.wakeChipText}>scheduled</Text>
+                    </View>
+                    {sid !== id && <Ionicons name="chevron-forward" size={16} color={isDark ? "#666" : "#999"} />}
+                  </TouchableOpacity>
+                ))}
                 {waiting.map(({ tool, owner, sid }) => (
                   <TouchableOpacity
                     key={tool.partID}
@@ -297,6 +342,8 @@ const s = StyleSheet.create({
   ciChipText: { fontSize: 10, fontWeight: "700", color: "#1d4ed8" },
   watchChip: { backgroundColor: "#fef3c7", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
   watchChipText: { fontSize: 10, fontWeight: "700", color: "#92400e" },
+  wakeChip: { backgroundColor: "#ede9fe", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
+  wakeChipText: { fontSize: 10, fontWeight: "700", color: "#6d28d9" },
   childTitle: { fontSize: 14, fontWeight: "600", color: "#0a0a0a" },
   childPreview: { fontSize: 12, color: "#888888" },
 })

@@ -14,6 +14,7 @@ import { dropPreview, parsePreviewMap, previewFromParts, previewText, putPreview
 import { markViewed, parseLastViewed, type LastViewedMap } from "../lib/session-attention"
 import { serializeSnapshot, parseSnapshot } from "../lib/list-freshness"
 import { trackToolPart, clearSessionTools, type RunningToolMap } from "../lib/running-tools"
+import { trackWakePart, type PendingWakeMap } from "../lib/pending-wakes"
 import { toolCallTitle } from "../lib/tool-titles"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
@@ -102,6 +103,9 @@ interface SessionsState {
   // In-flight tool calls per session, farm-wide, from the global stream.
   // Feeds the hub's waiting-on panel. Bounded — see src/lib/running-tools.ts.
   runningTools: RunningToolMap
+  // Scheduled wakeups per session (client-derived expectation until the
+  // server's pendingWake field ships) — see src/lib/pending-wakes.ts.
+  pendingWakes: PendingWakeMap
   // sessionID -> when this client last opened it. Turns "session was updated"
   // into "updated since you looked", which is what separates a finished run
   // you still need to read from one you're done with.
@@ -187,6 +191,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
   previews: {},
   lastViewed: {},
   runningTools: {},
+  pendingWakes: {},
   error: null,
   listSource: null,
   listAsOf: null,
@@ -373,6 +378,12 @@ export const useSessions = create<SessionsState>((set, get) => ({
           .flat()
           .filter((p) => p.type === "tool")
           .reduce((acc, p) => trackToolPart(acc, p, toolCallTitle(p), Date.now()), map)
+      // Wakes scheduled before this app connected are in the transcript too.
+      const seedWakes = (map: PendingWakeMap) =>
+        Object.values(parts)
+          .flat()
+          .filter((p) => p.type === "tool")
+          .reduce((acc, p) => trackWakePart(acc, p, Date.now()), map)
 
       // Mark it read. Stamped from the session's own updated time rather than
       // `Date.now()`: anything the server writes *after* this fetch is content
@@ -386,6 +397,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
         lastViewed: nextViewed,
         ...(seed ? { previews: persistedPutPreview(state.previews, sessionID, seed) } : null),
         runningTools: seedRunning(state.runningTools),
+        pendingWakes: seedWakes(state.pendingWakes),
         currentSession: session,
         messages,
         parts,
@@ -715,6 +727,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
       if (part?.sessionID && part.type === "tool") {
         set((state) => ({
           runningTools: trackToolPart(state.runningTools, part, toolCallTitle(part), Date.now()),
+          pendingWakes: trackWakePart(state.pendingWakes, part, Date.now()),
         }))
       }
     }
