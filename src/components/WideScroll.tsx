@@ -35,6 +35,15 @@ export function WideScroll({
 
   const updateMax = () => {
     maxOffsetRef.current = Math.max(0, contentWidthRef.current - layoutWidthRef.current)
+    // Self-heal a stuck offset: content reflow — or a native touch consumer
+    // (selectable Text, since removed from CodeBlock) dragging the view
+    // outside our control — can strand the ScrollView scrolled past what the
+    // content allows, seen on device as permanently left-clipped code.
+    // Snap back into range whenever the bounds change.
+    if (offsetRef.current > maxOffsetRef.current) {
+      offsetRef.current = maxOffsetRef.current
+      scrollRef.current?.scrollTo({ x: maxOffsetRef.current, animated: false })
+    }
   }
 
   const pan = Gesture.Pan()

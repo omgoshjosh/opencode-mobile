@@ -31,6 +31,10 @@ export function DiffView({ before, after, isDark }: Props) {
               <Text style={[s.prefix, isDark && s.prefixDark]}>
                 {line.type === "add" ? "+" : line.type === "remove" ? "-" : " "}
               </Text>
+              {/* Not selectable — same Android trap as CodeBlock: native
+                  selection inside WideScroll eats long-press and fights the
+                  horizontal pan. Full text lives one tap away in the tool
+                  card's output screen, which IS selectable. */}
               <Text
                 style={[
                   s.text,
@@ -38,7 +42,6 @@ export function DiffView({ before, after, isDark }: Props) {
                   line.type === "add" && s.addText,
                   line.type === "remove" && s.removeText,
                 ]}
-                selectable
               >
                 {line.text}
               </Text>

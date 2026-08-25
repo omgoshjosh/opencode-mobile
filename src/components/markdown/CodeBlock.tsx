@@ -29,7 +29,13 @@ export function CodeBlock({ code, language }: Props) {
         </TouchableOpacity>
       </View>
       <WideScroll testID="code-block-scroll" contentContainerStyle={styles.codeScroll}>
-        <Text style={[styles.code, isDark && styles.codeDark]} selectable>
+        {/* NOT selectable: on Android, selectable Text installs native
+            selection touch handling that swallowed the bubble's long-press
+            and fought the horizontal pan (reported on device: unscrollable,
+            left-clipped code and a dead long-press). Copying is served by
+            the Copy button and the bubble's long-press modal — which is the
+            copy path that actually works inside a FlatList anyway. */}
+        <Text style={[styles.code, isDark && styles.codeDark]}>
           {code}
         </Text>
       </WideScroll>
