@@ -223,6 +223,65 @@ function WebfetchDetail({ input, isDark }: { input: unknown; isDark: boolean }) 
   )
 }
 
+/**
+ * The drill-in row for a task's spawned session.
+ *
+ * PINNED ABOVE the card's inner scroll (not rendered inside TaskDetail's
+ * flow) — reported on device: with a long prompt below it, the banner
+ * scrolled out of reach inside the 300px nested ScrollView, and nested
+ * scroll-up inside the inverted transcript list would not give it back.
+ * The drill-in is the card's whole point; it must not be scrollable away.
+ */
+function SubagentBanner({
+  link,
+  directory,
+  isDark,
+}: {
+  link: NonNullable<ReturnType<typeof subagentLinkFrom>>
+  directory?: string
+  isDark: boolean
+}) {
+  const badge = subagentBadge(link)
+  const providers = useCatalog((c) => c.providers)
+  return (
+    <TouchableOpacity
+      style={[s.subagentLink, isDark && s.subagentLinkDark]}
+      onPress={() =>
+        router.push({
+          pathname: "/session/[id]",
+          // The child runs in the parent's directory; passing it keeps the
+          // child screen on the same connection instead of falling back to
+          // the active one, which may point elsewhere.
+          params: { id: link.sessionID, ...(directory ? { directory } : {}) },
+        })
+      }
+      activeOpacity={0.7}
+      testID={`open-subagent-${link.sessionID}`}
+    >
+      <Ionicons name="git-branch-outline" size={14} color="#8b5cf6" />
+      <Text style={s.subagentLinkText} numberOfLines={1}>
+        {link.status === "running" ? "Watch subagent" : "Open subagent"}
+      </Text>
+      {badge && (
+        <View style={s.subagentBadge}>
+          <Text style={s.subagentBadgeText} numberOfLines={1}>
+            {badge}
+          </Text>
+        </View>
+      )}
+      {/* The swarm facade hides which model actually ran; this is the only
+          place it surfaces. Resolve to the catalog's display name — the raw
+          id was the last swm_/model handle still visible in a transcript. */}
+      {link.modelID && (
+        <Text style={[s.subagentModel, isDark && s.detailMetaDark]} numberOfLines={1}>
+          {modelIDDisplayLabel(providers, link.modelID)}
+        </Text>
+      )}
+      <Ionicons name="chevron-forward" size={14} color="#8b5cf6" />
+    </TouchableOpacity>
+  )
+}
+
 function TaskDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
   const input = tool.state?.input
   const description =
@@ -233,54 +292,16 @@ function TaskDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
   // transcript showed the prompt and stopped, leaving the subagent's actual
   // work unreachable — see src/lib/subagent-link.ts.
   const link = subagentLinkFrom(tool)
-  const badge = link ? subagentBadge(link) : undefined
   const directory = useSessions((st) => st.currentSession?.directory)
-  const providers = useCatalog((c) => c.providers)
-
-  const openSubagent = useCallback(() => {
-    if (!link) return
-    router.push({
-      pathname: "/session/[id]",
-      // The child runs in the parent's directory; passing it keeps the child
-      // screen on the same connection instead of falling back to the active
-      // one, which may point elsewhere.
-      params: { id: link.sessionID, ...(directory ? { directory } : {}) },
-    })
-  }, [link?.sessionID, directory])
 
   return (
     <View style={s.detailSection}>
       {typeof description === "string" && <Text style={[s.detailMeta, isDark && s.detailMetaDark]}>{description}</Text>}
 
-      {link && isSubagentOpenable(link) && (
-        <TouchableOpacity
-          style={[s.subagentLink, isDark && s.subagentLinkDark]}
-          onPress={openSubagent}
-          activeOpacity={0.7}
-          testID={`open-subagent-${link.sessionID}`}
-        >
-          <Ionicons name="git-branch-outline" size={14} color="#8b5cf6" />
-          <Text style={s.subagentLinkText} numberOfLines={1}>
-            {link.status === "running" ? "Watch subagent" : "Open subagent"}
-          </Text>
-          {badge && (
-            <View style={s.subagentBadge}>
-              <Text style={s.subagentBadgeText} numberOfLines={1}>
-                {badge}
-              </Text>
-            </View>
-          )}
-          {/* The swarm facade hides which model actually ran; this is the
-              only place it surfaces. Resolve to the catalog's display name —
-              the raw id was the last swm_/model handle still visible in a
-              transcript. */}
-          {link.modelID && (
-            <Text style={[s.subagentModel, isDark && s.detailMetaDark]} numberOfLines={1}>
-              {modelIDDisplayLabel(providers, link.modelID)}
-            </Text>
-          )}
-          <Ionicons name="chevron-forward" size={14} color="#8b5cf6" />
-        </TouchableOpacity>
+      {/* The drill-in banner is pinned above this scroll area by the card —
+          see SubagentBanner for why it must never live in here. */}
+      {Boolean(link && !isSubagentOpenable(link)) && (
+        <Text style={[s.detailMeta, isDark && s.detailMetaDark]}>Subagent session no longer available.</Text>
       )}
 
       {typeof prompt === "string" && prompt.length > 0 && (
@@ -657,6 +678,7 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded, fallbackStartTim
   // (the Watch-subagent link) — use its title. An explicit description
   // still wins: the orchestrator wrote it for exactly this purpose.
   const taskLink = tool.tool === "task" ? subagentLinkFrom(tool) : null
+  const directory = useSessions((st) => st.currentSession?.directory)
   const spawnedTitle = useSessions((st) =>
     taskLink ? st.sessions.find((x) => x.id === taskLink.sessionID)?.title : undefined,
   )
@@ -728,12 +750,20 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded, fallbackStartTim
       {/* Error banner */}
       {error && !expanded && <ErrorBanner message={error} isDark={isDark} />}
 
-      {/* Expanded detail */}
+      {/* Expanded detail. For tasks, the drill-in banner is pinned ABOVE the
+          scroll — inside the ScrollView a long prompt pushed it out of reach
+          and nested scroll-up in the inverted list would not return it
+          (reported on device). */}
       {expanded && (
-        <ScrollView style={s.detailScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
-          {error && <ErrorBanner message={error} isDark={isDark} />}
-          <ToolDetail tool={tool} isDark={isDark} />
-        </ScrollView>
+        <>
+          {taskLink && isSubagentOpenable(taskLink) && (
+            <SubagentBanner link={taskLink} directory={directory} isDark={isDark} />
+          )}
+          <ScrollView style={s.detailScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+            {error && <ErrorBanner message={error} isDark={isDark} />}
+            <ToolDetail tool={tool} isDark={isDark} />
+          </ScrollView>
+        </>
       )}
       {/* OUTSIDE the nested ScrollView: a Touchable inside it never received
           taps (the scroll view claimed the gesture — observed on device, the
