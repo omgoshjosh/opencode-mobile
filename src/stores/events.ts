@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import { useConnections } from "./connections"
-import { useSessions, abortedSessions } from "./sessions"
+import { useSessions, abortedSessions, wasFocusSelectionAborted } from "./sessions"
 import { send as notify } from "../lib/notifications"
 import { sanitizeBody } from "../lib/notify-format"
 import { statusFromPart } from "../lib/status-labels"
@@ -122,10 +122,10 @@ const PROLONGED_DISCONNECT_MS = 30_000
 // Called when entering a session to recover from missed SSE events or failed
 // optimistic removals.
 export async function refreshPending(client: Client, sessionID: string, signal?: AbortSignal) {
-  if (signal?.aborted || useSessions.getState().currentSession?.id !== sessionID) return
+  if (signal?.aborted || wasFocusSelectionAborted(sessionID) || useSessions.getState().currentSession?.id !== sessionID) return
   try {
     const [perms, questions] = await Promise.all([client.permission.list(signal), client.question.list(signal)])
-    if (signal?.aborted || useSessions.getState().currentSession?.id !== sessionID) return
+    if (signal?.aborted || wasFocusSelectionAborted(sessionID) || useSessions.getState().currentSession?.id !== sessionID) return
     const sessionPerms = (perms || []).filter((p: Record<string, unknown>) => p.sessionID === sessionID)
     const sessionQuestions = (questions || []).filter((q: Record<string, unknown>) => q.sessionID === sessionID)
     useEvents.setState((state) => ({

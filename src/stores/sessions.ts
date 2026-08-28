@@ -168,6 +168,12 @@ let listLoadSeq = 0
 // the next value and only commits its result if still the latest.
 let selectSeq = 0
 let selectController: AbortController | null = null
+let latestSelectionID: string | null = null
+const abortedFocusSelections = new Set<string>()
+
+export function wasFocusSelectionAborted(sessionID: string): boolean {
+  return abortedFocusSelections.has(sessionID)
+}
 
 // Get the right client for a session's directory
 function clientFor(directory?: string): Client | null {
@@ -309,6 +315,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
     }
 
     const seq = ++selectSeq
+    latestSelectionID = sessionID
+    abortedFocusSelections.delete(sessionID)
     selectController?.abort()
     const currentController = new AbortController()
     selectController = currentController
@@ -417,7 +425,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
         hasMore: Boolean(page.nextCursor),
       }))
     } catch (err) {
-      if (seq !== selectSeq || currentController.signal.aborted) return
+      if (seq !== selectSeq || currentController.signal.aborted) {
+        if (seq === selectSeq || latestSelectionID !== sessionID) abortedFocusSelections.add(sessionID)
+        return
+      }
       console.error("Failed to load session:", err)
       set({ error: "Failed to load session", isLoading: false })
     } finally {
