@@ -197,6 +197,14 @@ export interface Event {
   properties: Record<string, unknown>
 }
 
+export interface SessionStatus {
+  type: "idle" | "busy" | "retry"
+  background?: {
+    running: number
+    jobs: Array<{ sessionID: string; role: string; title: string; since: number }>
+  }
+}
+
 export interface HealthResponse {
   healthy: boolean
   version: string
@@ -490,7 +498,11 @@ export function createClient(config: ClientConfig) {
           params,
         ),
 
-      get: (sessionID: string, signal?: AbortSignal) => request<Session>(config, `/session/${sessionID}`, { signal }),
+       get: (sessionID: string, signal?: AbortSignal) => request<Session>(config, `/session/${sessionID}`, { signal }),
+
+       status: (signal?: AbortSignal) => request<Record<string, SessionStatus>>(config, "/session/status", { signal }),
+
+       children: (sessionID: string, signal?: AbortSignal) => request<Session[]>(config, `/session/${sessionID}/children`, { signal }),
 
       create: (params?: { title?: string }) =>
         request<Session>(config, "/session", {

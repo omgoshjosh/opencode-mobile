@@ -76,6 +76,7 @@ import { SESSION_SORTS, parseSessionSort, sortSessions, type SessionSort } from 
 import { useDrafts } from "../../src/stores/drafts"
 import { useSettings } from "../../src/stores/settings"
 import { nameOf } from "../../src/lib/path-utils"
+import { backgroundFor } from "../../src/lib/background-activity"
 import { SETUP_GUIDE_URL } from "../../src/lib/links"
 
 // Badge palette per attention state. "needs you" is the only red — it is the
@@ -160,6 +161,7 @@ const SessionItem = memo(function SessionItem({
       ? modelDisplayLabel(providers, { providerID: session.model.providerID, modelID: session.model.id })
       : null
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
+  const backgroundRunning = useEvents((s) => backgroundFor({ parentID: session.id, statuses: s.sessionStatus, sessions: useSessions.getState().sessions })?.running ?? 0)
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
@@ -247,12 +249,13 @@ const SessionItem = memo(function SessionItem({
               </Text>
             </View>
           )}
-          {shortDir && (
+           {shortDir && (
             <View style={styles.sessionDirBadge}>
               <Ionicons name="folder-outline" size={12} color={isDark ? "#888888" : "#666666"} />
               <Text style={[styles.sessionDirText, isDark && styles.metaDark]}>{shortDir}</Text>
             </View>
-          )}
+           )}
+          {!session.parentID && backgroundRunning > 0 && <View style={styles.backgroundBadge} accessible accessibilityLabel={`${backgroundRunning} working`}><Text style={styles.backgroundBadgeText}>{backgroundRunning}</Text></View>}
         </View>
       </View>
       <Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />
@@ -284,6 +287,7 @@ const SessionRowV2 = memo(function SessionRowV2({
   const providers = useCatalog((c) => c.providers)
   const preview = useSessions((s) => s.previews[session.id]?.text)
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
+  const backgroundRunning = useEvents((s) => backgroundFor({ parentID: session.id, statuses: s.sessionStatus, sessions: useSessions.getState().sessions })?.running ?? 0)
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
@@ -354,6 +358,7 @@ const SessionRowV2 = memo(function SessionRowV2({
               return quiet ? ` · ${quiet}` : ""
             })()}
         </Text>
+        {!session.parentID && backgroundRunning > 0 && <View style={styles.backgroundBadge} accessible accessibilityLabel={`${backgroundRunning} working`}><Text style={styles.backgroundBadgeText}>{backgroundRunning}</Text></View>}
       </View>
       {subtitle && (
         <Text
@@ -1988,6 +1993,8 @@ const styles = StyleSheet.create({
     maxWidth: 160,
   },
   sessionSwarmText: { fontSize: 11, color: "#6d28d9", fontWeight: "600", flexShrink: 1 },
+  backgroundBadge: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5, alignItems: "center", justifyContent: "center", backgroundColor: "#dcfce7" },
+  backgroundBadgeText: { fontSize: 10, fontWeight: "700", color: "#166534" },
 
   sessionDirBadge: {
     flexDirection: "row",

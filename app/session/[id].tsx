@@ -21,6 +21,7 @@ import * as ImagePicker from "expo-image-picker"
 import * as ImageManipulator from "expo-image-manipulator"
 import * as Clipboard from "expo-clipboard"
 import type BottomSheet from "@gorhom/bottom-sheet"
+import { Gesture, GestureDetector } from "react-native-gesture-handler"
 import {
   MessageBubble,
   PermissionPrompt,
@@ -32,9 +33,11 @@ import {
   ImageAttachments,
   SessionInfo,
   SelectableTextModal,
+  BackgroundJobsSheet,
   type SlashCommand,
   type Attachment,
 } from "../../src/components/chat"
+import { backgroundFor, runningChildren } from "../../src/lib/background-activity"
 import { extractCopyText, hasCopyableText } from "../../src/lib/message-copy-text"
 import {
   resolveSessionAgent,
@@ -111,6 +114,7 @@ export default function SessionScreen() {
   const flatListRef = useRef<FlatList>(null)
   const modelSheetRef = useRef<BottomSheet>(null)
   const variantSheetRef = useRef<BottomSheet>(null)
+  const jobsSheetRef = useRef<BottomSheet>(null)
   const [input, setInput] = useState("")
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [showInfo, setShowInfo] = useState(false)
@@ -140,6 +144,8 @@ export default function SessionScreen() {
     const parentID = state.currentSession?.parentID?.trim()
     return parentID ? state.sessions.find((session) => session.id === parentID) : undefined
   })
+  const sessions = useSessions((state) => state.sessions)
+  const statuses = useEvents((state) => state.sessionStatus)
   const loadDrafts = useDrafts((state) => state.load)
   const saveDraft = useDrafts((state) => state.save)
   const clearDraft = useDrafts((state) => state.clear)
@@ -199,6 +205,16 @@ export default function SessionScreen() {
     () => (currentSession?.directory ? (clientForDirectory(currentSession.directory) ?? client) : client),
     [currentSession?.directory, clientForDirectory, client],
   )
+
+  // The list normally already has children; fetch only for this focused route
+  // when it does not, never from individual list rows.
+  useEffect(() => {
+    const parentID = currentSession?.parentID ?? currentSession?.id
+    if (!parentID || sessions.some((session) => session.parentID === parentID) || !sessionClient) return
+    sessionClient.session.children(parentID).then((children) => useSessions.setState((state) => ({
+      sessions: [...state.sessions, ...children.filter((child) => !state.sessions.some((session) => session.id === child.id))],
+    }))).catch(() => {})
+  }, [currentSession?.id, currentSession?.parentID, sessionClient, sessions])
 
   // Catalog
   const catalog = useCatalog()
@@ -937,6 +953,24 @@ export default function SessionScreen() {
     const found = provider?.models.find((m) => m.id === model.modelID)
     return found?.variants
   }, [model, providers])
+  const background = useMemo(
+    () => currentSession ? backgroundFor({ parentID: currentSession.id, statuses, sessions, parts: Object.values(parts).flat() }) : undefined,
+    [currentSession?.id, statuses, sessions, parts],
+  )
+  const siblingParentID = currentSession?.parentID
+  const siblings = useMemo(
+    () => siblingParentID ? runningChildren(siblingParentID, statuses, sessions) : [],
+    [siblingParentID, statuses, sessions],
+  )
+  const siblingIndex = siblings.findIndex((session) => session.id === currentSession?.id)
+  const moveSibling = (offset: number) => {
+    const sibling = siblings[siblingIndex + offset]
+    if (!sibling) return
+    router.replace({ pathname: "/session/[id]", params: { id: sibling.id, ...(sibling.directory ? { directory: sibling.directory } : {}) } })
+  }
+  const siblingPan = Gesture.Pan().activeOffsetX([-20, 20]).onEnd((event) => {
+    if (Math.abs(event.translationX) >= 60) moveSibling(event.translationX < 0 ? 1 : -1)
+  }).runOnJS(true)
 
   return (
     <>
@@ -952,8 +986,15 @@ export default function SessionScreen() {
               {currentSession?.title || t("session.titleFallback")}
             </Text>
           ),
-          headerRight: () => (
+           headerRight: () => (
             <View style={s.headerRight}>
+              {background && background.running > 0 && (
+                <TouchableOpacity style={s.workingChip} onPress={() => jobsSheetRef.current?.expand()} accessibilityRole="button" accessibilityLabel={`${background.running} working`} testID="background-jobs-chip">
+                  <Text style={s.workingChipText}>{background.running} working</Text>
+                </TouchableOpacity>
+              )}
+              {siblingIndex > 0 && <TouchableOpacity onPress={() => moveSibling(-1)} accessibilityLabel="Previous working sibling" style={s.siblingButton}><Ionicons name="chevron-back" size={20} color={isDark ? "#ddd" : "#555"} /></TouchableOpacity>}
+              {siblingIndex >= 0 && siblingIndex < siblings.length - 1 && <TouchableOpacity onPress={() => moveSibling(1)} accessibilityLabel="Next working sibling" style={s.siblingButton}><Ionicons name="chevron-forward" size={20} color={isDark ? "#ddd" : "#555"} /></TouchableOpacity>}
               {shortDir && (
                 <View style={[s.dirBadge, isDark && s.dirBadgeDark]}>
                   <Ionicons name="folder-outline" size={14} color={isDark ? "#888888" : "#666666"} />
@@ -974,6 +1015,12 @@ export default function SessionScreen() {
           ),
         }}
       />
+
+      {siblingParentID && <GestureDetector gesture={siblingPan}><View style={s.siblingGesture} accessibilityLabel="Swipe to move between working siblings" /></GestureDetector>}
+      <BackgroundJobsSheet sheetRef={jobsSheetRef} jobs={background?.jobs ?? []} isDark={isDark} onOpen={(job) => {
+        jobsSheetRef.current?.close()
+        router.push({ pathname: "/session/[id]", params: { id: job.sessionID } })
+      }} />
 
       <KeyboardAvoidingView
         style={[s.container, isDark && s.containerDark]}
@@ -1527,6 +1574,10 @@ const s = StyleSheet.create({
   stopBarText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
   // Header
   headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  workingChip: { minHeight: 44, paddingHorizontal: 10, justifyContent: "center", borderRadius: 14, backgroundColor: "#dcfce7" },
+  workingChipText: { color: "#166534", fontSize: 12, fontWeight: "700" },
+  siblingButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  siblingGesture: { height: 8 },
   dirBadge: {
     flexDirection: "row",
     alignItems: "center",
