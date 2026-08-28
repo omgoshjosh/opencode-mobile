@@ -51,7 +51,7 @@ import { inferBusyFromMessages } from "../../src/lib/session-status-reconcile"
 import { slashPopoverQuery } from "../../src/lib/slash-trigger"
 import { summarizeModel } from "../../src/lib/summarize-model"
 import { awaitingTurn, inFlightUserCreatedAt } from "../../src/lib/message-delivery"
-import { shouldPersistFocusedDraft } from "../../src/lib/draft-lifecycle"
+import { shouldApplyRestoredDraft, shouldPersistFocusedDraft } from "../../src/lib/draft-lifecycle"
 import { TitlePeek } from "../../src/components/chat/TitlePeek"
 import { visibleTranscriptEntry } from "../../src/lib/transcript-visibility"
 import { useSessions } from "../../src/stores/sessions"
@@ -342,6 +342,7 @@ export default function SessionScreen() {
   const savedDraftRef = useRef<Record<string, string>>({})
   const draftFocusedRef = useRef(false)
   const draftRestoredRef = useRef(false)
+  const draftTouchedRef = useRef(false)
 
   const persistDraft = useCallback(() => {
     if (!id) return
@@ -360,13 +361,15 @@ export default function SessionScreen() {
       let focused = true
       draftFocusedRef.current = true
       draftRestoredRef.current = false
+      draftTouchedRef.current = false
       setInput("")
       loadDrafts().then(() => {
         if (!focused) return
         const text = useDrafts.getState().drafts[id]?.text ?? ""
-        inputRef.current = text
         savedDraftRef.current[id] = text
         draftRestoredRef.current = true
+        if (!shouldApplyRestoredDraft(focused, draftTouchedRef.current)) return
+        inputRef.current = text
         setInput(text)
       })
       const sub = Keyboard.addListener("keyboardDidHide", persistDraft)
@@ -376,6 +379,7 @@ export default function SessionScreen() {
         focused = false
         draftFocusedRef.current = false
         draftRestoredRef.current = false
+        draftTouchedRef.current = false
       }
     }, [id, loadDrafts, persistDraft]),
   )
@@ -1239,7 +1243,14 @@ export default function SessionScreen() {
               }
               placeholderTextColor={speech.listening ? "#ef4444" : isDark ? "#9a9a9a" : "#999999"}
               value={speech.listening ? speech.transcript : input}
-              onChangeText={speech.listening ? undefined : setInput}
+              onChangeText={
+                speech.listening
+                  ? undefined
+                  : (text) => {
+                      draftTouchedRef.current = true
+                      setInput(text)
+                    }
+              }
               onBlur={persistDraft}
               editable={!speech.listening}
               multiline

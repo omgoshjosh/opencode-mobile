@@ -216,6 +216,10 @@ function RootLayout() {
                 options={{
                   title: t("session.titleFallback"),
                   presentation: "card",
+                  // Session transcripts live in one global store. Freeze a
+                  // covered native-stack screen so only the visible route
+                  // responds while its successor streams.
+                  freezeOnBlur: true,
                 }}
               />
               <Stack.Screen name="swarms/index" options={{ title: "Swarms", presentation: "card" }} />
