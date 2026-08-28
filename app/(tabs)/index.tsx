@@ -232,11 +232,11 @@ const SessionItem = memo(function SessionItem({
               {/* Icon as well as colour: "needs you" must not depend on hue
                   alone to be distinguishable. */}
               {isActionable(attention) && <Ionicons name="hand-left" size={11} color="#b91c1c" />}
-              {/* A static badge says what state a session is in but not
-                  whether it is still moving; a stalled run looks identical to
-                  a progressing one across 30 rows. */}
+              {/* Keep list status dots static. A perpetual opacity animation
+                  keeps the whole screen producing frames while agents run,
+                  even when the list and event stream are otherwise idle. */}
               {(attention === "busy" || attention === "retry") && (
-                <PulsingDot color={attention === "busy" ? "#16a34a" : "#b45309"} size={5} active />
+                <PulsingDot color={attention === "busy" ? "#16a34a" : "#b45309"} size={5} active={false} />
               )}
               <Text style={[styles.statusBadgeText, ATTENTION_TEXT[attention]]}>
                 {attentionLabel(attention)}
@@ -334,7 +334,7 @@ const SessionRowV2 = memo(function SessionRowV2({
     >
       <View style={styles.rowV2Line}>
         {dot.pulse ? (
-          <PulsingDot color={dot.color} size={8} active />
+          <PulsingDot color={dot.color} size={8} active={false} />
         ) : (
           <View
             style={[
@@ -1163,13 +1163,12 @@ export default function SessionsScreen() {
             size={13}
             color={isFilterActive(filter) ? "#6d28d9" : isDark ? "#888888" : "#666666"}
           />
-          {/* The selected statuses' own dots, so the pill shows WHAT it is
-              narrowing to, in the same vocabulary as the rows — pulsing
-              exactly where the rows pulse. */}
+          {/* The selected statuses' own static dots, matching the rows without
+              keeping the Sessions screen rendering continuously. */}
           {filter.statuses.map((status) => {
             const dot = triageDot(status)
             return dot.pulse ? (
-              <PulsingDot key={status} color={dot.color} size={6} active />
+              <PulsingDot key={status} color={dot.color} size={6} active={false} />
             ) : (
               <View
                 key={status}
