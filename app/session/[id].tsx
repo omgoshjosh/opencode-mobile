@@ -129,6 +129,8 @@ export default function SessionScreen() {
   const loadingMore = useSessions((state) => state.loadingMore)
   const hasMore = useSessions((state) => state.hasMore)
   const selectSession = useSessions((state) => state.selectSession)
+  const setTranscriptActive = useSessions((state) => state.setTranscriptActive)
+  const refreshMessages = useSessions((state) => state.refreshMessages)
   const sendMessage = useSessions((state) => state.sendMessage)
   const abortSession = useSessions((state) => state.abortSession)
   const loadOlderMessages = useSessions((state) => state.loadOlderMessages)
@@ -515,15 +517,30 @@ export default function SessionScreen() {
       if (!id) return
       const controller = new AbortController()
       selectSession(id, directory, controller.signal).then((selected) => {
-        if (!selected || controller.signal.aborted) return
+        if (controller.signal.aborted) return
+        // A warm cached transcript remains usable even if its focus GET fails.
+        // Keep it live rather than suppressing all subsequent SSE updates.
+        const isVisibleCache = useSessions.getState().currentSession?.id === id
+        if (!selected && !isVisibleCache) return
+        // Selection has either committed its HTTP snapshot or left a safely
+        // bound warm cache visible. Only now may SSE target this transcript;
+        // activating before the fetch could let stale HTTP overwrite it.
+        setTranscriptActive(id, true)
+        // Close the HTTP-to-SSE handoff gap: anything emitted after the
+        // selection response was snapshotted but before activation is fetched
+        // once more. refreshMessages' revision guard lets newer SSE win.
+        void refreshMessages(controller.signal)
         // Re-fetch pending permissions/questions from the server to recover from
         // missed SSE events or failed optimistic removals
         const connState = useConnections.getState()
         const c = directory ? (connState.clientForDirectory(directory) ?? connState.client) : connState.client
         if (c) refreshPending(c, id, controller.signal)
       })
-      return () => controller.abort()
-    }, [id, directory]),
+      return () => {
+        setTranscriptActive(id, false)
+        controller.abort()
+      }
+    }, [id, directory, selectSession, setTranscriptActive, refreshMessages]),
   )
 
   // Sync the model chip for this session.

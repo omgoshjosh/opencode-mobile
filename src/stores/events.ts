@@ -189,8 +189,12 @@ async function resyncBusySessions() {
         }))
         persistStatusCache(useEvents.getState().sessionStatus)
         useSessions.setState((state) => ({ sending: { ...state.sending, [sessionID]: false } }))
-        if (useSessions.getState().currentSession?.id === sessionID) {
-          useSessions.getState().refreshMessages()
+        const latestSessions = useSessions.getState()
+        if (
+          latestSessions.activeTranscriptSessionID === sessionID &&
+          latestSessions.currentSession?.id === sessionID
+        ) {
+          latestSessions.refreshMessages()
         }
       } catch (err) {
         console.warn("[Events] Failed to resync session status for", sessionID, err)
@@ -222,7 +226,7 @@ async function resyncBusySessions() {
 // on an infrequent event, which is cheaper than the coupling needed to dedupe.
 async function reconcileOpenSession() {
   const sessions = useSessions.getState()
-  if (!sessions.currentSession) return
+  if (!sessions.currentSession || sessions.activeTranscriptSessionID !== sessions.currentSession.id) return
   try {
     await sessions.refreshMessages()
   } catch (err) {
@@ -380,7 +384,7 @@ export const useEvents = create<EventsState>((set, get) => ({
                 }))
                 // Refresh messages if this is the session the user is viewing
                 const sessions = useSessions.getState()
-                if (sessions.currentSession?.id === sessionID) {
+                if (sessions.activeTranscriptSessionID === sessionID && sessions.currentSession?.id === sessionID) {
                   sessions.refreshMessages()
                 }
               }
@@ -467,12 +471,16 @@ export const useEvents = create<EventsState>((set, get) => ({
               useSessions.setState((state) => ({
                 sending: { ...state.sending, [sessionID]: false },
                 // Surface error only if user is viewing this session
-                ...(state.currentSession?.id === sessionID
-                  ? { error: error?.message || "Session error occurred" }
-                  : {}),
-              }))
-              if (useSessions.getState().currentSession?.id === sessionID) {
-                useSessions.getState().refreshMessages()
+                  ...(state.activeTranscriptSessionID === sessionID && state.currentSession?.id === sessionID
+                    ? { error: error?.message || "Session error occurred" }
+                    : {}),
+                }))
+              const latestSessions = useSessions.getState()
+              if (
+                latestSessions.activeTranscriptSessionID === sessionID &&
+                latestSessions.currentSession?.id === sessionID
+              ) {
+                latestSessions.refreshMessages()
               }
               notify({
                 category: "errors",

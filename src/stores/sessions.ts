@@ -17,6 +17,8 @@ import { trackToolPart, clearSessionTools, type RunningToolMap } from "../lib/ru
 import { trackWakePart, type PendingWakeMap } from "../lib/pending-wakes"
 import { toolCallTitle } from "../lib/tool-titles"
 import { createFocusReadCoordinator } from "../lib/focus-read"
+import { isTranscriptActive, nextActiveTranscript, shouldApplyTranscriptSnapshot } from "../lib/transcript-focus"
+import { warmSessionFor } from "../lib/warm-session"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Helper to convert API response to our internal format
@@ -82,6 +84,8 @@ function pageSize(): number {
 interface SessionsState {
   sessions: Session[]
   currentSession: Session | null
+  // Selection survives native-stack navigation; visibility does not.
+  activeTranscriptSessionID: string | null
   messages: Message[]
   parts: Record<string, Part[]>
   // Message IDs whose send failed. Kept so the transcript can show the
@@ -136,6 +140,7 @@ interface SessionsState {
   ) => Promise<void>
   abortSession: () => Promise<void>
   refreshMessages: (signal?: AbortSignal) => Promise<void>
+  setTranscriptActive: (sessionID: string, active: boolean) => void
 
   // Revert (edit sent message) / unrevert (undo the pending revert)
   revertToMessage: (messageID: string) => Promise<RevertResult>
@@ -169,6 +174,15 @@ let listLoadSeq = 0
 // the next value and only commits its result if still the latest.
 let selectSeq = 0
 const focusReads = createFocusReadCoordinator()
+const transcriptRevisions = new Map<string, number>()
+
+function transcriptRevision(sessionID: string): number {
+  return transcriptRevisions.get(sessionID) ?? 0
+}
+
+function bumpTranscriptRevision(sessionID: string) {
+  transcriptRevisions.set(sessionID, transcriptRevision(sessionID) + 1)
+}
 
 // Get the right client for a session's directory
 function clientFor(directory?: string): Client | null {
@@ -182,6 +196,7 @@ function clientFor(directory?: string): Client | null {
 export const useSessions = create<SessionsState>((set, get) => ({
   sessions: [],
   currentSession: null,
+  activeTranscriptSessionID: null,
   messages: [],
   parts: {},
   failedMessageIDs: {},
@@ -198,6 +213,12 @@ export const useSessions = create<SessionsState>((set, get) => ({
   listSource: null,
   listAsOf: null,
   listLoadFailed: false,
+
+  setTranscriptActive: (sessionID, active) => {
+    set((state) => ({
+      activeTranscriptSessionID: nextActiveTranscript(state.activeTranscriptSessionID, sessionID, active),
+    }))
+  },
 
   loadLastViewed: async () => {
     try {
@@ -343,14 +364,24 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // underneath, instead of showing a spinner over content the client had
       // moments ago. Only the cold path (nothing cached) still blocks.
       const cached = getTranscript(get().transcriptCache, sessionID)
-      const canWarmStart = isColdLoad && canRenderFromCache(cached)
+      const hasCachedTranscript = isColdLoad && canRenderFromCache(cached)
+      const warmSession = warmSessionFor(get().sessions, sessionID, hasCachedTranscript)
+      // Transcript data without matching session metadata is unsafe: controls
+      // and sends would still target the previously selected session.
+      const canWarmStart = Boolean(warmSession)
 
       // Reset optimistic sending — SSE sessionStatus is the source of truth
       set((state) => ({
         isLoading: isColdLoad && !canWarmStart ? true : state.isLoading,
         error: null,
         ...(canWarmStart
-          ? { messages: cached!.messages, parts: cached!.parts, nextCursor: cached!.nextCursor, hasMore: Boolean(cached!.nextCursor) }
+          ? {
+              ...(warmSession ? { currentSession: warmSession } : null),
+              messages: cached!.messages,
+              parts: cached!.parts,
+              nextCursor: cached!.nextCursor,
+              hasMore: Boolean(cached!.nextCursor),
+            }
           : { hasMore: false, nextCursor: undefined }),
         loadingMore: false,
         sending: { ...state.sending, [sessionID]: false },
@@ -436,6 +467,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
     const client = clientFor(get().currentSession?.directory)
     const session = get().currentSession
     if (!client || !session) return
+    if (!isTranscriptActive(get().activeTranscriptSessionID, session.id)) return
     if (get().loadingMore || !get().hasMore) return
 
     const cursor = get().nextCursor
@@ -458,9 +490,15 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // The user navigated to a different session while this page was in
       // flight — prepending it now would splice one session's history into
       // another's transcript.
-      if (seq !== selectSeq) return
+      if (
+        seq !== selectSeq ||
+        get().currentSession?.id !== session.id ||
+        !isTranscriptActive(get().activeTranscriptSessionID, session.id)
+      ) return
 
       const { messages: older, parts: olderParts } = parseMessages(items)
+      // Invalidate any older refresh response before consuming this cursor.
+      bumpTranscriptRevision(session.id)
       set((state) => ({
         messages: mergeOlderPage({ existing: state.messages, older }),
         parts: mergeOlderParts(state.parts, olderParts),
@@ -469,7 +507,11 @@ export const useSessions = create<SessionsState>((set, get) => ({
         hasMore: Boolean(nextCursor),
       }))
     } catch (error) {
-      if (seq !== selectSeq) return
+      if (
+        seq !== selectSeq ||
+        get().currentSession?.id !== session.id ||
+        !isTranscriptActive(get().activeTranscriptSessionID, session.id)
+      ) return
       console.error("Failed to load older messages:", error)
       set({ loadingMore: false })
     }
@@ -580,6 +622,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
         }
       }
 
+      bumpTranscriptRevision(session.id)
       set((state) => ({
         messages: [...state.messages, userMessage],
         parts: { ...state.parts, [userMessage.id]: optimisticParts },
@@ -643,6 +686,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
     const session = get().currentSession
     if (!client || !session) return
     const seq = selectSeq
+    const revision = transcriptRevision(session.id)
 
     try {
       // Refresh exactly the window the user is looking at, not the whole
@@ -652,13 +696,27 @@ export const useSessions = create<SessionsState>((set, get) => ({
       const response = await client.session.messages(session.id, {
         limit: refreshWindowSize(get().messages.length, pageSize()),
       }, signal)
-      if (signal?.aborted || seq !== selectSeq || get().currentSession?.id !== session.id) return
+      if (
+        signal?.aborted ||
+        seq !== selectSeq ||
+        get().currentSession?.id !== session.id ||
+        !isTranscriptActive(get().activeTranscriptSessionID, session.id) ||
+        !shouldApplyTranscriptSnapshot(revision, transcriptRevision(session.id))
+      ) return
       const { messages, parts } = parseMessages(response)
       // Keep optimistic messages the server hasn't acknowledged — otherwise a
       // refresh triggered by a failed send deletes the text the user typed.
+      // The first successful HTTP writer wins; later concurrent snapshots
+      // observe this revision change and cannot overwrite it out of order.
+      bumpTranscriptRevision(session.id)
       set((state) => ({ messages: mergePendingMessages(messages, state.messages), parts: { ...state.parts, ...parts } }))
     } catch (error) {
-      if (signal?.aborted || seq !== selectSeq || get().currentSession?.id !== session.id) return
+      if (
+        signal?.aborted ||
+        seq !== selectSeq ||
+        get().currentSession?.id !== session.id ||
+        !isTranscriptActive(get().activeTranscriptSessionID, session.id)
+      ) return
       set({ error: "Failed to refresh messages" })
     }
   },
@@ -748,30 +806,17 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
     switch (event.type) {
       case "message.updated": {
+        if (!isTranscriptActive(get().activeTranscriptSessionID, currentSession.id)) return
         const message = (props.info || props.message) as Message | undefined
         if (!message) return
         if (!isLiveEventForSession(message.sessionID, currentSession.id)) {
-          // Not the open session — but if its transcript is parked in the
-          // cache, keep that copy current too. Otherwise drilling in
-          // warm-starts from a frozen snapshot and the list's live preview
-          // reads NEWER than the transcript it leads to, until the
-          // reconciling fetch lands (the reported "doesn't reflect when I
-          // drill in").
-          if (message.sessionID) {
-            set((state) => {
-              const cached = getTranscript(state.transcriptCache, message.sessionID)
-              if (!cached) return {}
-              return {
-                transcriptCache: putTranscript(state.transcriptCache, message.sessionID, {
-                  ...cached,
-                  messages: mergeIncomingMessage(cached.messages, message),
-                }),
-              }
-            })
-          }
+          // Parked transcripts are intentionally snapshots. Updating up to
+          // five invisible parent/subagent caches per token recreates the farm
+          // slowdown; selecting one performs an authoritative fetch.
           return
         }
 
+        bumpTranscriptRevision(currentSession.id)
         set((state) => ({
           messages: mergeIncomingMessage(state.messages, message),
           // A live update for the session on screen is proof it has content
@@ -784,31 +829,16 @@ export const useSessions = create<SessionsState>((set, get) => ({
       }
 
       case "message.part.updated": {
+        if (!isTranscriptActive(get().activeTranscriptSessionID, currentSession.id)) return
         const part = props.part as Part | undefined
         if (!part) return
-        // Not the open session: keep a parked transcript current (see
-        // message.updated above for why), then stop.
+        // See message.updated: parked transcript caches stay snapshots until
+        // their session is focused and reconciled.
         if (part.sessionID && part.sessionID !== currentSession.id) {
-          set((state) => {
-            const cached = getTranscript(state.transcriptCache, part.sessionID!)
-            if (!cached) return {}
-            const messageParts = cached.parts[part.messageID] || []
-            const exists = messageParts.some((p) => p.id === part.id)
-            return {
-              transcriptCache: putTranscript(state.transcriptCache, part.sessionID!, {
-                ...cached,
-                parts: {
-                  ...cached.parts,
-                  [part.messageID]: exists
-                    ? messageParts.map((p) => (p.id === part.id ? part : p))
-                    : [...messageParts, part],
-                },
-              }),
-            }
-          })
           return
         }
 
+        bumpTranscriptRevision(currentSession.id)
         set((state) => {
           const messageParts = state.parts[part.messageID] || []
           const exists = messageParts.some((p) => p.id === part.id)
@@ -828,8 +858,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
       }
 
       case "message.removed": {
+        if (!isTranscriptActive(get().activeTranscriptSessionID, currentSession.id)) return
         const messageID = props.messageID as string
         if (!messageID) return
+        bumpTranscriptRevision(currentSession.id)
         set((state) => ({
           messages: state.messages.filter((m) => m.id !== messageID),
           parts: Object.fromEntries(Object.entries(state.parts).filter(([k]) => k !== messageID)),
