@@ -507,7 +507,16 @@ export default function SessionsScreen() {
   const creatingInFlight = useRef(false)
   const [serverProjects, setServerProjects] = useState<Project[]>([])
 
-  const { sessions, isLoading, error, loadSessions, createSession, deleteSession } = useSessions()
+  // Subscribe only to list state. The global SSE stream also mutates the open
+  // transcript, cached transcripts, tools and previews; subscribing to the
+  // whole store made every streamed token rerender this entire screen after
+  // backing out of a busy session.
+  const sessions = useSessions((s) => s.sessions)
+  const isLoading = useSessions((s) => s.isLoading)
+  const error = useSessions((s) => s.error)
+  const loadSessions = useSessions((s) => s.loadSessions)
+  const createSession = useSessions((s) => s.createSession)
+  const deleteSession = useSessions((s) => s.deleteSession)
   const listSource = useSessions((s) => s.listSource)
   const listAsOf = useSessions((s) => s.listAsOf)
   const listLoadFailed = useSessions((s) => s.listLoadFailed)
