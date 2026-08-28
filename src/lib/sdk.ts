@@ -500,7 +500,7 @@ export function createClient(config: ClientConfig) {
           params,
         ),
 
-      get: (sessionID: string) => request<Session>(config, `/session/${sessionID}`),
+      get: (sessionID: string, signal?: AbortSignal) => request<Session>(config, `/session/${sessionID}`, { signal }),
 
       create: (params?: { title?: string }) =>
         request<Session>(config, "/session", {
@@ -516,11 +516,11 @@ export function createClient(config: ClientConfig) {
           body: JSON.stringify(params),
         }),
 
-      messages: (sessionID: string, params?: { limit?: number }) => {
+      messages: (sessionID: string, params?: { limit?: number }, signal?: AbortSignal) => {
         const query = new URLSearchParams()
         if (params?.limit) query.set("limit", String(params.limit))
         const qs = query.toString()
-        return request<MessageWithParts[]>(config, `/session/${sessionID}/message${qs ? `?${qs}` : ""}`)
+        return request<MessageWithParts[]>(config, `/session/${sessionID}/message${qs ? `?${qs}` : ""}`, { signal })
       },
 
       /**
@@ -538,6 +538,7 @@ export function createClient(config: ClientConfig) {
       messagesPage: async (
         sessionID: string,
         params: { limit: number; before?: string },
+        signal?: AbortSignal,
       ): Promise<{ items: MessageWithParts[]; nextCursor?: string }> => {
         const query = new URLSearchParams()
         query.set("limit", String(params.limit))
@@ -545,6 +546,7 @@ export function createClient(config: ClientConfig) {
         const { body, headers } = await requestWithHeaders<MessageWithParts[]>(
           config,
           `/session/${sessionID}/message?${query.toString()}`,
+          { signal },
         )
         return { items: body, nextCursor: nextCursorFrom(headers) }
       },
@@ -633,8 +635,8 @@ export function createClient(config: ClientConfig) {
     },
 
     permission: {
-      list: () =>
-        request<Array<{ id: string; sessionID: string; tool: string; input: unknown }>>(config, "/permission"),
+      list: (signal?: AbortSignal) =>
+        request<Array<{ id: string; sessionID: string; tool: string; input: unknown }>>(config, "/permission", { signal }),
 
       reply: (requestID: string, reply: "once" | "always" | "reject") =>
         request<boolean>(config, `/permission/${requestID}/reply`, {
@@ -644,7 +646,8 @@ export function createClient(config: ClientConfig) {
     },
 
     question: {
-      list: () => request<Array<{ id: string; sessionID: string; questions: unknown[] }>>(config, "/question"),
+      list: (signal?: AbortSignal) =>
+        request<Array<{ id: string; sessionID: string; questions: unknown[] }>>(config, "/question", { signal }),
 
       reply: (requestID: string, answers: string[][]) =>
         request<boolean>(config, `/question/${requestID}/reply`, {

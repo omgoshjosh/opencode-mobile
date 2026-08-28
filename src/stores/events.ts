@@ -121,9 +121,11 @@ const PROLONGED_DISCONNECT_MS = 30_000
 // Re-fetch pending permissions and questions from the server for a session.
 // Called when entering a session to recover from missed SSE events or failed
 // optimistic removals.
-export async function refreshPending(client: Client, sessionID: string) {
+export async function refreshPending(client: Client, sessionID: string, signal?: AbortSignal) {
+  if (signal?.aborted || useSessions.getState().currentSession?.id !== sessionID) return
   try {
-    const [perms, questions] = await Promise.all([client.permission.list(), client.question.list()])
+    const [perms, questions] = await Promise.all([client.permission.list(signal), client.question.list(signal)])
+    if (signal?.aborted || useSessions.getState().currentSession?.id !== sessionID) return
     const sessionPerms = (perms || []).filter((p: Record<string, unknown>) => p.sessionID === sessionID)
     const sessionQuestions = (questions || []).filter((q: Record<string, unknown>) => q.sessionID === sessionID)
     useEvents.setState((state) => ({
@@ -131,6 +133,7 @@ export async function refreshPending(client: Client, sessionID: string) {
       questions: { ...state.questions, [sessionID]: sessionQuestions as any },
     }))
   } catch (err) {
+    if (signal?.aborted) return
     console.warn("[Events] Failed to refresh pending:", err)
   }
 }

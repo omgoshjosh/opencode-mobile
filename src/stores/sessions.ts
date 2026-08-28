@@ -122,7 +122,7 @@ interface SessionsState {
   // Actions
   loadSessions: (options?: { rootsOnly?: boolean }) => Promise<void>
   loadLastViewed: () => Promise<void>
-  selectSession: (sessionID: string, directory?: string) => Promise<void>
+  selectSession: (sessionID: string, directory?: string, signal?: AbortSignal) => Promise<void>
   loadOlderMessages: () => Promise<void>
   createSession: (title?: string) => Promise<Session | null>
   deleteSession: (sessionID: string) => Promise<void>
@@ -134,7 +134,7 @@ interface SessionsState {
     variant?: string,
   ) => Promise<void>
   abortSession: () => Promise<void>
-  refreshMessages: () => Promise<void>
+  refreshMessages: (signal?: AbortSignal) => Promise<void>
 
   // Revert (edit sent message) / unrevert (undo the pending revert)
   revertToMessage: (messageID: string) => Promise<RevertResult>
@@ -167,6 +167,7 @@ let listLoadSeq = 0
 // overwrite the messages/currentSession of a newer selection. Each call takes
 // the next value and only commits its result if still the latest.
 let selectSeq = 0
+let selectController: AbortController | null = null
 
 // Get the right client for a session's directory
 function clientFor(directory?: string): Client | null {
@@ -298,7 +299,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
     }
   },
 
-  selectSession: async (sessionID, directory) => {
+  selectSession: async (sessionID, directory, signal) => {
     // Use directory-specific client if the session belongs to a different project
     const connState = useConnections.getState()
     const client = directory ? connState.clientForDirectory(directory) : connState.client
@@ -308,6 +309,12 @@ export const useSessions = create<SessionsState>((set, get) => ({
     }
 
     const seq = ++selectSeq
+    selectController?.abort()
+    const currentController = new AbortController()
+    selectController = currentController
+    const onAbort = () => currentController.abort()
+    signal?.addEventListener("abort", onAbort)
+    if (signal?.aborted) currentController.abort()
     addBreadcrumb({ category: "session", message: "select", data: { sessionID, hasDirectory: Boolean(directory) } })
     // Re-selecting the session already shown on screen (e.g. #121's
     // useFocusEffect resync firing again on re-entry) is a background
@@ -353,13 +360,13 @@ export const useSessions = create<SessionsState>((set, get) => ({
       }))
 
       const [session, page] = await Promise.all([
-        client.session.get(sessionID),
-        client.session.messagesPage(sessionID, { limit: pageSize() }),
+        client.session.get(sessionID, currentController.signal),
+        client.session.messagesPage(sessionID, { limit: pageSize() }, currentController.signal),
       ])
 
       // A newer selectSession started while we were fetching — discard this
       // stale result so it can't clobber the newer selection.
-      if (seq !== selectSeq) return
+      if (seq !== selectSeq || currentController.signal.aborted) return
 
       // Parse the API response format: array of { info, parts }
       const { messages, parts } = parseMessages(page.items)
@@ -410,9 +417,12 @@ export const useSessions = create<SessionsState>((set, get) => ({
         hasMore: Boolean(page.nextCursor),
       }))
     } catch (err) {
-      if (seq !== selectSeq) return
+      if (seq !== selectSeq || currentController.signal.aborted) return
       console.error("Failed to load session:", err)
       set({ error: "Failed to load session", isLoading: false })
+    } finally {
+      signal?.removeEventListener("abort", onAbort)
+      if (selectController === currentController) selectController = null
     }
   },
 
@@ -630,10 +640,11 @@ export const useSessions = create<SessionsState>((set, get) => ({
     }
   },
 
-  refreshMessages: async () => {
+  refreshMessages: async (signal) => {
     const client = clientFor(get().currentSession?.directory)
     const session = get().currentSession
     if (!client || !session) return
+    const seq = selectSeq
 
     try {
       // Refresh exactly the window the user is looking at, not the whole
@@ -642,12 +653,14 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // without letting a long session reopen that hole.
       const response = await client.session.messages(session.id, {
         limit: refreshWindowSize(get().messages.length, pageSize()),
-      })
+      }, signal)
+      if (signal?.aborted || seq !== selectSeq || get().currentSession?.id !== session.id) return
       const { messages, parts } = parseMessages(response)
       // Keep optimistic messages the server hasn't acknowledged — otherwise a
       // refresh triggered by a failed send deletes the text the user typed.
       set((state) => ({ messages: mergePendingMessages(messages, state.messages), parts: { ...state.parts, ...parts } }))
     } catch (error) {
+      if (signal?.aborted || seq !== selectSeq || get().currentSession?.id !== session.id) return
       set({ error: "Failed to refresh messages" })
     }
   },
