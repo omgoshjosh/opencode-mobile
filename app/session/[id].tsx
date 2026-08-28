@@ -347,7 +347,7 @@ export default function SessionScreen() {
   const persistDraft = useCallback(() => {
     if (!id) return
     const text = inputRef.current
-    if (!shouldPersistFocusedDraft(draftFocusedRef.current, draftRestoredRef.current, savedDraftRef.current[id], text)) return
+    if (!shouldPersistFocusedDraft(draftFocusedRef.current, draftRestoredRef.current, draftTouchedRef.current, savedDraftRef.current[id], text)) return
     saveDraft(id, text)
     savedDraftRef.current[id] = text
   }, [id, saveDraft])
