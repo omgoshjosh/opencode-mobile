@@ -1,10 +1,11 @@
-import { useMemo, useRef } from "react"
+import { useCallback, useMemo, useRef } from "react"
 import { View, Text, ScrollView, StyleSheet, useColorScheme } from "react-native"
-import { Stack, useLocalSearchParams } from "expo-router"
+import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useSessions } from "../../src/stores/sessions"
 import { ToolCallCard } from "../../src/components/chat"
 import { summarizeToolRun } from "../../src/lib/tool-titles"
+import { ownsToolRunTranscript } from "../../src/lib/tool-run-ownership"
 
 /**
  * All tool calls of one message, as their own screen.
@@ -20,26 +21,56 @@ import { summarizeToolRun } from "../../src/lib/tool-titles"
  * updates here in real time.
  */
 export default function ToolRunScreen() {
-  const { messageID, focus } = useLocalSearchParams<{ messageID: string; focus?: string }>()
+  const { messageID, focus, sessionID, directory } = useLocalSearchParams<{
+    messageID: string
+    focus?: string
+    sessionID?: string
+    directory?: string
+  }>()
   const isDark = useColorScheme() === "dark"
   const insets = useSafeAreaInsets()
   const scrollRef = useRef<ScrollView>(null)
   const didScroll = useRef(false)
 
-  const parts = useSessions((s) => (messageID ? s.parts[messageID] : undefined))
+  const currentSessionID = useSessions((s) => s.currentSession?.id)
+  const selectSession = useSessions((s) => s.selectSession)
+  const setTranscriptActive = useSessions((s) => s.setTranscriptActive)
+  const refreshMessages = useSessions((s) => s.refreshMessages)
+  const ownsTranscript = ownsToolRunTranscript(sessionID, currentSessionID)
+  const parts = useSessions((s) => (ownsTranscript && messageID ? s.parts[messageID] : undefined))
   const toolParts = useMemo(() => (parts ?? []).filter((p) => p.type === "tool"), [parts])
   const summary = useMemo(() => summarizeToolRun(toolParts), [toolParts])
   // For calls whose state carries no start time: the owning message's
   // created time is the honest approximation.
   const messageCreated = useSessions(
-    (s) => s.messages.find((m) => m.id === messageID)?.time?.created,
+    (s) => (ownsTranscript ? s.messages.find((m) => m.id === messageID)?.time?.created : undefined),
+  )
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!sessionID) return
+      const controller = new AbortController()
+      selectSession(sessionID, directory, controller.signal).then((selected) => {
+        if (controller.signal.aborted) return
+        const isVisibleCache = useSessions.getState().currentSession?.id === sessionID
+        if (!selected && !isVisibleCache) return
+        setTranscriptActive(sessionID, true)
+        void refreshMessages(controller.signal)
+      })
+      return () => {
+        setTranscriptActive(sessionID, false)
+        controller.abort()
+      }
+    }, [sessionID, directory, selectSession, setTranscriptActive, refreshMessages]),
   )
 
   return (
     <>
       <Stack.Screen
         options={{
-          title: `${summary.count} tool ${summary.count === 1 ? "call" : "calls"}${summary.failed ? ` · ${summary.failed} failed` : ""}`,
+          title: ownsTranscript
+            ? `${summary.count} tool ${summary.count === 1 ? "call" : "calls"}${summary.failed ? ` · ${summary.failed} failed` : ""}`
+            : "Tool calls",
         }}
       />
       <ScrollView
@@ -47,7 +78,7 @@ export default function ToolRunScreen() {
         style={[s.container, isDark && s.containerDark]}
         contentContainerStyle={{ padding: 12, paddingBottom: insets.bottom + 24, gap: 4 }}
       >
-        {toolParts.length === 0 ? (
+        {!ownsTranscript || toolParts.length === 0 ? (
           <Text style={[s.empty, isDark && s.emptyDark]}>
             This message's tool calls are no longer loaded. Go back and reopen the session.
           </Text>

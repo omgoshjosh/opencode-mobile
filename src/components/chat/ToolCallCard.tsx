@@ -685,10 +685,11 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded, fallbackStartTim
   const taskInput = tool.tool === "task" ? (tool.state?.input as Record<string, unknown> | undefined) : undefined
   const hasExplicitName =
     typeof taskInput?.description === "string" || typeof taskInput?.summary === "string"
+  const derivedTitle = toolCallTitle(tool)
   const cardTitle =
-    tool.tool === "task" && !hasExplicitName && spawnedTitle?.trim()
+    tool.tool === "task" && !hasExplicitName && derivedTitle === "task" && spawnedTitle?.trim()
       ? spawnedTitle
-      : toolCallTitle(tool)
+      : derivedTitle
   const status = tool.state?.status || "pending"
   const color = statusColor(status)
   const error = tool.state?.error?.message

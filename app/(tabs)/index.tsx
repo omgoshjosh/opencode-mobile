@@ -160,8 +160,6 @@ const SessionItem = memo(function SessionItem({
       ? modelDisplayLabel(providers, { providerID: session.model.providerID, modelID: session.model.id })
       : null
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
-  // Enriched-status fields (server contract, optional): when the server says
-  // when this session last did anything, trust it over time.updated.
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
@@ -243,7 +241,7 @@ const SessionItem = memo(function SessionItem({
                 {/* Stuck-vs-working at the glance layer — see the V2 twin. */}
                 {attention === "busy" &&
                   (() => {
-                    const quiet = quietLabel({ lastTextAt: busyMeta?.lastActivityAt ?? session.time.updated, hasRunningTool: Boolean(busyMeta?.runningTool), now })
+                    const quiet = quietLabel({ lastTextAt: busyMeta?.lastActivityAt, hasRunningTool: Boolean(busyMeta?.runningTool), now })
                     return quiet ? ` · ${quiet}` : ""
                   })()}
               </Text>
@@ -286,8 +284,6 @@ const SessionRowV2 = memo(function SessionRowV2({
   const providers = useCatalog((c) => c.providers)
   const preview = useSessions((s) => s.previews[session.id]?.text)
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
-  // Enriched-status fields (server contract, optional): when the server says
-  // when this session last did anything, trust it over time.updated.
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
@@ -351,13 +347,10 @@ const SessionRowV2 = memo(function SessionRowV2({
         {dot.label && <Text style={[styles.rowV2StateLabel, { color: dot.color }]}>{dot.label}</Text>}
         <Text style={[styles.rowV2Time, isDark && styles.metaDark]}>
           {formatTime(session.time.updated, t)}
-          {/* Stuck-vs-working, farm-wide: a busy row that hasn't produced
-              anything says for how long ("· quiet 18m"). time.updated is the
-              only per-session activity signal available for EVERY row; the
-              precise per-tool version lives in the transcript's quiet hint. */}
+          {/* Busy lifecycle metadata is the only evidence for a quiet claim. */}
           {attention === "busy" &&
             (() => {
-              const quiet = quietLabel({ lastTextAt: busyMeta?.lastActivityAt ?? session.time.updated, hasRunningTool: Boolean(busyMeta?.runningTool), now })
+              const quiet = quietLabel({ lastTextAt: busyMeta?.lastActivityAt, hasRunningTool: Boolean(busyMeta?.runningTool), now })
               return quiet ? ` · ${quiet}` : ""
             })()}
         </Text>

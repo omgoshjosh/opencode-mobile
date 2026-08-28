@@ -1103,6 +1103,8 @@ export default function SessionScreen() {
                 <MessageBubble
                   message={item.message}
                   parts={item.parts}
+                  sessionID={id}
+                  directory={directory}
                   isDark={isDark}
                   onLongPress={handleMessageLongPress}
                   awaitingTurn={awaitingTurn({

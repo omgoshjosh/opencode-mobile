@@ -17,9 +17,10 @@ export function StatusIndicator({ sessionID, isDark, hasRunningTool }: Props) {
   const status = useEvents((s) => s.sessionStatus[sessionID])
   const text = useEvents((s) => s.statusText[sessionID])
   const optimistic = useSessions((s) => s.sending[sessionID])
-  // Last text delta seen for this session — the previews harvest already
-  // tracks exactly this, so silence costs no new bookkeeping.
-  const lastTextAt = useSessions((s) => s.previews[sessionID]?.at)
+  const lastActivityAt = useEvents((s) => {
+    const status = s.sessionStatus[sessionID]
+    return status?.type === "busy" ? status.lastActivityAt : undefined
+  })
 
   // SSE status is the source of truth. The optimistic `sending` flag only
   // covers the gap between the user tapping send and SSE confirming busy.
@@ -43,7 +44,7 @@ export function StatusIndicator({ sessionID, isDark, hasRunningTool }: Props) {
   // "Working…" that has gone silent is the stuck-vs-thinking question — the
   // server can hold a run open with nothing in it (observed live: 25 quiet
   // minutes of busy). Name the silence so a nudge is an informed decision.
-  const quiet = quietLabel({ lastTextAt, hasRunningTool: Boolean(hasRunningTool), now })
+  const quiet = quietLabel({ lastTextAt: lastActivityAt, hasRunningTool: Boolean(hasRunningTool), now })
 
   return (
     <View style={[s.bar, isDark && s.barDark]}>

@@ -23,6 +23,26 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined
 }
 
+function capVisible(value: string, max = 60): string {
+  const chars = Array.from(value)
+  if (chars.length <= max) return value
+  return `${chars.slice(0, max - 1).join("").trimEnd()}…`
+}
+
+function delegationPromptLine(prompt: string, instructions: unknown): string | undefined {
+  const skipped = new Set(
+    typeof instructions === "string"
+      ? instructions.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+      : [],
+  )
+  for (const raw of prompt.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || line.startsWith("HIGHEST-PRIORITY HARD RULE") || skipped.has(line)) continue
+    return line.replace(/\s+/gu, " ")
+  }
+  return undefined
+}
+
 function basename(path: string): string {
   const parts = path.split("/").filter(Boolean)
   return parts[parts.length - 1] ?? path
@@ -118,15 +138,21 @@ export function toolCallTitle(part: ToolLike): string {
       break
     }
     case "task": {
-      // The swarm dispatch path sends no description — the card sat on the
-      // bare floor ("task") for a 46-minute run while every OTHER surface
-      // showed the spawned session's real name. The session-title lookup
-      // needs the store, so it lives in ToolCallCard (taskTitleFrom below
-      // ranks what THIS pure layer can know).
-      const description = str(input?.description) ?? str(input?.summary)
-      if (description) return description
-      const prompt = str(input?.prompt)
-      if (prompt) return firstLine(prompt)
+      // Native tasks and swarm delegations share the normalized tool name.
+      // Discriminate by input shape; never infer a role from prompt prose.
+      if (input && ("subagent_type" in input || "description" in input)) {
+        const agent = str(input.subagent_type) ?? "general"
+        const description = str(input.description) ?? "subagent"
+        return `Task ${agent}: ${description}`
+      }
+      const role = str(input?.role)
+      if (role) {
+        const prompt = str(input?.prompt)
+        const line = prompt ? delegationPromptLine(prompt, input?.instructions) : undefined
+        return capVisible(`Task ${role}: ${line ?? "delegation"}`)
+      }
+      const summary = str(input?.summary)
+      if (summary) return summary
       break
     }
     case "todowrite":

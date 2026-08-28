@@ -52,8 +52,61 @@ test("a malformed URL falls back to the raw text rather than throwing", () => {
   assert.match(toolCallTitle({ tool: "webfetch", state: { input: { url: "not a url" } } }), /webfetch/)
 })
 
-test("task calls are titled by their description", () => {
-  assert.equal(toolCallTitle({ tool: "task", state: { input: { description: "Review sync rework" } } }), "Review sync rework")
+test("native task calls are titled by their agent and description", () => {
+  assert.equal(
+    toolCallTitle({ tool: "task", state: { input: { subagent_type: "review", description: "Review sync rework" } } }),
+    "Task review: Review sync rework",
+  )
+})
+
+test("canonical server task titles beat every client heuristic", () => {
+  assert.equal(
+    toolCallTitle({ tool: "task", state: { title: "Canonical delegation", input: { role: "QA", prompt: "Ignore" } } }),
+    "Canonical delegation",
+  )
+})
+
+test("a task placeholder falls through to the delegation title", () => {
+  assert.equal(
+    toolCallTitle({ tool: "task", state: { title: "task", input: { role: "QA", prompt: "Verify navigation" } } }),
+    "Task QA: Verify navigation",
+  )
+})
+
+test("native task shape wins over swarm fields", () => {
+  assert.equal(
+    toolCallTitle({
+      tool: "task",
+      state: { input: { subagent_type: "qa", description: "Run tests", role: "Reviewer", prompt: "Ignore" } },
+    }),
+    "Task qa: Run tests",
+  )
+})
+
+test("swarm delegation skips instruction boilerplate and keeps its role", () => {
+  assert.equal(
+    toolCallTitle({
+      tool: "task",
+      state: {
+        input: {
+          role: "Goomba - QA",
+          instructions: "Inspect only\nDo not edit",
+          prompt: "HIGHEST-PRIORITY HARD RULE: Be concise\nInspect only\nDo not edit\n  Verify   back navigation ",
+        },
+      },
+    }),
+    "Task Goomba - QA: Verify back navigation",
+  )
+})
+
+test("swarm delegation falls back honestly and caps Unicode titles", () => {
+  assert.equal(
+    toolCallTitle({ tool: "task", state: { input: { role: "QA", prompt: "HIGHEST-PRIORITY HARD RULE only" } } }),
+    "Task QA: delegation",
+  )
+  const title = toolCallTitle({ tool: "task", state: { input: { role: "x", prompt: "😀".repeat(80) } } })
+  assert.equal(Array.from(title).length, 60)
+  assert.equal(title.endsWith("…"), true)
 })
 
 test("the bare tool name is the floor, never empty", () => {
@@ -127,13 +180,10 @@ test("bash titles use the stripped intent", () => {
 
 // --- task fallbacks ---
 
-test("task falls back description -> summary -> prompt first line", () => {
-  assert.equal(toolCallTitle({ tool: "task", state: { input: { description: "Fix drain races" } } }), "Fix drain races")
+test("task falls back from known shapes to summary and then the tool floor", () => {
+  assert.equal(toolCallTitle({ tool: "task", state: { input: { description: "Fix drain races" } } }), "Task general: Fix drain races")
   assert.equal(toolCallTitle({ tool: "task", state: { input: { summary: "QA pass" } } }), "QA pass")
-  assert.equal(
-    toolCallTitle({ tool: "task", state: { input: { prompt: "Review the uncommitted diff\nlots more" } } }),
-    "Review the uncommitted diff",
-  )
+  assert.equal(toolCallTitle({ tool: "task", state: { input: { prompt: "No role to infer" } } }), "task")
   assert.equal(toolCallTitle({ tool: "task", state: { input: {} } }), "task")
 })
 

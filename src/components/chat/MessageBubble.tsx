@@ -19,6 +19,7 @@ import { deviceUses24hClock } from "../../lib/device-clock"
 import { useSessions } from "../../stores/sessions"
 import { useSettings } from "../../stores/settings"
 import { messageNoticeText } from "../../lib/transcript-visibility"
+import { messageUsage } from "../../lib/message-usage"
 
 const SCREEN_WIDTH = Dimensions.get("window").width
 
@@ -29,6 +30,8 @@ function isImageMime(mime?: string): boolean {
 interface Props {
   message: Message
   parts: Part[]
+  sessionID?: string
+  directory?: string
   isDark: boolean
   // Long-press opens the message action sheet. For user messages that sheet
   // offers "Edit message" / revert; for both roles it offers copy and
@@ -46,7 +49,7 @@ interface Props {
 // TODO: Replace with streamdown-rn once React 19 types PR lands - it has
 // built-in block-level memoization that eliminates re-renders for stable blocks
 export const MessageBubble = memo(
-  function MessageBubble({ message, parts, isDark, onLongPress, awaitingTurn }: Props) {
+  function MessageBubble({ message, parts, sessionID, directory, isDark, onLongPress, awaitingTurn }: Props) {
     const isUser = message.role === "user"
 
     // Resolve display names from the provider catalog so a swarm shows its
@@ -88,6 +91,7 @@ export const MessageBubble = memo(
     const segments = segmentParts(parts)
     const [showBriefing, setShowBriefing] = useState(false)
     const reasoning = reasoningParts.map((p) => p.text).join("\n") || ""
+    const usage = messageUsage(message.tokens, message.cost)
     // Explicit error, or the synthesized missing-response notice for
     // finalized-empty messages — see src/lib/transcript-visibility.ts.
     const error = messageNoticeText(message, parts)
@@ -201,7 +205,7 @@ export const MessageBubble = memo(
                       onPress={() =>
                         router.push({
                           pathname: "/tool-run/[messageID]",
-                          params: { messageID: message.id, focus: segment.tools[0].id },
+                          params: { messageID: message.id, focus: segment.tools[0].id, sessionID, directory },
                         })
                       }
                       activeOpacity={0.7}
@@ -260,12 +264,7 @@ export const MessageBubble = memo(
         )}
 
         {/* Tokens/cost for assistant messages */}
-        {!isUser && message.tokens && (
-          <Text style={[s.tokens, isDark && s.tokensDark]}>
-            {message.tokens.input + message.tokens.output} tokens
-            {message.cost ? ` · $${message.cost.toFixed(4)}` : ""}
-          </Text>
-        )}
+        {!isUser && usage && <Text style={[s.tokens, isDark && s.tokensDark]}>{usage}</Text>}
       </TouchableOpacity>
     )
   },
@@ -278,6 +277,8 @@ export const MessageBubble = memo(
     // unchanged (completed) messages during other messages' streaming.
     if (prev.message !== next.message) return false
     if (prev.isDark !== next.isDark) return false
+    if (prev.sessionID !== next.sessionID) return false
+    if (prev.directory !== next.directory) return false
     if (prev.onLongPress !== next.onLongPress) return false
     if (prev.parts.length !== next.parts.length) return false
     for (let i = 0; i < prev.parts.length; i++) {

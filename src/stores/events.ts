@@ -11,6 +11,7 @@ import { recordSuccessfulSession } from "../lib/store-review"
 import { isAuthError } from "../lib/api-error"
 import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
+import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Last-known statuses, persisted eagerly so the sessions list renders real
@@ -31,21 +32,6 @@ export async function restoreStatusCache() {
 import { isHealthy, shouldReconnectOnResume, shouldResetRetries, type TransportState } from "../lib/sse-liveness"
 import { RECONCILE_MESSAGE_LIMIT } from "../lib/message-page"
 import type { Client, Part, Session, Message } from "../lib/sdk"
-
-// Session status from the server
-type SessionStatus =
-  | { type: "idle" }
-  // since/lastActivityAt/runningTool are the enriched-status contract
-  // requested from the server team (2026-08-24): optional, read defensively,
-  // inert until their build ships. When present they replace client-side
-  // inference (session.time.updated) for stuck-vs-working labels.
-  | {
-      type: "busy"
-      since?: number
-      lastActivityAt?: number
-      runningTool?: { title?: string; startedAt?: number }
-    }
-  | { type: "retry"; attempt: number; message: string }
 
 interface EventsState {
   /**
@@ -368,8 +354,9 @@ export const useEvents = create<EventsState>((set, get) => ({
                 useSessions.getState().clearRunningTools(sessionID)
               }
 
+              const next = nextSessionStatus(previous, status, Date.now())
               set((state) => ({
-                sessionStatus: { ...state.sessionStatus, [sessionID]: status },
+                sessionStatus: { ...state.sessionStatus, [sessionID]: next },
                 // Clear status text when idle
                 statusText: status.type === "idle" ? { ...state.statusText, [sessionID]: "" } : state.statusText,
               }))
@@ -432,9 +419,14 @@ export const useEvents = create<EventsState>((set, get) => ({
               // Update status text from the latest part
               const sessionID = (part as any).sessionID as string
               if (sessionID) {
-                set((state) => ({
-                  statusText: { ...state.statusText, [sessionID]: statusFromPart(part) },
-                }))
+                set((state) => {
+                  const previous = state.sessionStatus[sessionID]
+                  const next = part.type === "text" ? noteTextActivity(previous, Date.now()) : previous
+                  return {
+                    statusText: { ...state.statusText, [sessionID]: statusFromPart(part) },
+                    sessionStatus: next === previous ? state.sessionStatus : { ...state.sessionStatus, [sessionID]: next! },
+                  }
+                })
               }
 
               useSessions.getState().handleEvent({ type, properties: { part } } as any)
