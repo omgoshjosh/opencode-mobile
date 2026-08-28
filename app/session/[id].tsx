@@ -489,13 +489,16 @@ export default function SessionScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!id) return
-      selectSession(id, directory).then(() => {
+      const controller = new AbortController()
+      selectSession(id, directory, controller.signal).then((selected) => {
+        if (!selected || controller.signal.aborted) return
         // Re-fetch pending permissions/questions from the server to recover from
         // missed SSE events or failed optimistic removals
         const connState = useConnections.getState()
         const c = directory ? (connState.clientForDirectory(directory) ?? connState.client) : connState.client
-        if (c) refreshPending(c, id)
+        if (c) refreshPending(c, id, controller.signal)
       })
+      return () => controller.abort()
     }, [id, directory]),
   )
 

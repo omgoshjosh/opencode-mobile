@@ -16,6 +16,7 @@ import { serializeSnapshot, parseSnapshot } from "../lib/list-freshness"
 import { trackToolPart, clearSessionTools, type RunningToolMap } from "../lib/running-tools"
 import { trackWakePart, type PendingWakeMap } from "../lib/pending-wakes"
 import { toolCallTitle } from "../lib/tool-titles"
+import { createFocusReadCoordinator } from "../lib/focus-read"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Helper to convert API response to our internal format
@@ -122,7 +123,7 @@ interface SessionsState {
   // Actions
   loadSessions: (options?: { rootsOnly?: boolean }) => Promise<void>
   loadLastViewed: () => Promise<void>
-  selectSession: (sessionID: string, directory?: string, signal?: AbortSignal) => Promise<void>
+  selectSession: (sessionID: string, directory?: string, signal?: AbortSignal) => Promise<boolean>
   loadOlderMessages: () => Promise<void>
   createSession: (title?: string) => Promise<Session | null>
   deleteSession: (sessionID: string) => Promise<void>
@@ -167,13 +168,7 @@ let listLoadSeq = 0
 // overwrite the messages/currentSession of a newer selection. Each call takes
 // the next value and only commits its result if still the latest.
 let selectSeq = 0
-let selectController: AbortController | null = null
-let latestSelectionID: string | null = null
-const abortedFocusSelections = new Set<string>()
-
-export function wasFocusSelectionAborted(sessionID: string): boolean {
-  return abortedFocusSelections.has(sessionID)
-}
+const focusReads = createFocusReadCoordinator()
 
 // Get the right client for a session's directory
 function clientFor(directory?: string): Client | null {
@@ -311,18 +306,12 @@ export const useSessions = create<SessionsState>((set, get) => ({
     const client = directory ? connState.clientForDirectory(directory) : connState.client
     if (!client) {
       set({ error: "No active connection" })
-      return
+      return false
     }
 
     const seq = ++selectSeq
-    latestSelectionID = sessionID
-    abortedFocusSelections.delete(sessionID)
-    selectController?.abort()
-    const currentController = new AbortController()
-    selectController = currentController
-    const onAbort = () => currentController.abort()
-    signal?.addEventListener("abort", onAbort)
-    if (signal?.aborted) currentController.abort()
+    const read = focusReads.begin(signal)
+    if (!read.isCurrent()) return false
     addBreadcrumb({ category: "session", message: "select", data: { sessionID, hasDirectory: Boolean(directory) } })
     // Re-selecting the session already shown on screen (e.g. #121's
     // useFocusEffect resync firing again on re-entry) is a background
@@ -368,13 +357,13 @@ export const useSessions = create<SessionsState>((set, get) => ({
       }))
 
       const [session, page] = await Promise.all([
-        client.session.get(sessionID, currentController.signal),
-        client.session.messagesPage(sessionID, { limit: pageSize() }, currentController.signal),
+        client.session.get(sessionID, read.signal),
+        client.session.messagesPage(sessionID, { limit: pageSize() }, read.signal),
       ])
 
       // A newer selectSession started while we were fetching — discard this
       // stale result so it can't clobber the newer selection.
-      if (seq !== selectSeq || currentController.signal.aborted) return
+      if (seq !== selectSeq || !read.isCurrent()) return false
 
       // Parse the API response format: array of { info, parts }
       const { messages, parts } = parseMessages(page.items)
@@ -424,16 +413,14 @@ export const useSessions = create<SessionsState>((set, get) => ({
         nextCursor: page.nextCursor,
         hasMore: Boolean(page.nextCursor),
       }))
+      return true
     } catch (err) {
-      if (seq !== selectSeq || currentController.signal.aborted) {
-        if (seq === selectSeq || latestSelectionID !== sessionID) abortedFocusSelections.add(sessionID)
-        return
-      }
+      if (seq !== selectSeq || !read.isCurrent()) return false
       console.error("Failed to load session:", err)
       set({ error: "Failed to load session", isLoading: false })
+      return false
     } finally {
-      signal?.removeEventListener("abort", onAbort)
-      if (selectController === currentController) selectController = null
+      read.dispose()
     }
   },
 

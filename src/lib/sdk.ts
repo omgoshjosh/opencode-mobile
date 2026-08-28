@@ -12,6 +12,7 @@ import { apiErrorFor } from "./api-error"
 import { loadSessionList } from "./session-list"
 import { LIVENESS_TIMEOUT_MS } from "./sse-liveness"
 import { nextCursorFrom } from "./message-page"
+import { requestSignal } from "./request-signal"
 import type { FileRoot } from "./file-roots"
 import type { RoleInput as SwarmRoleInput, Swarm as SwarmInfo } from "./swarm-crud"
 
@@ -309,32 +310,21 @@ export function setLatencyReporter(fn: ((ms: number) => void) | null) {
 }
 
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
-  const parentSignal = options.signal
-  if (parentSignal?.aborted) throw new Error("Request aborted")
-
-  const controller = new AbortController()
-  let timedOut = false
-  const timeout = setTimeout(() => {
-    timedOut = true
-    controller.abort()
-  }, timeoutMs)
-  const onParentAbort = () => controller.abort()
-  parentSignal?.addEventListener("abort", onParentAbort)
+  const request = requestSignal(options.signal ?? undefined, timeoutMs)
 
   const startedAt = Date.now()
   try {
-    const response = await fetch(url, { ...options, signal: controller.signal })
+    const response = await fetch(url, { ...options, signal: request.signal })
     latencyReporter?.(Date.now() - startedAt)
     return response
   } catch (error) {
-    if (timedOut) {
+    if (request.timedOut()) {
       latencyReporter?.(Date.now() - startedAt)
       throw new Error(`Request timed out after ${timeoutMs}ms`)
     }
     throw error
   } finally {
-    clearTimeout(timeout)
-    parentSignal?.removeEventListener("abort", onParentAbort)
+    request.dispose()
   }
 }
 
