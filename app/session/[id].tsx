@@ -51,6 +51,7 @@ import { inferBusyFromMessages } from "../../src/lib/session-status-reconcile"
 import { slashPopoverQuery } from "../../src/lib/slash-trigger"
 import { summarizeModel } from "../../src/lib/summarize-model"
 import { awaitingTurn, inFlightUserCreatedAt } from "../../src/lib/message-delivery"
+import { shouldPersistFocusedDraft } from "../../src/lib/draft-lifecycle"
 import { TitlePeek } from "../../src/components/chat/TitlePeek"
 import { visibleTranscriptEntry } from "../../src/lib/transcript-visibility"
 import { useSessions } from "../../src/stores/sessions"
@@ -118,20 +119,28 @@ export default function SessionScreen() {
   // showing a stable snapshot even if the message streams or is reverted.
   const [selectableText, setSelectableText] = useState<string | null>(null)
 
-  const {
-    currentSession,
-    messages,
-    parts,
-    isLoading,
-    loadingMore,
-    hasMore,
-    selectSession,
-    sendMessage,
-    abortSession,
-    loadOlderMessages,
-    revertToMessage,
-    unrevertSession,
-  } = useSessions()
+  // Subscribe to only the transcript and controls this route renders. The
+  // global store also carries farm-wide list/preview state that changes for
+  // other sessions while this screen is stacked underneath another route.
+  const currentSession = useSessions((state) => state.currentSession)
+  const messages = useSessions((state) => state.messages)
+  const parts = useSessions((state) => state.parts)
+  const isLoading = useSessions((state) => state.isLoading)
+  const loadingMore = useSessions((state) => state.loadingMore)
+  const hasMore = useSessions((state) => state.hasMore)
+  const selectSession = useSessions((state) => state.selectSession)
+  const sendMessage = useSessions((state) => state.sendMessage)
+  const abortSession = useSessions((state) => state.abortSession)
+  const loadOlderMessages = useSessions((state) => state.loadOlderMessages)
+  const revertToMessage = useSessions((state) => state.revertToMessage)
+  const unrevertSession = useSessions((state) => state.unrevertSession)
+  const parentSession = useSessions((state) => {
+    const parentID = state.currentSession?.parentID?.trim()
+    return parentID ? state.sessions.find((session) => session.id === parentID) : undefined
+  })
+  const loadDrafts = useDrafts((state) => state.load)
+  const saveDraft = useDrafts((state) => state.save)
+  const clearDraft = useDrafts((state) => state.clear)
 
   // Derive sending state for this specific session
   const isSending = useSessions((s) => !!(currentSession && s.sending[currentSession.id]))
@@ -223,8 +232,10 @@ export default function SessionScreen() {
 
   const shortDir = getShortDir(currentSession?.directory)
   // Non-null only inside a subagent session — see src/lib/session-breadcrumb.ts.
-  const sessionList = useSessions((st) => st.sessions)
-  const breadcrumb = useMemo(() => breadcrumbFor(currentSession, sessionList), [currentSession?.parentID, sessionList])
+  const breadcrumb = useMemo(
+    () => breadcrumbFor(currentSession, parentSession ? [parentSession] : []),
+    [currentSession?.parentID, parentSession?.id, parentSession?.title],
+  )
   const [showScrollButton, setShowScrollButton] = useState(false)
   // Send re-entrancy: ref blocks same-frame double-taps (state lags a
   // render); state drives the button's instant pending dim.
@@ -328,37 +339,46 @@ export default function SessionScreen() {
   // keystrokes for MessageBubble's custom memo comparator.
   const inputRef = useRef(input)
   inputRef.current = input
+  const savedDraftRef = useRef<Record<string, string>>({})
+  const draftFocusedRef = useRef(false)
+  const draftRestoredRef = useRef(false)
 
-  // Per-session composer drafts. Order matters against leakage: CLEAR first,
-  // then restore this session's own draft — the previous session's half-typed
-  // text must never render under a different session's transcript. The
-  // cleanup saves the outgoing session's text before the id changes; blur and
-  // keyboard-hide (below, on the TextInput) cover backgrounding mid-type.
-  useEffect(() => {
+  const persistDraft = useCallback(() => {
     if (!id) return
-    setInput("")
-    useDrafts
-      .getState()
-      .load()
-      .then(() => {
-        const draft = useDrafts.getState().drafts[id]
-        if (draft?.text) setInput(draft.text)
-      })
-    return () => {
-      useDrafts.getState().save(id, inputRef.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id])
+    const text = inputRef.current
+    if (!shouldPersistFocusedDraft(draftFocusedRef.current, draftRestoredRef.current, savedDraftRef.current[id], text)) return
+    saveDraft(id, text)
+    savedDraftRef.current[id] = text
+  }, [id, saveDraft])
 
-  // Closing the keyboard is the strongest "I'm stepping away mid-type"
-  // signal on a phone — save there too, not just on blur (multiline inputs
-  // don't always blur when the keyboard dismisses).
-  useEffect(() => {
-    const sub = Keyboard.addListener("keyboardDidHide", () => {
-      if (id) useDrafts.getState().save(id, inputRef.current)
-    })
-    return () => sub.remove()
-  }, [id])
+  // Native-stack routes remain mounted while another session is pushed above
+  // them. Focus owns draft restoration, persistence, and keyboard handling so
+  // an inactive composer cannot save in response to the active route's event.
+  useFocusEffect(
+    useCallback(() => {
+      if (!id) return
+      let focused = true
+      draftFocusedRef.current = true
+      draftRestoredRef.current = false
+      setInput("")
+      loadDrafts().then(() => {
+        if (!focused) return
+        const text = useDrafts.getState().drafts[id]?.text ?? ""
+        inputRef.current = text
+        savedDraftRef.current[id] = text
+        draftRestoredRef.current = true
+        setInput(text)
+      })
+      const sub = Keyboard.addListener("keyboardDidHide", persistDraft)
+      return () => {
+        sub.remove()
+        persistDraft()
+        focused = false
+        draftFocusedRef.current = false
+        draftRestoredRef.current = false
+      }
+    }, [id, loadDrafts, persistDraft]),
+  )
 
   const applyRevertResult = useCallback((result: Awaited<ReturnType<typeof revertToMessage>>) => {
     if (!result.ok) {
@@ -684,7 +704,10 @@ export default function SessionScreen() {
       setInput("")
       setAttachments([])
       // A sent message is no longer a draft.
-      if (id) useDrafts.getState().clear(id)
+      if (id) {
+        clearDraft(id)
+        savedDraftRef.current[id] = ""
+      }
 
       // Server slash commands (no attachments for commands)
       if (text.startsWith("/") && files.length === 0) {
@@ -1217,7 +1240,7 @@ export default function SessionScreen() {
               placeholderTextColor={speech.listening ? "#ef4444" : isDark ? "#9a9a9a" : "#999999"}
               value={speech.listening ? speech.transcript : input}
               onChangeText={speech.listening ? undefined : setInput}
-              onBlur={() => id && useDrafts.getState().save(id, inputRef.current)}
+              onBlur={persistDraft}
               editable={!speech.listening}
               multiline
               maxLength={10000}

@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { MAX_DRAFTS, parseDrafts, putDraft } from "./draft-store.ts"
+import { MAX_DRAFTS, parseDrafts, putDraft, shouldWriteDraft } from "./draft-store.ts"
 
 test("a draft is stored and an emptied composer deletes it", () => {
   let map = putDraft({}, "s1", "half a thought", 100)
@@ -22,4 +22,12 @@ test("corrupt storage parses to empty, never throws", () => {
   assert.deepEqual(parseDrafts("not json"), {})
   assert.deepEqual(parseDrafts('{"s1": {"text": 42}}'), {})
   assert.deepEqual(parseDrafts('{"s1": {"text": "ok", "at": 1}}'), { s1: { text: "ok", at: 1 } })
+})
+
+test("only writes drafts when the stored session text changes", () => {
+  const map = { s1: { text: "half a thought", at: 100 } }
+  assert.equal(shouldWriteDraft(map, "s1", "half a thought"), false)
+  assert.equal(shouldWriteDraft(map, "s1", "updated thought"), true)
+  assert.equal(shouldWriteDraft(map, "s1", ""), true)
+  assert.equal(shouldWriteDraft({}, "s1", "   "), false)
 })

@@ -19,6 +19,13 @@ export type DraftMap = Record<string, DraftEntry>
 
 export const MAX_DRAFTS = 50
 
+/** Whether persisting text would change the bounded draft map. */
+export function shouldWriteDraft(map: DraftMap, sessionID: string, text: string): boolean {
+  const current = map[sessionID]?.text
+  if (!text.trim()) return current !== undefined
+  return current !== text
+}
+
 export function putDraft(map: DraftMap, sessionID: string, text: string, at: number): DraftMap {
   const next: DraftMap = { ...map }
   if (!text.trim()) {

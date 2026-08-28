@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import AsyncStorage from "@react-native-async-storage/async-storage"
-import { parseDrafts, putDraft, type DraftMap } from "../lib/draft-store"
+import { parseDrafts, putDraft, shouldWriteDraft, type DraftMap } from "../lib/draft-store"
 
 const DRAFTS_KEY = "opencode_drafts"
 
@@ -24,7 +24,11 @@ export const useDrafts = create<DraftsState>((set, get) => ({
   },
 
   save: (sessionID, text) => {
-    const drafts = putDraft(get().drafts, sessionID, text, Date.now())
+    const current = get().drafts
+    // Keyboard dismissals and focus cleanups are frequent; unchanged text has
+    // no reason to clone or serialize the complete bounded map.
+    if (!shouldWriteDraft(current, sessionID, text)) return
+    const drafts = putDraft(current, sessionID, text, Date.now())
     set({ drafts })
     AsyncStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts)).catch(() => {})
   },
