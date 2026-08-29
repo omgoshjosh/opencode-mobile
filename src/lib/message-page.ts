@@ -88,6 +88,10 @@ export function refreshPageSampleLatency(page: number): boolean {
   return page === 0
 }
 
+export function prependRefreshPage<T>(existing: T[], page: T[]): T[] {
+  return [...page, ...existing]
+}
+
 export function oldestLoadedMessageID(messages: Message[]): string | undefined {
   return messages.find((message) => !isPendingMessage(message))?.id
 }
@@ -106,23 +110,25 @@ export function mergeRefreshWindow(input: {
   nextCursor?: string
   previousCursor?: string
   capped: boolean
-}): { messages: Message[]; parts: Record<string, Part[]>; nextCursor?: string; hasMore: boolean; retainedIDs: string[] } {
+}): { messages: Message[]; parts: Record<string, Part[]>; nextCursor?: string; hasMore: boolean } {
   const existing = input.existing ?? []
   const fetched = (input.fetched ?? []).filter((message, index, all) => all.findIndex((item) => item.id === message.id) === index)
   const settled = existing.filter((message) => !isPendingMessage(message))
   const pending = existing.filter(isPendingMessage)
   const fetchedIDs = new Set(fetched.map((message) => message.id))
   const overlap = settled.findIndex((message) => fetchedIDs.has(message.id))
+  if (input.capped && overlap < 0) {
+    return { messages: existing, parts: input.existingParts, nextCursor: input.previousCursor, hasMore: Boolean(input.previousCursor) }
+  }
   const authoritative = !input.capped
   const prefix = authoritative ? [] : overlap >= 0 ? settled.slice(0, overlap) : settled
   const messages = [...prefix, ...fetched, ...pending]
-  const retainedIDs = [...prefix, ...pending].map((message) => message.id)
   const parts: Record<string, Part[]> = {}
   for (const message of prefix) parts[message.id] = input.existingParts[message.id] ?? []
   for (const message of fetched) parts[message.id] = input.fetchedParts[message.id] ?? []
   for (const message of pending) parts[message.id] = input.existingParts[message.id] ?? []
   const nextCursor = authoritative ? input.nextCursor : input.previousCursor
-  return { messages, parts, nextCursor, hasMore: Boolean(nextCursor), retainedIDs }
+  return { messages, parts, nextCursor, hasMore: Boolean(nextCursor) }
 }
 
 /**

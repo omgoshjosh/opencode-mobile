@@ -14,6 +14,7 @@ import {
   oldestLoadedMessageID,
   refreshWindowSize,
   refreshPageSampleLatency,
+  prependRefreshPage,
   shouldRetryWithoutPartBudget,
   shouldFetchRefreshPage,
   transcriptPageParams,
@@ -204,11 +205,10 @@ test("cap retains only the older prefix and its prior cursor", () => {
     capped: true,
   })
   assert.deepEqual(result.messages.map((message) => message.id), ["a", "b", "c", "d", "e", "temp-1"])
-  assert.deepEqual(result.retainedIDs, ["a", "b", "temp-1"])
   assert.equal(result.nextCursor, "prior-cursor")
 })
 
-test("cap with no overlap keeps existing history before fetched messages", () => {
+test("cap with no overlap leaves the transcript and cursor unchanged", () => {
   const result = mergeRefreshWindow({
     existing: [msg("a"), msg("b")],
     existingParts: { a: [], b: [] },
@@ -217,8 +217,14 @@ test("cap with no overlap keeps existing history before fetched messages", () =>
     previousCursor: "prior",
     capped: true,
   })
-  assert.deepEqual(result.messages.map((message) => message.id), ["a", "b", "c", "d"])
+  assert.deepEqual(result.messages.map((message) => message.id), ["a", "b"])
   assert.equal(result.nextCursor, "prior")
+})
+
+test("refresh accumulates selected pages in chronological order", () => {
+  const newest = [msg("c"), msg("d")]
+  const older = [msg("a"), msg("b")]
+  assert.deepEqual(prependRefreshPage(newest, older).map((message) => message.id), ["a", "b", "c", "d"])
 })
 
 test("the oldest loaded message ignores optimistic sends", () => {

@@ -14,6 +14,7 @@ import {
   oldestLoadedMessageID,
   REFRESH_PAGE_CAP,
   refreshPageSampleLatency,
+  prependRefreshPage,
   shouldFetchRefreshPage,
   transcriptPageParams,
 } from "../lib/message-page"
@@ -714,7 +715,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
           signal,
           { sampleLatency: refreshPageSampleLatency(pages) },
         )
-        response = [...page.items, ...response]
+        response = prependRefreshPage(response, page.items)
         nextCursor = page.nextCursor
         before = nextCursor
         pages += 1
