@@ -32,8 +32,21 @@ test("completed parent task excludes stale busy child", () => {
 
 test("SSE keeps only touched IDs over a GET snapshot", () => {
   assert.deepEqual(
-    mergeStatusSnapshot({ fresh: { type: "busy" }, stale: { type: "busy" } }, { fresh: { type: "idle" }, stale: { type: "idle" } }, new Set(["fresh"])),
+    mergeStatusSnapshot({ fresh: { type: "busy" }, stale: { type: "busy" } }, { fresh: { type: "idle" }, stale: { type: "idle" } }, new Set(["fresh"]), 1),
     { fresh: { type: "busy" }, stale: { type: "idle" } },
+  )
+})
+
+test("touched SSE inherits GET background only when it omits it", () => {
+  const aggregate = { running: 2, jobs: [{ sessionID: "child", role: "QA", title: "Check", since: 1 }] }
+  const snapshot = { parent: { type: "idle" as const, background: aggregate }, untouched: { type: "idle" as const } }
+  assert.deepEqual(
+    mergeStatusSnapshot({ parent: { type: "retry", attempt: 2, message: "again" }, untouched: { type: "busy" } }, snapshot, new Set(["parent"]), 1),
+    { parent: { type: "retry", attempt: 2, message: "again", background: aggregate }, untouched: { type: "idle" } },
+  )
+  assert.deepEqual(
+    mergeStatusSnapshot({ parent: { type: "idle", background: { running: 0, jobs: [] } } }, snapshot, new Set(["parent"]), 1).parent.background,
+    { running: 0, jobs: [] },
   )
 })
 

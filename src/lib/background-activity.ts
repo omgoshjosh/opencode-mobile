@@ -78,7 +78,7 @@ export function compareJobs(a: BackgroundJob, b: BackgroundJob): number {
   return a.since - b.since || a.sessionID.localeCompare(b.sessionID)
 }
 
-export function mergeStatusEvent(previous: SessionStatus | undefined, incoming: SessionStatus): SessionStatus {
+export function mergeStatusEvent(previous: SessionStatus | undefined, incoming: SessionStatus, _now?: number): SessionStatus {
   // Preserve only the aggregate when omitted; status variants own their fields.
   const background = "background" in incoming ? incoming.background : previous?.background
   return { ...incoming, ...(background !== undefined ? { background } : {}) }
@@ -88,6 +88,13 @@ export function mergeStatusSnapshot(
   current: Record<string, SessionStatus>,
   snapshot: Record<string, SessionStatus>,
   touched: Set<string>,
+  now: number,
 ): Record<string, SessionStatus> {
-  return { ...snapshot, ...Object.fromEntries(Object.entries(current).filter(([id]) => touched.has(id))) }
+  return Object.fromEntries(
+    [...new Set([...Object.keys(snapshot), ...Object.keys(current)])].map((id) => {
+      const latest = current[id]
+      if (!latest || !touched.has(id)) return [id, snapshot[id] ?? latest]
+      return [id, mergeStatusEvent(snapshot[id], latest, now)]
+    }),
+  )
 }

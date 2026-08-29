@@ -105,7 +105,7 @@ async function hydrateStatus(client: Client, lifecycle: number) {
     const snapshot = await client.session.status()
     if (statusLifecycle !== lifecycle || !snapshot) return
     useEvents.setState((state) => {
-      return { sessionStatus: mergeStatusSnapshot(state.sessionStatus, snapshot, liveStatusIDs) }
+      return { sessionStatus: mergeStatusSnapshot(state.sessionStatus, snapshot, liveStatusIDs, Date.now()) }
     })
   } catch (error) {
     console.warn("[Events] Failed to hydrate session status:", error)
