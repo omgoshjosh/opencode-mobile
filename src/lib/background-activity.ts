@@ -91,7 +91,7 @@ export function mergeStatusSnapshot(
   now: number,
 ): Record<string, SessionStatus> {
   return Object.fromEntries(
-    [...new Set([...Object.keys(snapshot), ...Object.keys(current)])].map((id) => {
+    [...new Set([...Object.keys(snapshot), ...[...touched]])].map((id) => {
       const latest = current[id]
       if (!latest || !touched.has(id)) return [id, snapshot[id] ?? latest]
       return [id, mergeStatusEvent(snapshot[id], latest, now)]

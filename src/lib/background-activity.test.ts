@@ -50,6 +50,18 @@ test("touched SSE inherits GET background only when it omits it", () => {
   )
 })
 
+test("snapshot absence clears untouched stale IDs but retains touched current IDs", () => {
+  assert.deepEqual(
+    mergeStatusSnapshot(
+      { stale: { type: "busy" }, touched: { type: "busy" } },
+      { server: { type: "idle" } },
+      new Set(["touched"]),
+      1,
+    ),
+    { server: { type: "idle" }, touched: { type: "busy" } },
+  )
+})
+
 test("omitted background preserves while explicit zero clears", () => {
   const prior = { type: "busy", background: { running: 1, jobs: [{ sessionID: "child", role: "QA", title: "Check", since: 1 }] } } as const
   assert.deepEqual(mergeStatusEvent(prior, { type: "idle" }), { type: "idle", background: prior.background })
