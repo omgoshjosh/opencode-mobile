@@ -7,12 +7,14 @@ import {
   TRANSCRIPT_PART_BUDGET,
   TRANSCRIPT_RENDER_BUDGET,
   isPendingMessage,
-  mergeRefreshMessages,
+  mergeRefreshWindow,
   mergeOlderPage,
   mergeOlderParts,
   nextCursorFrom,
   oldestLoadedMessageID,
   refreshWindowSize,
+  refreshPageSampleLatency,
+  shouldRetryWithoutPartBudget,
   shouldFetchRefreshPage,
   transcriptPageParams,
   transcriptPageQuery,
@@ -72,6 +74,19 @@ test("page query serializes cursor and both budget parameters", () => {
     transcriptPageQuery(transcriptPageParams(50, "opaque+/=")),
     "limit=50&before=opaque%2B%2F%3D&renderBudget=40000&partBudget=4000",
   )
+})
+
+test("only the first logical refresh page reports REST latency", () => {
+  assert.equal(refreshPageSampleLatency(0), true)
+  assert.equal(refreshPageSampleLatency(1), false)
+})
+
+test("only unsupported part-budget responses retry without that parameter", () => {
+  assert.equal(shouldRetryWithoutPartBudget(400, 4000), true)
+  assert.equal(shouldRetryWithoutPartBudget(404, 4000), true)
+  assert.equal(shouldRetryWithoutPartBudget(401, 4000), false)
+  assert.equal(shouldRetryWithoutPartBudget(500, 4000), false)
+  assert.equal(shouldRetryWithoutPartBudget(400, undefined), false)
 })
 
 // --- merging older pages ---
@@ -163,11 +178,47 @@ test("refresh stops at cursor exhaustion and its defensive cap", () => {
   assert.equal(shouldFetchRefreshPage({ fetched: [], oldestLoadedID: "a", nextCursor: "b", pages: REFRESH_PAGE_CAP }), false)
 })
 
-test("refresh merges server pages without losing optimistic or older messages", () => {
-  const live = { ...msg("b"), time: { created: 1, completed: 2 } }
-  const merged = mergeRefreshMessages({ existing: [msg("a"), live, msg("temp-1")], fetched: [msg("a"), msg("b"), msg("c")] })
-  assert.deepEqual(merged.map((message) => message.id), ["a", "b", "c", "temp-1"])
-  assert.equal(merged[1].time.completed, undefined)
+test("refresh replaces a covered window chronologically and removes stale parts", () => {
+  const result = mergeRefreshWindow({
+    existing: [msg("a"), msg("b"), msg("c"), msg("temp-1")],
+    existingParts: { a: [{ id: "old", messageID: "a", type: "text", text: "stale" }], gone: [] },
+    fetched: [msg("a"), msg("b"), msg("d")],
+    fetchedParts: { a: [{ id: "new", messageID: "a", type: "text", text: "fresh" }], b: [] },
+    nextCursor: "older",
+    capped: false,
+  })
+  assert.deepEqual(result.messages.map((message) => message.id), ["a", "b", "d", "temp-1"])
+  assert.deepEqual(Object.keys(result.parts), ["a", "b", "d", "temp-1"])
+  assert.equal(result.parts.a[0].text, "fresh")
+  assert.equal(result.nextCursor, "older")
+})
+
+test("cap retains only the older prefix and its prior cursor", () => {
+  const result = mergeRefreshWindow({
+    existing: [msg("a"), msg("b"), msg("c"), msg("d"), msg("temp-1")],
+    existingParts: { a: [], b: [], c: [{ id: "stale", messageID: "c", type: "text" }] },
+    fetched: [msg("c"), msg("d"), msg("e")],
+    fetchedParts: { c: [], d: [], e: [] },
+    nextCursor: "newer-cursor",
+    previousCursor: "prior-cursor",
+    capped: true,
+  })
+  assert.deepEqual(result.messages.map((message) => message.id), ["a", "b", "c", "d", "e", "temp-1"])
+  assert.deepEqual(result.retainedIDs, ["a", "b", "temp-1"])
+  assert.equal(result.nextCursor, "prior-cursor")
+})
+
+test("cap with no overlap keeps existing history before fetched messages", () => {
+  const result = mergeRefreshWindow({
+    existing: [msg("a"), msg("b")],
+    existingParts: { a: [], b: [] },
+    fetched: [msg("c"), msg("d")],
+    fetchedParts: { c: [], d: [] },
+    previousCursor: "prior",
+    capped: true,
+  })
+  assert.deepEqual(result.messages.map((message) => message.id), ["a", "b", "c", "d"])
+  assert.equal(result.nextCursor, "prior")
 })
 
 test("the oldest loaded message ignores optimistic sends", () => {

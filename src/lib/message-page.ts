@@ -80,6 +80,14 @@ export function transcriptPageQuery(params: { limit: number; before?: string; re
   return query.toString()
 }
 
+export function shouldRetryWithoutPartBudget(status: number | undefined, partBudget: number | undefined): boolean {
+  return Boolean(partBudget) && (status === 400 || status === 404)
+}
+
+export function refreshPageSampleLatency(page: number): boolean {
+  return page === 0
+}
+
 export function oldestLoadedMessageID(messages: Message[]): string | undefined {
   return messages.find((message) => !isPendingMessage(message))?.id
 }
@@ -90,19 +98,31 @@ export function shouldFetchRefreshPage(input: { fetched: Message[]; oldestLoaded
   return !input.fetched.some((message) => message.id === input.oldestLoadedID)
 }
 
-/** Server pages are newest-first; preserve history outside the refreshed window and optimistic sends. */
-export function mergeRefreshMessages(input: { existing: Message[]; fetched: Message[] }): Message[] {
+export function mergeRefreshWindow(input: {
+  existing: Message[]
+  existingParts: Record<string, Part[]>
+  fetched: Message[]
+  fetchedParts: Record<string, Part[]>
+  nextCursor?: string
+  previousCursor?: string
+  capped: boolean
+}): { messages: Message[]; parts: Record<string, Part[]>; nextCursor?: string; hasMore: boolean; retainedIDs: string[] } {
   const existing = input.existing ?? []
-  const fetched = input.fetched ?? []
-  const ids = new Set<string>()
-  const merged = fetched.map((message) => {
-    ids.add(message.id)
-    return message
-  })
-  for (const message of existing) {
-    if (!ids.has(message.id) || isPendingMessage(message)) merged.push(message)
-  }
-  return merged
+  const fetched = (input.fetched ?? []).filter((message, index, all) => all.findIndex((item) => item.id === message.id) === index)
+  const settled = existing.filter((message) => !isPendingMessage(message))
+  const pending = existing.filter(isPendingMessage)
+  const fetchedIDs = new Set(fetched.map((message) => message.id))
+  const overlap = settled.findIndex((message) => fetchedIDs.has(message.id))
+  const authoritative = !input.capped
+  const prefix = authoritative ? [] : overlap >= 0 ? settled.slice(0, overlap) : settled
+  const messages = [...prefix, ...fetched, ...pending]
+  const retainedIDs = [...prefix, ...pending].map((message) => message.id)
+  const parts: Record<string, Part[]> = {}
+  for (const message of prefix) parts[message.id] = input.existingParts[message.id] ?? []
+  for (const message of fetched) parts[message.id] = input.fetchedParts[message.id] ?? []
+  for (const message of pending) parts[message.id] = input.existingParts[message.id] ?? []
+  const nextCursor = authoritative ? input.nextCursor : input.previousCursor
+  return { messages, parts, nextCursor, hasMore: Boolean(nextCursor), retainedIDs }
 }
 
 /**

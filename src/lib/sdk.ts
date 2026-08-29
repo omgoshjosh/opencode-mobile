@@ -11,7 +11,7 @@ import { SSEParser } from "./sse"
 import { apiErrorFor, ApiError } from "./api-error"
 import { loadSessionList } from "./session-list"
 import { LIVENESS_TIMEOUT_MS } from "./sse-liveness"
-import { nextCursorFrom, transcriptPageQuery } from "./message-page"
+import { nextCursorFrom, shouldRetryWithoutPartBudget, transcriptPageQuery } from "./message-page"
 import { requestSignal } from "./request-signal"
 import type { FileRoot } from "./file-roots"
 import type { RoleInput as SwarmRoleInput, Swarm as SwarmInfo } from "./swarm-crud"
@@ -281,10 +281,11 @@ async function requestWithHeaders<T>(
   config: ClientConfig,
   path: string,
   options: RequestInit = {},
+  sampleLatency = true,
 ): Promise<{ body: T; headers: Headers }> {
   const url = `${config.baseUrl}${path}`
   const headers = { ...createHeaders(config), ...options.headers }
-  const response = await fetchWithTimeout(url, { ...options, headers })
+  const response = await fetchWithTimeout(url, { ...options, headers }, undefined, sampleLatency)
 
   if (!response.ok) {
     const error = await response.text()
@@ -306,17 +307,22 @@ export function setLatencyReporter(fn: ((ms: number) => void) | null) {
   latencyReporter = fn
 }
 
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+  sampleLatency = true,
+): Promise<Response> {
   const request = requestSignal(options.signal ?? undefined, timeoutMs)
 
   const startedAt = Date.now()
   try {
     const response = await fetch(url, { ...options, signal: request.signal })
-    latencyReporter?.(Date.now() - startedAt)
+    if (sampleLatency) latencyReporter?.(Date.now() - startedAt)
     return response
   } catch (error) {
     if (request.timedOut()) {
-      latencyReporter?.(Date.now() - startedAt)
+      if (sampleLatency) latencyReporter?.(Date.now() - startedAt)
       throw new Error(`Request timed out after ${timeoutMs}ms`)
     }
     throw error
@@ -353,6 +359,7 @@ export function createClient(config: ClientConfig) {
   // reconstructs a clean URL, reports "works now"). A bare URL with no
   // trailing slash is untouched.
   config = { ...config, baseUrl: config.baseUrl.replace(/\/+$/, "") }
+  let supportsPartBudget = true
   return {
     global: {
       // `timeoutMs` overrides the default REQUEST_TIMEOUT_MS — used by the
@@ -550,14 +557,21 @@ export function createClient(config: ClientConfig) {
         sessionID: string,
         params: { limit: number; before?: string; renderBudget?: number; partBudget?: number },
         signal?: AbortSignal,
+        options?: { sampleLatency?: boolean },
       ): Promise<{ items: MessageWithParts[]; nextCursor?: string }> => {
-        const query = transcriptPageQuery(params)
-        const { body, headers } = await requestWithHeaders<MessageWithParts[]>(
-          config,
-          `/session/${sessionID}/message?${query}`,
-          { signal },
-        )
-        return { items: body, nextCursor: nextCursorFrom(headers) }
+        const page = async (partBudget = supportsPartBudget ? params.partBudget : undefined) => {
+          const query = transcriptPageQuery({ ...params, partBudget })
+          return requestWithHeaders<MessageWithParts[]>(config, `/session/${sessionID}/message?${query}`, { signal }, options?.sampleLatency)
+        }
+        try {
+          const { body, headers } = await page()
+          return { items: body, nextCursor: nextCursorFrom(headers) }
+        } catch (error) {
+          if (!(error instanceof ApiError) || !shouldRetryWithoutPartBudget(error.status, supportsPartBudget ? params.partBudget : undefined)) throw error
+          supportsPartBudget = false
+          const { body, headers } = await page(undefined)
+          return { items: body, nextCursor: nextCursorFrom(headers) }
+        }
       },
 
       // Sends a message and returns the response
