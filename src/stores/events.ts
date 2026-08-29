@@ -13,6 +13,7 @@ import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
+import { canApplyStatusHydration } from "../lib/status-hydration"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Last-known statuses, persisted eagerly so the sessions list renders real
@@ -100,10 +101,10 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let statusLifecycle = 0
 const liveStatusIDs = new Set<string>()
 
-async function hydrateStatus(client: Client, lifecycle: number) {
+async function hydrateStatus(client: Client, lifecycle: number, signal: AbortSignal) {
   try {
-    const snapshot = await client.session.status()
-    if (statusLifecycle !== lifecycle || !snapshot) return
+    const snapshot = await client.session.status(signal)
+    if (!canApplyStatusHydration(lifecycle, statusLifecycle, signal) || !snapshot) return
     useEvents.setState((state) => {
       return { sessionStatus: mergeStatusSnapshot(state.sessionStatus, snapshot, liveStatusIDs, Date.now()) }
     })
@@ -348,7 +349,7 @@ export const useEvents = create<EventsState>((set, get) => ({
             if (shouldResetRetries({ receivedEvent: true })) {
               set({ connected: true, transport: "live", reconnectAttempts: 0, lastDisconnectAt: null })
             }
-            void hydrateStatus(client, lifecycle)
+            void hydrateStatus(client, lifecycle, currentController.signal)
           }
 
           const payload = (event as any).payload || event
@@ -646,6 +647,8 @@ export const useEvents = create<EventsState>((set, get) => ({
       clearTimeout(reconnectTimer)
       reconnectTimer = null
     }
+    // Invalidate a GET even when its transport ignores abort and resolves late.
+    statusLifecycle++
     controller?.abort()
     controller = null
     erroredSessions.clear()
