@@ -191,6 +191,7 @@ const SessionItem = memo(function SessionItem({
       style={[styles.sessionItem, isDark && styles.sessionItemDark]}
       onPress={onPress}
       onLongPress={onLongPress}
+      accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${backgroundRunning > 0 ? `, ${backgroundRunning} working` : ""}`}
       testID={`session-item-${session.id}`}
     >
       <View style={styles.sessionContent}>
@@ -258,7 +259,7 @@ const SessionItem = memo(function SessionItem({
               <Text style={[styles.sessionDirText, isDark && styles.metaDark]}>{shortDir}</Text>
             </View>
            )}
-          {!session.parentID && backgroundRunning > 0 && <View style={styles.backgroundBadge} accessible accessibilityLabel={`${backgroundRunning} working`}><Text style={styles.backgroundBadgeText}>{backgroundRunning}</Text></View>}
+          {!session.parentID && backgroundRunning > 0 && <View style={styles.backgroundBadge} accessible={false} importantForAccessibility="no-hide-descendants"><Text style={styles.backgroundBadgeText}>{backgroundRunning}</Text></View>}
         </View>
       </View>
       <Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />
@@ -336,6 +337,7 @@ const SessionRowV2 = memo(function SessionRowV2({
           { text: t("common.delete"), style: "destructive", onPress: () => onDelete(session) },
         ])
       }
+      accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${backgroundRunning > 0 ? `, ${backgroundRunning} working` : ""}`}
       testID={`session-item-${session.id}`}
     >
       <View style={styles.rowV2Line}>
@@ -364,7 +366,7 @@ const SessionRowV2 = memo(function SessionRowV2({
               return quiet ? ` · ${quiet}` : ""
             })()}
         </Text>
-        {!session.parentID && backgroundRunning > 0 && <View style={styles.backgroundBadge} accessible accessibilityLabel={`${backgroundRunning} working`}><Text style={styles.backgroundBadgeText}>{backgroundRunning}</Text></View>}
+        {!session.parentID && backgroundRunning > 0 && <View style={styles.backgroundBadge} accessible={false} importantForAccessibility="no-hide-descendants"><Text style={styles.backgroundBadgeText}>{backgroundRunning}</Text></View>}
       </View>
       {subtitle && (
         <Text

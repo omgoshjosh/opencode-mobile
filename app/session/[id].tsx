@@ -1001,8 +1001,8 @@ export default function SessionScreen() {
            headerRight: () => (
             <View style={s.headerRight}>
               {routeOwnsSession && !currentSession?.parentID && background && background.running > 0 && (
-                <TouchableOpacity style={s.workingChip} onPress={() => jobsSheetRef.current?.expand()} accessibilityRole="button" accessibilityLabel={`${background.running} working`} testID="background-jobs-chip">
-                  <Text style={s.workingChipText}>{background.running} working</Text>
+                <TouchableOpacity style={[s.workingChip, isDark && s.workingChipDark]} onPress={() => jobsSheetRef.current?.expand()} accessibilityRole="button" accessibilityLabel={`${background.running} working`} testID="background-jobs-chip">
+                  <Text style={[s.workingChipText, isDark && s.workingChipTextDark]}>{background.running} working</Text>
                 </TouchableOpacity>
               )}
               {routeOwnsSession && siblingIndex > 0 && <TouchableOpacity onPress={() => moveSibling(-1)} accessibilityLabel="Previous working sibling" style={s.siblingButton}><Ionicons name="chevron-back" size={20} color={isDark ? "#ddd" : "#555"} /></TouchableOpacity>}
@@ -1589,8 +1589,10 @@ const s = StyleSheet.create({
   stopBarText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
   // Header
   headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
-  workingChip: { minHeight: 44, paddingHorizontal: 10, justifyContent: "center", borderRadius: 14, backgroundColor: "#dcfce7" },
-  workingChipText: { color: "#166534", fontSize: 12, fontWeight: "700" },
+  workingChip: { minHeight: 44, paddingHorizontal: 10, justifyContent: "center", borderRadius: 14, backgroundColor: "#6d28d9" },
+  workingChipDark: { backgroundColor: "#a78bfa" },
+  workingChipText: { color: "#ffffff", fontSize: 12, fontWeight: "700" },
+  workingChipTextDark: { color: "#1e1b4b" },
   siblingButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   siblingGesture: { height: 8 },
   dirBadge: {
