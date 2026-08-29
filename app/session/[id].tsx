@@ -1001,7 +1001,7 @@ export default function SessionScreen() {
            headerRight: () => (
             <View style={s.headerRight}>
               {routeOwnsSession && !currentSession?.parentID && background && background.running > 0 && (
-                <TouchableOpacity style={[s.workingChip, isDark && s.workingChipDark]} onPress={() => jobsSheetRef.current?.expand()} accessibilityRole="button" accessibilityLabel={`${background.running} working`} testID="background-jobs-chip">
+                <TouchableOpacity style={[s.workingChip, isDark && s.workingChipDark]} onPress={() => jobsSheetRef.current?.expand()} hitSlop={8} accessibilityRole="button" accessibilityLabel={`${background.running} working`} testID="background-jobs-chip">
                   <Text style={[s.workingChipText, isDark && s.workingChipTextDark]}>{background.running} working</Text>
                 </TouchableOpacity>
               )}
@@ -1589,7 +1589,7 @@ const s = StyleSheet.create({
   stopBarText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
   // Header
   headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
-  workingChip: { minHeight: 44, paddingHorizontal: 10, justifyContent: "center", borderRadius: 14, backgroundColor: "#6d28d9" },
+  workingChip: { minHeight: 28, paddingHorizontal: 10, justifyContent: "center", borderRadius: 14, backgroundColor: "#6d28d9" },
   workingChipDark: { backgroundColor: "#a78bfa" },
   workingChipText: { color: "#ffffff", fontSize: 12, fontWeight: "700" },
   workingChipTextDark: { color: "#1e1b4b" },
