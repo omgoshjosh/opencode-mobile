@@ -192,13 +192,6 @@ async function resyncBusySessions() {
         }))
         persistStatusCache(useEvents.getState().sessionStatus)
         useSessions.setState((state) => ({ sending: { ...state.sending, [sessionID]: false } }))
-        const latestSessions = useSessions.getState()
-        if (
-          latestSessions.activeTranscriptSessionID === sessionID &&
-          latestSessions.currentSession?.id === sessionID
-        ) {
-          latestSessions.refreshMessages()
-        }
       } catch (err) {
         console.warn("[Events] Failed to resync session status for", sessionID, err)
       }

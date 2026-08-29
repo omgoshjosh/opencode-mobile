@@ -10,8 +10,10 @@ import { isColdSessionLoad, isLiveEventForSession } from "../lib/session-load-re
 import {
   mergeOlderPage,
   mergeOlderParts,
-  mergeRefreshMessages,
+  mergeRefreshWindow,
   oldestLoadedMessageID,
+  REFRESH_PAGE_CAP,
+  refreshPageSampleLatency,
   shouldFetchRefreshPage,
   transcriptPageParams,
 } from "../lib/message-page"
@@ -693,6 +695,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
     try {
       const oldestLoadedID = oldestLoadedMessageID(get().messages)
+      const previousCursor = get().nextCursor
       let before: string | undefined
       let nextCursor: string | undefined
       let pages = 0
@@ -705,7 +708,12 @@ export const useSessions = create<SessionsState>((set, get) => ({
           !isTranscriptActive(get().activeTranscriptSessionID, session.id) ||
           !shouldApplyTranscriptSnapshot(revision, transcriptRevision(session.id))
         ) return
-        const page = await client.session.messagesPage(session.id, transcriptPageParams(pageSize(), before), signal)
+        const page = await client.session.messagesPage(
+          session.id,
+          transcriptPageParams(pageSize(), before),
+          signal,
+          { sampleLatency: refreshPageSampleLatency(pages) },
+        )
         response = [...page.items, ...response]
         nextCursor = page.nextCursor
         before = nextCursor
@@ -729,12 +737,18 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // The first successful HTTP writer wins; later concurrent snapshots
       // observe this revision change and cannot overwrite it out of order.
       bumpTranscriptRevision(session.id)
-      set((state) => ({
-        messages: mergeRefreshMessages({ existing: state.messages, fetched: messages }),
-        parts: { ...state.parts, ...parts },
-        nextCursor,
-        hasMore: Boolean(nextCursor),
-      }))
+      set((state) => {
+        const merged = mergeRefreshWindow({
+          existing: state.messages,
+          existingParts: state.parts,
+          fetched: messages,
+          fetchedParts: parts,
+          nextCursor,
+          previousCursor,
+          capped: pages >= REFRESH_PAGE_CAP && Boolean(nextCursor) && !messages.some((message) => message.id === oldestLoadedID),
+        })
+        return merged
+      })
     } catch (error) {
       if (
         signal?.aborted ||

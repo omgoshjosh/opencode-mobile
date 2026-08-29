@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { isToolOutputTruncated, matchingToolPart, stagedToolOutput, TRUNCATION_NOTICE } from "./tool-output.ts"
+import { isToolOutputTruncated, matchingToolPart, stagedToolOutput } from "./tool-output.ts"
 import type { Part } from "./sdk.ts"
 
 const part = (id: string, callID?: string): Part => ({
@@ -11,9 +11,9 @@ const part = (id: string, callID?: string): Part => ({
   state: { status: "completed", output: "short" },
 })
 
-test("staged output visibly identifies truncation", () => {
-  assert.equal(stagedToolOutput("short", true), `short\n\n${TRUNCATION_NOTICE}`)
-  assert.equal(stagedToolOutput("full", false), "full")
+test("staged output preserves the daemon truncation notice exactly once", () => {
+  const output = "short\n[... output truncated ...]"
+  assert.equal(stagedToolOutput(output), output)
 })
 
 test("tool output hydration matches a stable part id before call id", () => {
