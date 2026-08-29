@@ -32,7 +32,7 @@ export async function restoreStatusCache() {
   useEvents.setState((state) => ({ sessionStatus: { ...cached, ...state.sessionStatus } }))
 }
 import { isHealthy, shouldReconnectOnResume, shouldResetRetries, type TransportState } from "../lib/sse-liveness"
-import { RECONCILE_MESSAGE_LIMIT } from "../lib/message-page"
+import { RECONCILE_MESSAGE_LIMIT, transcriptPageParams } from "../lib/message-page"
 import type { Client, Part, Session, Message } from "../lib/sdk"
 
 interface EventsState {
@@ -177,8 +177,8 @@ async function resyncBusySessions() {
         // isSessionActuallyIdle only inspects the final message, so one is
         // enough. This previously fetched the ENTIRE session — on every
         // reconnect, for every session this client believed was busy.
-        const response = await client.session.messages(sessionID, { limit: RECONCILE_MESSAGE_LIMIT })
-        const messages = (response || []).map((m) => m.info)
+        const response = await client.session.messagesPage(sessionID, transcriptPageParams(RECONCILE_MESSAGE_LIMIT))
+        const messages = response.items.map((m) => m.info)
         if (!isSessionActuallyIdle(messages)) return // server says still busy - leave it alone
 
         // A fresh session.status event may have landed on the SSE stream
@@ -192,13 +192,6 @@ async function resyncBusySessions() {
         }))
         persistStatusCache(useEvents.getState().sessionStatus)
         useSessions.setState((state) => ({ sending: { ...state.sending, [sessionID]: false } }))
-        const latestSessions = useSessions.getState()
-        if (
-          latestSessions.activeTranscriptSessionID === sessionID &&
-          latestSessions.currentSession?.id === sessionID
-        ) {
-          latestSessions.refreshMessages()
-        }
       } catch (err) {
         console.warn("[Events] Failed to resync session status for", sessionID, err)
       }

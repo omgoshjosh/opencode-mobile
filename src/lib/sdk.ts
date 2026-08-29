@@ -11,7 +11,7 @@ import { SSEParser } from "./sse"
 import { apiErrorFor, ApiError } from "./api-error"
 import { loadSessionList } from "./session-list"
 import { LIVENESS_TIMEOUT_MS } from "./sse-liveness"
-import { nextCursorFrom } from "./message-page"
+import { nextCursorFrom, shouldRetryWithoutPartBudget, transcriptPageQuery } from "./message-page"
 import { requestSignal } from "./request-signal"
 import type { FileRoot } from "./file-roots"
 import type { RoleInput as SwarmRoleInput, Swarm as SwarmInfo } from "./swarm-crud"
@@ -138,7 +138,7 @@ export interface Part {
     // Tool-specific. For `task` this carries { sessionId, parentSessionId,
     // model, runID } — the link to the subagent's own session. See
     // src/lib/subagent-link.ts.
-    metadata?: unknown
+    metadata?: Record<string, unknown>
   }
   // Timing
   time?: { start?: number; end?: number }
@@ -278,10 +278,11 @@ async function requestWithHeaders<T>(
   config: ClientConfig,
   path: string,
   options: RequestInit = {},
+  sampleLatency = true,
 ): Promise<{ body: T; headers: Headers }> {
   const url = `${config.baseUrl}${path}`
   const headers = { ...createHeaders(config), ...options.headers }
-  const response = await fetchWithTimeout(url, { ...options, headers })
+  const response = await fetchWithTimeout(url, { ...options, headers }, undefined, sampleLatency)
 
   if (!response.ok) {
     const error = await response.text()
@@ -303,17 +304,22 @@ export function setLatencyReporter(fn: ((ms: number) => void) | null) {
   latencyReporter = fn
 }
 
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+  sampleLatency = true,
+): Promise<Response> {
   const request = requestSignal(options.signal ?? undefined, timeoutMs)
 
   const startedAt = Date.now()
   try {
     const response = await fetch(url, { ...options, signal: request.signal })
-    latencyReporter?.(Date.now() - startedAt)
+    if (sampleLatency) latencyReporter?.(Date.now() - startedAt)
     return response
   } catch (error) {
     if (request.timedOut()) {
-      latencyReporter?.(Date.now() - startedAt)
+      if (sampleLatency) latencyReporter?.(Date.now() - startedAt)
       throw new Error(`Request timed out after ${timeoutMs}ms`)
     }
     throw error
@@ -350,6 +356,7 @@ export function createClient(config: ClientConfig) {
   // reconstructs a clean URL, reports "works now"). A bare URL with no
   // trailing slash is untouched.
   config = { ...config, baseUrl: config.baseUrl.replace(/\/+$/, "") }
+  let supportsPartBudget = true
   return {
     global: {
       // `timeoutMs` overrides the default REQUEST_TIMEOUT_MS — used by the
@@ -525,6 +532,9 @@ export function createClient(config: ClientConfig) {
         return request<MessageWithParts[]>(config, `/session/${sessionID}/message${qs ? `?${qs}` : ""}`, { signal })
       },
 
+      message: (sessionID: string, messageID: string, signal?: AbortSignal) =>
+        request<MessageWithParts>(config, `/session/${sessionID}/message/${messageID}`, { signal }),
+
       /**
        * One page of a transcript, newest-first from `before` (or from the end
        * when `before` is omitted).
@@ -539,18 +549,28 @@ export function createClient(config: ClientConfig) {
        */
       messagesPage: async (
         sessionID: string,
-        params: { limit: number; before?: string },
+        params: { limit: number; before?: string; renderBudget?: number; partBudget?: number },
         signal?: AbortSignal,
+        options?: { sampleLatency?: boolean },
       ): Promise<{ items: MessageWithParts[]; nextCursor?: string }> => {
-        const query = new URLSearchParams()
-        query.set("limit", String(params.limit))
-        if (params.before) query.set("before", params.before)
-        const { body, headers } = await requestWithHeaders<MessageWithParts[]>(
-          config,
-          `/session/${sessionID}/message?${query.toString()}`,
-          { signal },
-        )
-        return { items: body, nextCursor: nextCursorFrom(headers) }
+        const page = async (partBudget = supportsPartBudget ? params.partBudget : undefined) => {
+          const query = transcriptPageQuery({ ...params, partBudget })
+          return requestWithHeaders<MessageWithParts[]>(config, `/session/${sessionID}/message?${query}`, { signal }, options?.sampleLatency)
+        }
+        try {
+          const { body, headers } = await page()
+          return { items: body, nextCursor: nextCursorFrom(headers) }
+        } catch (error) {
+          if (!(error instanceof ApiError) || !shouldRetryWithoutPartBudget(error.status, supportsPartBudget ? params.partBudget : undefined)) throw error
+          const { body, headers } = await requestWithHeaders<MessageWithParts[]>(
+            config,
+            `/session/${sessionID}/message?${transcriptPageQuery({ ...params, partBudget: undefined })}`,
+            { signal },
+            false,
+          )
+          supportsPartBudget = false
+          return { items: body, nextCursor: nextCursorFrom(headers) }
+        }
       },
 
       // Sends a message and returns the response

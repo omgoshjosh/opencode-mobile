@@ -16,6 +16,12 @@ interface ViewerState {
     title: string
     input: string | null
     output: string
+    sessionID: string
+    messageID: string
+    partID?: string
+    callID?: string
+    directory?: string
+    truncated: boolean
   } | null
   // Same staging pattern for images: a data: URI can be megabytes — never
   // route-param material. The viewer route reads it; popping the route
@@ -24,7 +30,7 @@ interface ViewerState {
     uri: string
     filename?: string
   } | null
-  showToolOutput: (payload: { title: string; input: string | null; output: string }) => void
+  showToolOutput: (payload: NonNullable<ViewerState["toolOutput"]>) => void
   clearToolOutput: () => void
   showImage: (payload: { uri: string; filename?: string }) => void
   clearImage: () => void
