@@ -9,6 +9,11 @@ export interface BackgroundJob {
   status: "busy"
 }
 
+export function backgroundJobRouteParams(job: BackgroundJob, sessions: Session[], parentDirectory?: string) {
+  const directory = sessions.find((session) => session.id === job.sessionID)?.directory ?? parentDirectory
+  return { id: job.sessionID, ...(directory ? { directory } : {}) }
+}
+
 export type SessionStatusSnapshot = SessionStatus
 
 function record(value: unknown): Record<string, unknown> | undefined {

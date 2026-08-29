@@ -37,7 +37,7 @@ import {
   type SlashCommand,
   type Attachment,
 } from "../../src/components/chat"
-import { backgroundFor } from "../../src/lib/background-activity"
+import { backgroundFor, backgroundJobRouteParams } from "../../src/lib/background-activity"
 import { extractCopyText, hasCopyableText } from "../../src/lib/message-copy-text"
 import {
   resolveSessionAgent,
@@ -1031,7 +1031,10 @@ export default function SessionScreen() {
       {routeOwnsSession && currentSession?.parentID && <GestureDetector gesture={siblingPan}><View style={s.siblingGesture} accessibilityLabel="Swipe to move between working siblings" /></GestureDetector>}
       <BackgroundJobsSheet sheetRef={jobsSheetRef} jobs={routeOwnsSession ? background?.jobs ?? [] : []} isDark={isDark} onOpen={(job) => {
         jobsSheetRef.current?.close()
-        router.push({ pathname: "/session/[id]", params: { id: job.sessionID } })
+        router.push({
+          pathname: "/session/[id]",
+          params: backgroundJobRouteParams(job, sessions, routeOwnsSession ? currentSession?.directory : undefined),
+        })
       }} />
 
       <KeyboardAvoidingView

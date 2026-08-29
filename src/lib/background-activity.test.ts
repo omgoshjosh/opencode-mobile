@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { backgroundFor, mergeStatusEvent, mergeStatusSnapshot } from "./background-activity.ts"
+import { backgroundFor, backgroundJobRouteParams, mergeStatusEvent, mergeStatusSnapshot } from "./background-activity.ts"
 
 const parent = "parent"
 const child = (id: string) => ({ id, parentID: parent, title: id, agent: "general", time: { created: 1, updated: 20 } }) as any
@@ -8,6 +8,15 @@ const child = (id: string) => ({ id, parentID: parent, title: id, agent: "genera
 test("modern background is authoritative and preserves zero", () => {
   const result = backgroundFor({ parentID: parent, sessions: [child("child")], statuses: { [parent]: { type: "idle", background: { running: 0, jobs: [] } }, child: { type: "busy" } } })
   assert.deepEqual(result, { running: 0, jobs: [] })
+})
+
+test("background job navigation prefers the loaded child directory and falls back to the parent", () => {
+  const job = { sessionID: "child", role: "QA", title: "Check", since: 1, status: "busy" as const }
+  assert.deepEqual(backgroundJobRouteParams(job, [{ ...child("child"), directory: "/child" }], "/parent"), {
+    id: "child",
+    directory: "/child",
+  })
+  assert.deepEqual(backgroundJobRouteParams(job, [], "/parent"), { id: "child", directory: "/parent" })
 })
 
 test("legacy direct busy child uses parent task metadata", () => {
