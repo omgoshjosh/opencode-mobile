@@ -3,11 +3,19 @@ import assert from "node:assert/strict"
 import {
   NEXT_CURSOR_HEADER,
   REFRESH_WINDOW_CAP,
+  REFRESH_PAGE_CAP,
+  TRANSCRIPT_PART_BUDGET,
+  TRANSCRIPT_RENDER_BUDGET,
   isPendingMessage,
+  mergeRefreshMessages,
   mergeOlderPage,
   mergeOlderParts,
   nextCursorFrom,
+  oldestLoadedMessageID,
   refreshWindowSize,
+  shouldFetchRefreshPage,
+  transcriptPageParams,
+  transcriptPageQuery,
 } from "./message-page.ts"
 import type { Message, Part } from "./sdk.ts"
 
@@ -40,6 +48,30 @@ test("the cursor header is matched case-insensitively", () => {
 
 test("a blank cursor is treated as absent, not as a valid cursor", () => {
   assert.equal(nextCursorFrom(headers({ [NEXT_CURSOR_HEADER]: "   " })), undefined)
+})
+
+test("an RFC Link next cursor is read when the dedicated header is absent", () => {
+  assert.equal(nextCursorFrom(headers({ Link: '</session/s/message?before=opaque%2Fcursor>; rel="next"' })), "opaque/cursor")
+})
+
+test("the dedicated opaque cursor wins over a Link cursor", () => {
+  assert.equal(nextCursorFrom(headers({ "x-next-cursor": "opaque==", Link: '</?before=wrong>; rel=next' })), "opaque==")
+})
+
+test("transcript pages always carry render and part budgets", () => {
+  assert.deepEqual(transcriptPageParams(50, "cursor"), {
+    limit: 50,
+    before: "cursor",
+    renderBudget: TRANSCRIPT_RENDER_BUDGET,
+    partBudget: TRANSCRIPT_PART_BUDGET,
+  })
+})
+
+test("page query serializes cursor and both budget parameters", () => {
+  assert.equal(
+    transcriptPageQuery(transcriptPageParams(50, "opaque+/=")),
+    "limit=50&before=opaque%2B%2F%3D&renderBudget=40000&partBudget=4000",
+  )
 })
 
 // --- merging older pages ---
@@ -119,4 +151,25 @@ test("the refresh window is capped", () => {
 test("a nonsense page size still yields a positive window", () => {
   assert.ok(refreshWindowSize(0, 0) >= 1)
   assert.ok(refreshWindowSize(-5, -5) >= 1)
+})
+
+test("refresh asks for older pages until it covers the loaded oldest message", () => {
+  assert.equal(shouldFetchRefreshPage({ fetched: [msg("c")], oldestLoadedID: "a", nextCursor: "b", pages: 1 }), true)
+  assert.equal(shouldFetchRefreshPage({ fetched: [msg("a"), msg("c")], oldestLoadedID: "a", nextCursor: "b", pages: 2 }), false)
+})
+
+test("refresh stops at cursor exhaustion and its defensive cap", () => {
+  assert.equal(shouldFetchRefreshPage({ fetched: [], oldestLoadedID: "a", pages: 1 }), false)
+  assert.equal(shouldFetchRefreshPage({ fetched: [], oldestLoadedID: "a", nextCursor: "b", pages: REFRESH_PAGE_CAP }), false)
+})
+
+test("refresh merges server pages without losing optimistic or older messages", () => {
+  const live = { ...msg("b"), time: { created: 1, completed: 2 } }
+  const merged = mergeRefreshMessages({ existing: [msg("a"), live, msg("temp-1")], fetched: [msg("a"), msg("b"), msg("c")] })
+  assert.deepEqual(merged.map((message) => message.id), ["a", "b", "c", "temp-1"])
+  assert.equal(merged[1].time.completed, undefined)
+})
+
+test("the oldest loaded message ignores optimistic sends", () => {
+  assert.equal(oldestLoadedMessageID([msg("temp-1"), msg("a")]), "a")
 })

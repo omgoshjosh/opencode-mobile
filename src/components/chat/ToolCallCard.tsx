@@ -15,6 +15,7 @@ import { modelIDDisplayLabel } from "../../lib/model-label"
 import { useViewer } from "../../stores/viewer"
 import { useSessions } from "../../stores/sessions"
 import { useCatalog } from "../../stores/catalog"
+import { isToolOutputTruncated, stagedToolOutput } from "../../lib/tool-output"
 
 const TOOL_ICONS: Record<string, string> = {
   read: "glasses-outline",
@@ -607,7 +608,8 @@ const TOOL_DETAILS: Record<string, (props: ToolDetailProps) => React.ReactElemen
 
 function ToolDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
   const render = (tool.tool && TOOL_DETAILS[tool.tool]) || undefined
-  const props: ToolDetailProps = { tool, input: tool.state?.input, output: tool.state?.output, isDark }
+  const output = typeof tool.state?.output === "string" ? stagedToolOutput(tool.state.output, isToolOutputTruncated(tool)) : tool.state?.output
+  const props: ToolDetailProps = { tool, input: tool.state?.input, output, isDark }
   if (render) return render(props)
   return <GenericDetail input={props.input} output={props.output} isDark={isDark} />
 }
@@ -621,7 +623,16 @@ function openFullOutput(tool: Part) {
   useViewer.getState().showToolOutput({
     title: toolCallTitle(tool),
     input: inputText,
-    output: typeof tool.state?.output === "string" ? tool.state.output : JSON.stringify(tool.state?.output, null, 2),
+    output: stagedToolOutput(
+      typeof tool.state?.output === "string" ? tool.state.output : JSON.stringify(tool.state?.output, null, 2),
+      isToolOutputTruncated(tool),
+    ),
+    sessionID: tool.sessionID ?? useSessions.getState().currentSession?.id ?? "",
+    messageID: tool.messageID,
+    partID: tool.id,
+    callID: tool.callID,
+    directory: useSessions.getState().currentSession?.directory,
+    truncated: isToolOutputTruncated(tool),
   })
   router.push("/tool-output")
 }
@@ -771,7 +782,7 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded, fallbackStartTim
           button rendered but presses did nothing). Long output in a
           scroll-inside-scroll card is miserable anyway; this pushes a full
           screen with selectable mono text and extracted links. */}
-      {expanded && typeof tool.state?.output === "string" && tool.state.output.length > 280 && (
+      {expanded && typeof tool.state?.output === "string" && (tool.state.output.length > 280 || isToolOutputTruncated(tool)) && (
         <TouchableOpacity style={s.openOutput} onPress={() => openFullOutput(tool)} testID="open-full-output">
           <Ionicons name="expand-outline" size={13} color="#6d28d9" />
           <Text style={s.openOutputText}>Open full output</Text>
