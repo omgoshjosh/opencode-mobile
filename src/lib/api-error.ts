@@ -11,12 +11,19 @@
 /** Thrown by sdk.ts's request()/events() when the server responds 401/403,
  *  so call sites can distinguish "bad credentials" from any other failure
  *  (network error, 5xx, timeout) instead of catching a generic Error. */
-export class ApiAuthError extends Error {
+export class ApiError extends Error {
   readonly status: number
   constructor(status: number, message: string) {
     super(message)
-    this.name = "ApiAuthError"
+    this.name = "ApiError"
     this.status = status
+  }
+}
+
+export class ApiAuthError extends ApiError {
+  constructor(status: number, message: string) {
+    super(status, message)
+    this.name = "ApiAuthError"
   }
 }
 
@@ -27,8 +34,8 @@ export function isAuthStatus(status: number): boolean {
 }
 
 /** Build the right error type for a failed HTTP response. */
-export function apiErrorFor(status: number, message: string): Error {
-  return isAuthStatus(status) ? new ApiAuthError(status, message) : new Error(message)
+export function apiErrorFor(status: number, message: string): ApiError {
+  return isAuthStatus(status) ? new ApiAuthError(status, message) : new ApiError(status, message)
 }
 
 /** Type guard for call sites (e.g. the SSE reconnect loop) that need to branch

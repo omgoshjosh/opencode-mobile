@@ -17,7 +17,7 @@ test("legacy direct busy child uses parent task metadata", () => {
     statuses: { child: { type: "busy" } },
     parts: [{ type: "tool", tool: "task", time: { start: 10 }, state: { status: "running", title: "task", input: { swarm_role: "QA" }, metadata: { sessionId: "child" } } } as any],
   })
-  assert.deepEqual(result, { running: 1, jobs: [{ sessionID: "child", role: "QA", title: "task", since: 10, status: "busy" }] })
+  assert.deepEqual(result, { running: 1, jobs: [{ sessionID: "child", role: "QA", title: "Task QA: delegation", since: 10, status: "busy" }] })
 })
 
 test("completed parent task excludes stale busy child", () => {
@@ -39,12 +39,23 @@ test("SSE keeps only touched IDs over a GET snapshot", () => {
 
 test("omitted background preserves while explicit zero clears", () => {
   const prior = { type: "busy", background: { running: 1, jobs: [{ sessionID: "child", role: "QA", title: "Check", since: 1 }] } } as const
-  assert.equal(mergeStatusEvent(prior, { type: "busy" }, 2).background?.running, 1)
-  assert.equal(mergeStatusEvent(prior, { type: "idle", background: { running: 0, jobs: [] } }, 2).background?.running, 0)
+  assert.deepEqual(mergeStatusEvent(prior, { type: "idle" }), { type: "idle", background: prior.background })
+  assert.deepEqual(mergeStatusEvent(prior, { type: "retry", attempt: 2, message: "again" }), { type: "retry", attempt: 2, message: "again", background: prior.background })
+  assert.deepEqual(mergeStatusEvent(prior, { type: "idle", background: { running: 0, jobs: [] } }), { type: "idle", background: { running: 0, jobs: [] } })
 })
 
 test("modern jobs control sibling order and terminal legacy jobs disappear everywhere", () => {
   const modern = backgroundFor({ parentID: parent, sessions: [child("a"), child("b")], statuses: { [parent]: { type: "busy", background: { running: 2, jobs: [{ sessionID: "b", role: "B", title: "B", since: 2 }, { sessionID: "a", role: "A", title: "A", since: 1 }] } } } })
   assert.deepEqual(modern?.jobs.map((job) => job.sessionID), ["a", "b"])
   assert.equal(backgroundFor({ parentID: parent, sessions: [child("a")], statuses: { a: { type: "busy" } }, terminalChildIDs: { a: true } }), undefined)
+})
+
+test("swarm role derives a useful task title", () => {
+  const result = backgroundFor({
+    parentID: parent,
+    sessions: [child("child")],
+    statuses: { child: { type: "busy" } },
+    parts: [{ type: "tool", tool: "task", state: { status: "running", input: { swarm_role: "QA", prompt: "Review background activity" }, metadata: { sessionId: "child" } } } as any],
+  })
+  assert.equal(result?.jobs[0].title, "Task QA: Review background activity")
 })

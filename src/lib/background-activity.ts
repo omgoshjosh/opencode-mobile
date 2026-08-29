@@ -25,7 +25,15 @@ function taskFor(parts: Part[], sessionID: string): Part | undefined {
 
 function taskTitle(part: Part): string {
   const input = record(part.state?.input)
-  return text(input?.description) ?? toolCallTitle(part)
+  const stateTitle = text(part.state?.title)
+  if (stateTitle && stateTitle.toLowerCase() !== "task") return stateTitle
+  const swarmRole = text(input?.swarm_role)
+  const role = swarmRole ?? text(input?.subagent_type) ?? text(input?.role)
+  const { swarm_role: _swarmRole, subagent_type: _subagentType, description: _description, ...rest } = input ?? {}
+  return toolCallTitle({
+    ...part,
+    state: { ...part.state, input: swarmRole ? { ...rest, role: swarmRole } : { ...input, subagent_type: role } },
+  })
 }
 
 /** The server count is authoritative, including an explicit zero. */
@@ -70,11 +78,10 @@ export function compareJobs(a: BackgroundJob, b: BackgroundJob): number {
   return a.since - b.since || a.sessionID.localeCompare(b.sessionID)
 }
 
-export function mergeStatusEvent(previous: SessionStatus | undefined, incoming: SessionStatus, now: number): SessionStatus {
-  const next = { ...previous, ...incoming } as SessionStatus
-  if (next.type !== "busy") return next
-  const inherited = incoming.type === "busy" && incoming.since === undefined && previous?.type === "busy" ? previous.since : undefined
-  return { ...next, ...(inherited !== undefined ? { since: inherited } : {}), ...(next.since === undefined ? { since: now, lastActivityAt: now } : {}) }
+export function mergeStatusEvent(previous: SessionStatus | undefined, incoming: SessionStatus): SessionStatus {
+  // Preserve only the aggregate when omitted; status variants own their fields.
+  const background = "background" in incoming ? incoming.background : previous?.background
+  return { ...incoming, ...(background !== undefined ? { background } : {}) }
 }
 
 export function mergeStatusSnapshot(

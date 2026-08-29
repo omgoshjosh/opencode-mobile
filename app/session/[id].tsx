@@ -210,19 +210,22 @@ export default function SessionScreen() {
 
   // One focused request per parent; empty and unsupported responses are remembered.
   useFocusEffect(useCallback(() => {
+    if (currentSession?.id !== id) return
     const parentID = currentSession?.parentID ?? currentSession?.id
-    if (!parentID || sessions.some((session) => session.parentID === parentID) || !sessionClient || fetchedChildren.current.has(parentID)) return
-    fetchedChildren.current.add(parentID)
+    if (!parentID || !sessionClient || fetchedChildren.current.has(parentID)) return
+    if (useSessions.getState().sessions.some((session) => session.parentID === parentID)) return
     const controller = new AbortController()
     sessionClient.session.children(parentID, controller.signal).then((children) => {
-      if (controller.signal.aborted || !children?.length) return
+      if (controller.signal.aborted) return
+      fetchedChildren.current.add(parentID)
+      if (!children?.length) return
       useSessions.setState((state) => {
         const additions = children.filter((child) => !state.sessions.some((session) => session.id === child.id))
         return additions.length ? { sessions: [...state.sessions, ...additions] } : {}
       })
     }).catch(() => {})
     return () => controller.abort()
-  }, [currentSession?.id, currentSession?.parentID, sessionClient, sessions]))
+  }, [currentSession?.id, currentSession?.parentID, id, sessionClient]))
 
   // Catalog
   const catalog = useCatalog()
@@ -961,7 +964,8 @@ export default function SessionScreen() {
     const found = provider?.models.find((m) => m.id === model.modelID)
     return found?.variants
   }, [model, providers])
-  const activityParentID = currentSession?.parentID ?? currentSession?.id
+  const routeOwnsSession = currentSession?.id === id
+  const activityParentID = routeOwnsSession ? currentSession?.parentID ?? currentSession?.id : undefined
   const background = useMemo(
     () => activityParentID ? backgroundFor({ parentID: activityParentID, statuses, sessions, parts: Object.values(parts).flat(), terminalChildIDs }) : undefined,
     [activityParentID, statuses, sessions, parts, terminalChildIDs],
@@ -996,13 +1000,13 @@ export default function SessionScreen() {
           ),
            headerRight: () => (
             <View style={s.headerRight}>
-              {!currentSession?.parentID && background && background.running > 0 && (
+              {routeOwnsSession && !currentSession?.parentID && background && background.running > 0 && (
                 <TouchableOpacity style={s.workingChip} onPress={() => jobsSheetRef.current?.expand()} accessibilityRole="button" accessibilityLabel={`${background.running} working`} testID="background-jobs-chip">
                   <Text style={s.workingChipText}>{background.running} working</Text>
                 </TouchableOpacity>
               )}
-              {siblingIndex > 0 && <TouchableOpacity onPress={() => moveSibling(-1)} accessibilityLabel="Previous working sibling" style={s.siblingButton}><Ionicons name="chevron-back" size={20} color={isDark ? "#ddd" : "#555"} /></TouchableOpacity>}
-              {siblingIndex >= 0 && siblingIndex < siblings.length - 1 && <TouchableOpacity onPress={() => moveSibling(1)} accessibilityLabel="Next working sibling" style={s.siblingButton}><Ionicons name="chevron-forward" size={20} color={isDark ? "#ddd" : "#555"} /></TouchableOpacity>}
+              {routeOwnsSession && siblingIndex > 0 && <TouchableOpacity onPress={() => moveSibling(-1)} accessibilityLabel="Previous working sibling" style={s.siblingButton}><Ionicons name="chevron-back" size={20} color={isDark ? "#ddd" : "#555"} /></TouchableOpacity>}
+              {routeOwnsSession && siblingIndex >= 0 && siblingIndex < siblings.length - 1 && <TouchableOpacity onPress={() => moveSibling(1)} accessibilityLabel="Next working sibling" style={s.siblingButton}><Ionicons name="chevron-forward" size={20} color={isDark ? "#ddd" : "#555"} /></TouchableOpacity>}
               {shortDir && (
                 <View style={[s.dirBadge, isDark && s.dirBadgeDark]}>
                   <Ionicons name="folder-outline" size={14} color={isDark ? "#888888" : "#666666"} />
@@ -1024,8 +1028,8 @@ export default function SessionScreen() {
         }}
       />
 
-      {currentSession?.parentID && <GestureDetector gesture={siblingPan}><View style={s.siblingGesture} accessibilityLabel="Swipe to move between working siblings" /></GestureDetector>}
-      <BackgroundJobsSheet sheetRef={jobsSheetRef} jobs={background?.jobs ?? []} isDark={isDark} onOpen={(job) => {
+      {routeOwnsSession && currentSession?.parentID && <GestureDetector gesture={siblingPan}><View style={s.siblingGesture} accessibilityLabel="Swipe to move between working siblings" /></GestureDetector>}
+      <BackgroundJobsSheet sheetRef={jobsSheetRef} jobs={routeOwnsSession ? background?.jobs ?? [] : []} isDark={isDark} onOpen={(job) => {
         jobsSheetRef.current?.close()
         router.push({ pathname: "/session/[id]", params: { id: job.sessionID } })
       }} />

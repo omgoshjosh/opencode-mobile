@@ -378,7 +378,7 @@ export const useEvents = create<EventsState>((set, get) => ({
                 useSessions.getState().clearRunningTools(sessionID)
               }
 
-              const next = nextSessionStatus(previous, mergeStatusEvent(previous, status, Date.now()), Date.now())
+              const next = nextSessionStatus(previous, mergeStatusEvent(previous, status), Date.now())
               set((state) => ({
                 sessionStatus: { ...state.sessionStatus, [sessionID]: next },
                 // Clear status text when idle

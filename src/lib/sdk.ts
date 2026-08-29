@@ -8,7 +8,7 @@ import { clientInfoFrom, clientInfoHeader } from "./client-info"
 import * as Application from "expo-application"
 import { Platform } from "react-native"
 import { SSEParser } from "./sse"
-import { apiErrorFor } from "./api-error"
+import { apiErrorFor, ApiError } from "./api-error"
 import { loadSessionList } from "./session-list"
 import { LIVENESS_TIMEOUT_MS } from "./sse-liveness"
 import { nextCursorFrom } from "./message-page"
@@ -16,7 +16,7 @@ import { requestSignal } from "./request-signal"
 import type { FileRoot } from "./file-roots"
 import type { RoleInput as SwarmRoleInput, Swarm as SwarmInfo } from "./swarm-crud"
 
-export { ApiAuthError, isAuthError } from "./api-error"
+export { ApiError, ApiAuthError, isAuthError } from "./api-error"
 
 export interface ClientConfig {
   baseUrl: string
@@ -224,18 +224,6 @@ export interface SkillInfo {
 export type { RoleInput as SwarmRoleInput, Role as SwarmRole, Swarm as SwarmInfo } from "./swarm-crud"
 
 const REQUEST_TIMEOUT_MS = 30_000
-
-// Thrown by request() on a non-2xx response. Carries the HTTP status so
-// callers can distinguish e.g. 404 (older server, endpoint missing) from
-// other failures without parsing the message string.
-export class ApiError extends Error {
-  status: number
-  constructor(status: number, body: string) {
-    super(`API Error: ${status} - ${body}`)
-    this.name = "ApiError"
-    this.status = status
-  }
-}
 
 // Computed once: the native values cannot change while the app is running.
 // Lets the server identify which client build a request came from, which was
