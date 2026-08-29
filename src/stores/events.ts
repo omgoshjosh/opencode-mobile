@@ -12,6 +12,8 @@ import { isAuthError } from "../lib/api-error"
 import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
+import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
+import { canApplyStatusHydration } from "../lib/status-hydration"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Last-known statuses, persisted eagerly so the sessions list renders real
@@ -53,6 +55,7 @@ interface EventsState {
   reconnectAttempts: number
   lastDisconnectAt: number | null
   sessionStatus: Record<string, SessionStatus>
+  terminalChildIDs: Record<string, true>
   statusText: Record<string, string>
   // Permissions & questions (pending per session)
   permissions: Record<
@@ -95,6 +98,20 @@ interface EventsState {
 
 let controller: AbortController | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let statusLifecycle = 0
+const liveStatusIDs = new Set<string>()
+
+async function hydrateStatus(client: Client, lifecycle: number, signal: AbortSignal) {
+  try {
+    const snapshot = await client.session.status(signal)
+    if (!canApplyStatusHydration(lifecycle, statusLifecycle, signal) || !snapshot) return
+    useEvents.setState((state) => {
+      return { sessionStatus: mergeStatusSnapshot(state.sessionStatus, snapshot, liveStatusIDs, Date.now()) }
+    })
+  } catch (error) {
+    console.warn("[Events] Failed to hydrate session status:", error)
+  }
+}
 
 // Sessions that emitted session.error since they last went busy. SessionStatus
 // has no error variant — an errored session still ends with a busy -> idle
@@ -227,6 +244,7 @@ export const useEvents = create<EventsState>((set, get) => ({
   reconnectAttempts: 0,
   lastDisconnectAt: null,
   sessionStatus: {},
+  terminalChildIDs: {},
   statusText: {},
   permissions: {},
   questions: {},
@@ -242,6 +260,11 @@ export const useEvents = create<EventsState>((set, get) => ({
 
     const client = useConnections.getState().client
     if (!client) return
+
+    // A reconnect's GET is its fresh baseline. Only events from this socket,
+    // not cached or previous-socket values, may protect a newer local update.
+    liveStatusIDs.clear()
+    const lifecycle = ++statusLifecycle
 
     controller = new AbortController()
     const currentController = controller
@@ -326,6 +349,7 @@ export const useEvents = create<EventsState>((set, get) => ({
             if (shouldResetRetries({ receivedEvent: true })) {
               set({ connected: true, transport: "live", reconnectAttempts: 0, lastDisconnectAt: null })
             }
+            void hydrateStatus(client, lifecycle, currentController.signal)
           }
 
           const payload = (event as any).payload || event
@@ -337,6 +361,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               const sessionID = props.sessionID as string
               const status = props.status as SessionStatus
               if (!sessionID) break
+              liveStatusIDs.add(sessionID)
 
               // Detect busy → idle transition for completion notification
               const previous = get().sessionStatus[sessionID]
@@ -354,7 +379,7 @@ export const useEvents = create<EventsState>((set, get) => ({
                 useSessions.getState().clearRunningTools(sessionID)
               }
 
-              const next = nextSessionStatus(previous, status, Date.now())
+              const next = nextSessionStatus(previous, mergeStatusEvent(previous, status), Date.now())
               set((state) => ({
                 sessionStatus: { ...state.sessionStatus, [sessionID]: next },
                 // Clear status text when idle
@@ -415,6 +440,19 @@ export const useEvents = create<EventsState>((set, get) => ({
             case "message.part.updated": {
               const part = props.part as Part | undefined
               if (!part) break
+
+              if (part.type === "tool" && part.tool === "task") {
+                const metadata = part.state?.metadata as { sessionId?: unknown } | undefined
+                const childID = typeof metadata?.sessionId === "string" ? metadata.sessionId : undefined
+                if (childID) {
+                  const terminal = part.state?.status === "completed" || part.state?.status === "error"
+                  set((state) => ({
+                    terminalChildIDs: terminal
+                      ? { ...state.terminalChildIDs, [childID]: true }
+                      : Object.fromEntries(Object.entries(state.terminalChildIDs).filter(([id]) => id !== childID)),
+                  }))
+                }
+              }
 
               // Update status text from the latest part
               const sessionID = (part as any).sessionID as string
@@ -609,16 +647,20 @@ export const useEvents = create<EventsState>((set, get) => ({
       clearTimeout(reconnectTimer)
       reconnectTimer = null
     }
+    // Invalidate a GET even when its transport ignores abort and resolves late.
+    statusLifecycle++
     controller?.abort()
     controller = null
     erroredSessions.clear()
     abortedSessions.clear()
+    liveStatusIDs.clear()
     set({
       connected: false,
       authError: false,
       reconnectAttempts: 0,
       lastDisconnectAt: null,
       sessionStatus: {},
+      terminalChildIDs: {},
       statusText: {},
       permissions: {},
       questions: {},

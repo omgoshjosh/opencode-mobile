@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { ApiAuthError, apiErrorFor, isAuthError, isAuthStatus } from "./api-error.ts"
+import { ApiAuthError, ApiError, apiErrorFor, isAuthError, isAuthStatus } from "./api-error.ts"
 
 test("isAuthStatus: 401 and 403 are auth failures", () => {
   assert.equal(isAuthStatus(401), true)
@@ -31,6 +31,12 @@ test("apiErrorFor: other statuses produce a plain Error, not ApiAuthError", () =
   assert.ok(err instanceof Error)
   assert.equal(err instanceof ApiAuthError, false)
   assert.equal(err.message, "API Error: 500 - Internal Server Error")
+})
+
+test("apiErrorFor: unsupported endpoint retains 404", () => {
+  const err = apiErrorFor(404, "missing")
+  assert.ok(err instanceof ApiError)
+  assert.equal(err.status, 404)
 })
 
 test("isAuthError: type guard matches only ApiAuthError instances", () => {

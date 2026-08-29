@@ -1,12 +1,5 @@
-export type SessionStatus =
-  | { type: "idle" }
-  | {
-      type: "busy"
-      since?: number
-      lastActivityAt?: number
-      runningTool?: { title?: string; startedAt?: number }
-    }
-  | { type: "retry"; attempt: number; message: string }
+import type { SessionStatus } from "./sdk"
+export type { SessionStatus } from "./sdk"
 
 /** Retain server evidence; create client evidence only for a new local epoch. */
 export function nextSessionStatus(previous: SessionStatus | undefined, next: SessionStatus, now: number): SessionStatus {
