@@ -1029,14 +1029,6 @@ export default function SessionScreen() {
       />
 
       {routeOwnsSession && currentSession?.parentID && <GestureDetector gesture={siblingPan}><View style={s.siblingGesture} accessibilityLabel="Swipe to move between working siblings" /></GestureDetector>}
-      <BackgroundJobsSheet sheetRef={jobsSheetRef} jobs={routeOwnsSession ? background?.jobs ?? [] : []} isDark={isDark} onOpen={(job) => {
-        jobsSheetRef.current?.close()
-        router.push({
-          pathname: "/session/[id]",
-          params: backgroundJobRouteParams(job, sessions, routeOwnsSession ? currentSession?.directory : undefined),
-        })
-      }} />
-
       <KeyboardAvoidingView
         style={[s.container, isDark && s.containerDark]}
         // Both platforms use "padding" so the composer/toolbar is pushed up
@@ -1392,6 +1384,14 @@ export default function SessionScreen() {
         isDark={isDark}
         onSelect={setVariant}
       />
+
+      <BackgroundJobsSheet sheetRef={jobsSheetRef} jobs={routeOwnsSession ? background?.jobs ?? [] : []} isDark={isDark} onOpen={(job) => {
+        jobsSheetRef.current?.close()
+        router.push({
+          pathname: "/session/[id]",
+          params: backgroundJobRouteParams(job, sessions, routeOwnsSession ? currentSession?.directory : undefined),
+        })
+      }} />
     </>
   )
 }
