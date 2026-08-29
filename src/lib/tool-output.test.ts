@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { isToolOutputTruncated, matchingToolPart, stagedToolOutput } from "./tool-output.ts"
+import { canApplyToolOutput, isToolOutputTruncated, matchingToolPart, stagedToolOutput } from "./tool-output.ts"
 import type { Part } from "./sdk.ts"
 
 const part = (id: string, callID?: string): Part => ({
@@ -25,4 +25,11 @@ test("tool output hydration matches a stable part id before call id", () => {
 test("missing full output retains staged fallback and recognizes daemon metadata", () => {
   assert.equal(matchingToolPart([part("p1")], { partID: "missing" }), undefined)
   assert.equal(isToolOutputTruncated({ ...part("p1"), state: { status: "completed", metadata: { outputTruncated: true } } }), true)
+})
+
+test("hydration cannot replace output after its payload changes or aborts", () => {
+  const request = {}
+  assert.equal(canApplyToolOutput(request, request, false), true)
+  assert.equal(canApplyToolOutput(request, {}, false), false)
+  assert.equal(canApplyToolOutput(request, request, true), false)
 })

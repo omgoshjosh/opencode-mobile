@@ -568,8 +568,13 @@ export function createClient(config: ClientConfig) {
           return { items: body, nextCursor: nextCursorFrom(headers) }
         } catch (error) {
           if (!(error instanceof ApiError) || !shouldRetryWithoutPartBudget(error.status, supportsPartBudget ? params.partBudget : undefined)) throw error
+          const { body, headers } = await requestWithHeaders<MessageWithParts[]>(
+            config,
+            `/session/${sessionID}/message?${transcriptPageQuery({ ...params, partBudget: undefined })}`,
+            { signal },
+            false,
+          )
           supportsPartBudget = false
-          const { body, headers } = await page(undefined)
           return { items: body, nextCursor: nextCursorFrom(headers) }
         }
       },

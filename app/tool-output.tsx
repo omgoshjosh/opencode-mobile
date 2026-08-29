@@ -6,7 +6,7 @@ import * as Clipboard from "expo-clipboard"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useViewer } from "../src/stores/viewer"
 import { extractLinks } from "../src/lib/link-extract"
-import { matchingToolPart } from "../src/lib/tool-output"
+import { canApplyToolOutput, matchingToolPart } from "../src/lib/tool-output"
 import { useConnections } from "../src/stores/connections"
 
 const mono = Platform.OS === "ios" ? "Menlo" : "monospace"
@@ -31,9 +31,10 @@ export default function ToolOutputScreen() {
     setOutput(payload?.output ?? "")
     setLoadState("idle")
     if (!payload?.truncated || !payload.sessionID || !payload.messageID) return
+    const connections = useConnections.getState()
     const client = payload.directory
-      ? useConnections.getState().clientForDirectory(payload.directory) ?? useConnections.getState().client
-      : useConnections.getState().client
+      ? connections.clientForDirectory(payload.directory) ?? (connections.clientBase ? null : connections.client)
+      : connections.client
     if (!client) return
     const controller = new AbortController()
     setLoadState("loading")
@@ -41,11 +42,13 @@ export default function ToolOutputScreen() {
       .then((message) => {
         const part = matchingToolPart(message.parts, payload)
         if (typeof part?.state?.output !== "string") throw new Error("Matching tool output was not returned")
-        setOutput(part.state.output)
-        setLoadState("idle")
+        if (canApplyToolOutput(payload, useViewer.getState().toolOutput, controller.signal.aborted)) {
+          setOutput(part.state.output)
+          setLoadState("idle")
+        }
       })
       .catch(() => {
-        if (!controller.signal.aborted) setLoadState("error")
+        if (canApplyToolOutput(payload, useViewer.getState().toolOutput, controller.signal.aborted)) setLoadState("error")
       })
     return () => controller.abort()
   }, [payload])
