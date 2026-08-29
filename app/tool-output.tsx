@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme, Platform, Linking, Alert } from "react-native"
 import { Stack } from "expo-router"
 import { Ionicons } from "@expo/vector-icons"
@@ -6,6 +6,8 @@ import * as Clipboard from "expo-clipboard"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useViewer } from "../src/stores/viewer"
 import { extractLinks } from "../src/lib/link-extract"
+import { matchingToolPart } from "../src/lib/tool-output"
+import { useConnections } from "../src/stores/connections"
 
 const mono = Platform.OS === "ios" ? "Menlo" : "monospace"
 
@@ -22,15 +24,40 @@ export default function ToolOutputScreen() {
   const insets = useSafeAreaInsets()
   const payload = useViewer((s) => s.toolOutput)
   const [copied, setCopied] = useState(false)
+  const [output, setOutput] = useState(payload?.output ?? "")
+  const [loadState, setLoadState] = useState<"idle" | "loading" | "error">("idle")
 
-  const links = useMemo(() => extractLinks(payload?.output), [payload?.output])
+  useEffect(() => {
+    setOutput(payload?.output ?? "")
+    setLoadState("idle")
+    if (!payload?.truncated || !payload.sessionID || !payload.messageID) return
+    const client = payload.directory
+      ? useConnections.getState().clientForDirectory(payload.directory) ?? useConnections.getState().client
+      : useConnections.getState().client
+    if (!client) return
+    const controller = new AbortController()
+    setLoadState("loading")
+    client.session.message(payload.sessionID, payload.messageID, controller.signal)
+      .then((message) => {
+        const part = matchingToolPart(message.parts, payload)
+        if (typeof part?.state?.output !== "string") throw new Error("Matching tool output was not returned")
+        setOutput(part.state.output)
+        setLoadState("idle")
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setLoadState("error")
+      })
+    return () => controller.abort()
+  }, [payload])
+
+  const links = useMemo(() => extractLinks(output), [output])
 
   const copyAll = useCallback(async () => {
     if (!payload) return
-    await Clipboard.setStringAsync(payload.output)
+    await Clipboard.setStringAsync(output)
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
-  }, [payload])
+  }, [payload, output])
 
   const copyLink = useCallback(async (url: string) => {
     await Clipboard.setStringAsync(url)
@@ -91,9 +118,11 @@ export default function ToolOutputScreen() {
             )}
 
             <Text style={[s.label, isDark && s.textDim]}>OUTPUT</Text>
+            {loadState === "loading" && <Text style={[s.status, isDark && s.textDim]}>Loading complete output...</Text>}
+            {loadState === "error" && <Text style={s.error}>Complete output unavailable; showing the captured output.</Text>}
             <View style={[s.block, isDark && s.blockDark]}>
               <Text style={[s.mono, isDark && s.monoDark]} selectable testID="tool-output-text">
-                {payload.output}
+                {output}
               </Text>
             </View>
           </>
@@ -125,4 +154,6 @@ const s = StyleSheet.create({
   },
   linkChipDark: { backgroundColor: "#2e1065" },
   linkText: { fontSize: 12, color: "#6d28d9", flexShrink: 1 },
+  status: { fontSize: 12, color: "#666666", marginBottom: 6 },
+  error: { fontSize: 12, color: "#dc2626", marginBottom: 6 },
 })

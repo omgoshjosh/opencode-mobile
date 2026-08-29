@@ -5,10 +5,16 @@ import { useSettings } from "./settings"
 import { addBreadcrumb } from "../lib/sentry"
 import { AnalyticsEvent, track } from "../lib/analytics"
 import { extractPromptFromParts, type PromptFromParts } from "../lib/prompt-from-parts"
-import { mergePendingMessages } from "../lib/message-delivery"
 import { mergeIncomingMessage } from "../lib/message-merge"
 import { isColdSessionLoad, isLiveEventForSession } from "../lib/session-load-reconcile"
-import { mergeOlderPage, mergeOlderParts, refreshWindowSize } from "../lib/message-page"
+import {
+  mergeOlderPage,
+  mergeOlderParts,
+  mergeRefreshMessages,
+  oldestLoadedMessageID,
+  shouldFetchRefreshPage,
+  transcriptPageParams,
+} from "../lib/message-page"
 import { canRenderFromCache, dropTranscript, getTranscript, putTranscript, type TranscriptCache } from "../lib/transcript-cache"
 import { dropPreview, parsePreviewMap, previewFromParts, previewText, putPreview, type PreviewMap } from "../lib/session-preview"
 import { markViewed, parseLastViewed, type LastViewedMap } from "../lib/session-attention"
@@ -389,7 +395,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
       const [session, page] = await Promise.all([
         client.session.get(sessionID, read.signal),
-        client.session.messagesPage(sessionID, { limit: pageSize() }, read.signal),
+        client.session.messagesPage(sessionID, transcriptPageParams(pageSize()), read.signal),
       ])
 
       // A newer selectSession started while we were fetching — discard this
@@ -482,10 +488,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
     try {
       set({ loadingMore: true })
 
-      const { items, nextCursor } = await client.session.messagesPage(session.id, {
-        limit: pageSize(),
-        before: cursor,
-      })
+      const { items, nextCursor } = await client.session.messagesPage(session.id, transcriptPageParams(pageSize(), cursor))
 
       // The user navigated to a different session while this page was in
       // flight — prepending it now would splice one session's history into
@@ -689,13 +692,30 @@ export const useSessions = create<SessionsState>((set, get) => ({
     const revision = transcriptRevision(session.id)
 
     try {
-      // Refresh exactly the window the user is looking at, not the whole
-      // session. Unbounded here meant every focus/resync re-downloaded the
-      // entire transcript; refreshWindowSize keeps what they paged into
-      // without letting a long session reopen that hole.
-      const response = await client.session.messages(session.id, {
-        limit: refreshWindowSize(get().messages.length, pageSize()),
-      }, signal)
+      const oldestLoadedID = oldestLoadedMessageID(get().messages)
+      let before: string | undefined
+      let nextCursor: string | undefined
+      let pages = 0
+      let response: MessageWithParts[] = []
+      do {
+        if (
+          signal?.aborted ||
+          seq !== selectSeq ||
+          get().currentSession?.id !== session.id ||
+          !isTranscriptActive(get().activeTranscriptSessionID, session.id) ||
+          !shouldApplyTranscriptSnapshot(revision, transcriptRevision(session.id))
+        ) return
+        const page = await client.session.messagesPage(session.id, transcriptPageParams(pageSize(), before), signal)
+        response = [...page.items, ...response]
+        nextCursor = page.nextCursor
+        before = nextCursor
+        pages += 1
+      } while (shouldFetchRefreshPage({
+        fetched: response.map((item) => item.info),
+        oldestLoadedID,
+        nextCursor,
+        pages,
+      }))
       if (
         signal?.aborted ||
         seq !== selectSeq ||
@@ -709,7 +729,12 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // The first successful HTTP writer wins; later concurrent snapshots
       // observe this revision change and cannot overwrite it out of order.
       bumpTranscriptRevision(session.id)
-      set((state) => ({ messages: mergePendingMessages(messages, state.messages), parts: { ...state.parts, ...parts } }))
+      set((state) => ({
+        messages: mergeRefreshMessages({ existing: state.messages, fetched: messages }),
+        parts: { ...state.parts, ...parts },
+        nextCursor,
+        hasMore: Boolean(nextCursor),
+      }))
     } catch (error) {
       if (
         signal?.aborted ||

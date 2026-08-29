@@ -11,7 +11,7 @@ import { SSEParser } from "./sse"
 import { apiErrorFor, ApiError } from "./api-error"
 import { loadSessionList } from "./session-list"
 import { LIVENESS_TIMEOUT_MS } from "./sse-liveness"
-import { nextCursorFrom } from "./message-page"
+import { nextCursorFrom, transcriptPageQuery } from "./message-page"
 import { requestSignal } from "./request-signal"
 import type { FileRoot } from "./file-roots"
 import type { RoleInput as SwarmRoleInput, Swarm as SwarmInfo } from "./swarm-crud"
@@ -138,7 +138,7 @@ export interface Part {
     // Tool-specific. For `task` this carries { sessionId, parentSessionId,
     // model, runID } — the link to the subagent's own session. See
     // src/lib/subagent-link.ts.
-    metadata?: unknown
+    metadata?: Record<string, unknown>
   }
   // Timing
   time?: { start?: number; end?: number }
@@ -525,6 +525,9 @@ export function createClient(config: ClientConfig) {
         return request<MessageWithParts[]>(config, `/session/${sessionID}/message${qs ? `?${qs}` : ""}`, { signal })
       },
 
+      message: (sessionID: string, messageID: string, signal?: AbortSignal) =>
+        request<MessageWithParts>(config, `/session/${sessionID}/message/${messageID}`, { signal }),
+
       /**
        * One page of a transcript, newest-first from `before` (or from the end
        * when `before` is omitted).
@@ -539,15 +542,13 @@ export function createClient(config: ClientConfig) {
        */
       messagesPage: async (
         sessionID: string,
-        params: { limit: number; before?: string },
+        params: { limit: number; before?: string; renderBudget?: number; partBudget?: number },
         signal?: AbortSignal,
       ): Promise<{ items: MessageWithParts[]; nextCursor?: string }> => {
-        const query = new URLSearchParams()
-        query.set("limit", String(params.limit))
-        if (params.before) query.set("before", params.before)
+        const query = transcriptPageQuery(params)
         const { body, headers } = await requestWithHeaders<MessageWithParts[]>(
           config,
-          `/session/${sessionID}/message?${query.toString()}`,
+          `/session/${sessionID}/message?${query}`,
           { signal },
         )
         return { items: body, nextCursor: nextCursorFrom(headers) }

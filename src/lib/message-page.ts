@@ -27,6 +27,9 @@ import type { Message, Part } from "./sdk"
 
 /** Case-insensitive: RN's Headers lowercases, some proxies do not. */
 export const NEXT_CURSOR_HEADER = "x-next-cursor"
+export const TRANSCRIPT_RENDER_BUDGET = 40_000
+export const TRANSCRIPT_PART_BUDGET = 4_000
+export const REFRESH_PAGE_CAP = 8
 
 /**
  * Optimistic messages live only on the client until the server acknowledges
@@ -48,7 +51,58 @@ export function isPendingMessage(message: Message): boolean {
 export function nextCursorFrom(headers: { get(name: string): string | null }): string | undefined {
   const raw = headers.get(NEXT_CURSOR_HEADER) ?? headers.get("X-Next-Cursor")
   const trimmed = raw?.trim()
-  return trimmed ? trimmed : undefined
+  if (trimmed) return trimmed
+
+  const link = headers.get("link") ?? headers.get("Link")
+  if (!link) return undefined
+  for (const entry of link.split(",")) {
+    const match = entry.match(/<([^>]+)>/)
+    if (!match || !/\brel\s*=\s*(?:"[^"]*\bnext\b[^"]*"|next\b)/i.test(entry)) continue
+    try {
+      const url = new URL(match[1], "https://opencode.invalid")
+      return url.searchParams.get("before") ?? url.searchParams.get("cursor") ?? undefined
+    } catch {
+      continue
+    }
+  }
+  return undefined
+}
+
+export function transcriptPageParams(limit: number, before?: string) {
+  return { limit, before, renderBudget: TRANSCRIPT_RENDER_BUDGET, partBudget: TRANSCRIPT_PART_BUDGET }
+}
+
+export function transcriptPageQuery(params: { limit: number; before?: string; renderBudget?: number; partBudget?: number }): string {
+  const query = new URLSearchParams({ limit: String(params.limit) })
+  if (params.before) query.set("before", params.before)
+  if (params.renderBudget) query.set("renderBudget", String(params.renderBudget))
+  if (params.partBudget) query.set("partBudget", String(params.partBudget))
+  return query.toString()
+}
+
+export function oldestLoadedMessageID(messages: Message[]): string | undefined {
+  return messages.find((message) => !isPendingMessage(message))?.id
+}
+
+export function shouldFetchRefreshPage(input: { fetched: Message[]; oldestLoadedID?: string; nextCursor?: string; pages: number }): boolean {
+  if (!input.oldestLoadedID || !input.nextCursor) return false
+  if (input.pages >= REFRESH_PAGE_CAP) return false
+  return !input.fetched.some((message) => message.id === input.oldestLoadedID)
+}
+
+/** Server pages are newest-first; preserve history outside the refreshed window and optimistic sends. */
+export function mergeRefreshMessages(input: { existing: Message[]; fetched: Message[] }): Message[] {
+  const existing = input.existing ?? []
+  const fetched = input.fetched ?? []
+  const ids = new Set<string>()
+  const merged = fetched.map((message) => {
+    ids.add(message.id)
+    return message
+  })
+  for (const message of existing) {
+    if (!ids.has(message.id) || isPendingMessage(message)) merged.push(message)
+  }
+  return merged
 }
 
 /**
