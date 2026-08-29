@@ -37,7 +37,7 @@ import {
   type SlashCommand,
   type Attachment,
 } from "../../src/components/chat"
-import { backgroundFor, runningChildren } from "../../src/lib/background-activity"
+import { backgroundFor } from "../../src/lib/background-activity"
 import { extractCopyText, hasCopyableText } from "../../src/lib/message-copy-text"
 import {
   resolveSessionAgent,
@@ -115,6 +115,7 @@ export default function SessionScreen() {
   const modelSheetRef = useRef<BottomSheet>(null)
   const variantSheetRef = useRef<BottomSheet>(null)
   const jobsSheetRef = useRef<BottomSheet>(null)
+  const fetchedChildren = useRef(new Set<string>())
   const [input, setInput] = useState("")
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [showInfo, setShowInfo] = useState(false)
@@ -146,6 +147,7 @@ export default function SessionScreen() {
   })
   const sessions = useSessions((state) => state.sessions)
   const statuses = useEvents((state) => state.sessionStatus)
+  const terminalChildIDs = useEvents((state) => state.terminalChildIDs)
   const loadDrafts = useDrafts((state) => state.load)
   const saveDraft = useDrafts((state) => state.save)
   const clearDraft = useDrafts((state) => state.clear)
@@ -206,15 +208,21 @@ export default function SessionScreen() {
     [currentSession?.directory, clientForDirectory, client],
   )
 
-  // The list normally already has children; fetch only for this focused route
-  // when it does not, never from individual list rows.
-  useEffect(() => {
+  // One focused request per parent; empty and unsupported responses are remembered.
+  useFocusEffect(useCallback(() => {
     const parentID = currentSession?.parentID ?? currentSession?.id
-    if (!parentID || sessions.some((session) => session.parentID === parentID) || !sessionClient) return
-    sessionClient.session.children(parentID).then((children) => useSessions.setState((state) => ({
-      sessions: [...state.sessions, ...children.filter((child) => !state.sessions.some((session) => session.id === child.id))],
-    }))).catch(() => {})
-  }, [currentSession?.id, currentSession?.parentID, sessionClient, sessions])
+    if (!parentID || sessions.some((session) => session.parentID === parentID) || !sessionClient || fetchedChildren.current.has(parentID)) return
+    fetchedChildren.current.add(parentID)
+    const controller = new AbortController()
+    sessionClient.session.children(parentID, controller.signal).then((children) => {
+      if (controller.signal.aborted || !children?.length) return
+      useSessions.setState((state) => {
+        const additions = children.filter((child) => !state.sessions.some((session) => session.id === child.id))
+        return additions.length ? { sessions: [...state.sessions, ...additions] } : {}
+      })
+    }).catch(() => {})
+    return () => controller.abort()
+  }, [currentSession?.id, currentSession?.parentID, sessionClient, sessions]))
 
   // Catalog
   const catalog = useCatalog()
@@ -953,19 +961,19 @@ export default function SessionScreen() {
     const found = provider?.models.find((m) => m.id === model.modelID)
     return found?.variants
   }, [model, providers])
+  const activityParentID = currentSession?.parentID ?? currentSession?.id
   const background = useMemo(
-    () => currentSession ? backgroundFor({ parentID: currentSession.id, statuses, sessions, parts: Object.values(parts).flat() }) : undefined,
-    [currentSession?.id, statuses, sessions, parts],
+    () => activityParentID ? backgroundFor({ parentID: activityParentID, statuses, sessions, parts: Object.values(parts).flat(), terminalChildIDs }) : undefined,
+    [activityParentID, statuses, sessions, parts, terminalChildIDs],
   )
-  const siblingParentID = currentSession?.parentID
-  const siblings = useMemo(
-    () => siblingParentID ? runningChildren(siblingParentID, statuses, sessions) : [],
-    [siblingParentID, statuses, sessions],
-  )
+  const siblings = useMemo(() => (background?.jobs ?? []).flatMap((job) => {
+    const session = sessions.find((item) => item.id === job.sessionID)
+    return session ? [session] : []
+  }), [background, sessions])
   const siblingIndex = siblings.findIndex((session) => session.id === currentSession?.id)
   const moveSibling = (offset: number) => {
     const sibling = siblings[siblingIndex + offset]
-    if (!sibling) return
+    if (!sibling || !background?.jobs.some((job) => job.sessionID === sibling.id)) return
     router.replace({ pathname: "/session/[id]", params: { id: sibling.id, ...(sibling.directory ? { directory: sibling.directory } : {}) } })
   }
   const siblingPan = Gesture.Pan().activeOffsetX([-20, 20]).onEnd((event) => {
@@ -988,7 +996,7 @@ export default function SessionScreen() {
           ),
            headerRight: () => (
             <View style={s.headerRight}>
-              {background && background.running > 0 && (
+              {!currentSession?.parentID && background && background.running > 0 && (
                 <TouchableOpacity style={s.workingChip} onPress={() => jobsSheetRef.current?.expand()} accessibilityRole="button" accessibilityLabel={`${background.running} working`} testID="background-jobs-chip">
                   <Text style={s.workingChipText}>{background.running} working</Text>
                 </TouchableOpacity>
@@ -1016,7 +1024,7 @@ export default function SessionScreen() {
         }}
       />
 
-      {siblingParentID && <GestureDetector gesture={siblingPan}><View style={s.siblingGesture} accessibilityLabel="Swipe to move between working siblings" /></GestureDetector>}
+      {currentSession?.parentID && <GestureDetector gesture={siblingPan}><View style={s.siblingGesture} accessibilityLabel="Swipe to move between working siblings" /></GestureDetector>}
       <BackgroundJobsSheet sheetRef={jobsSheetRef} jobs={background?.jobs ?? []} isDark={isDark} onOpen={(job) => {
         jobsSheetRef.current?.close()
         router.push({ pathname: "/session/[id]", params: { id: job.sessionID } })

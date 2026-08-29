@@ -6,11 +6,13 @@ import type { BackgroundJob } from "../../lib/background-activity"
 
 export function BackgroundJobsSheet({ sheetRef, jobs, isDark, onOpen }: { sheetRef: React.RefObject<BottomSheet | null>; jobs: BackgroundJob[]; isDark: boolean; onOpen: (job: BackgroundJob) => void }) {
   const [now, setNow] = useState(Date.now())
+  const [open, setOpen] = useState(false)
   useEffect(() => {
+    if (!open) return
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [])
-  return <BottomSheet ref={sheetRef} index={-1} snapPoints={["45%"]} enableDynamicSizing={false} enablePanDownToClose backgroundStyle={isDark ? s.dark : s.sheet} backdropComponent={(props: any) => <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} opacity={0.5} />}>
+  }, [open])
+  return <BottomSheet ref={sheetRef} index={-1} onChange={(index) => setOpen(index >= 0)} snapPoints={["45%"]} enableDynamicSizing={false} enablePanDownToClose backgroundStyle={isDark ? s.dark : s.sheet} backdropComponent={(props: any) => <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} opacity={0.5} />}>
     <Text style={[s.title, isDark && s.white]}>Working</Text>
     <BottomSheetFlatList data={jobs} keyExtractor={(job: BackgroundJob) => job.sessionID} renderItem={({ item }: { item: BackgroundJob }) => <TouchableOpacity style={s.row} onPress={() => onOpen(item)} accessibilityLabel={`${item.title}, ${item.role}, working`}>
       <View style={s.copy}><Text style={[s.job, isDark && s.white]} numberOfLines={1}>{item.title}</Text><Text style={[s.meta, isDark && s.dim]}>{item.role} · {formatElapsed(Math.max(0, now - item.since))} · working</Text></View>

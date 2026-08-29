@@ -197,13 +197,11 @@ export interface Event {
   properties: Record<string, unknown>
 }
 
-export interface SessionStatus {
-  type: "idle" | "busy" | "retry"
-  background?: {
-    running: number
-    jobs: Array<{ sessionID: string; role: string; title: string; since: number }>
-  }
-}
+export type BackgroundStatus = { running: number; jobs: Array<{ sessionID: string; role: string; title: string; since: number }> }
+export type SessionStatus =
+  | { type: "idle"; background?: BackgroundStatus }
+  | { type: "busy"; since?: number; lastActivityAt?: number; runningTool?: { title?: string; startedAt?: number }; background?: BackgroundStatus }
+  | { type: "retry"; attempt: number; message: string; background?: BackgroundStatus }
 
 export interface HealthResponse {
   healthy: boolean
@@ -500,9 +498,23 @@ export function createClient(config: ClientConfig) {
 
        get: (sessionID: string, signal?: AbortSignal) => request<Session>(config, `/session/${sessionID}`, { signal }),
 
-       status: (signal?: AbortSignal) => request<Record<string, SessionStatus>>(config, "/session/status", { signal }),
+       status: async (signal?: AbortSignal): Promise<Record<string, SessionStatus> | null> => {
+         try {
+           return await request<Record<string, SessionStatus>>(config, "/session/status", { signal })
+         } catch (error) {
+           if (error instanceof ApiError && error.status === 404) return null
+           throw error
+         }
+       },
 
-       children: (sessionID: string, signal?: AbortSignal) => request<Session[]>(config, `/session/${sessionID}/children`, { signal }),
+       children: async (sessionID: string, signal?: AbortSignal): Promise<Session[] | null> => {
+         try {
+           return await request<Session[]>(config, `/session/${sessionID}/children`, { signal })
+         } catch (error) {
+           if (error instanceof ApiError && error.status === 404) return null
+           throw error
+         }
+       },
 
       create: (params?: { title?: string }) =>
         request<Session>(config, "/session", {

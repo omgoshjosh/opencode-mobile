@@ -161,7 +161,10 @@ const SessionItem = memo(function SessionItem({
       ? modelDisplayLabel(providers, { providerID: session.model.providerID, modelID: session.model.id })
       : null
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
-  const backgroundRunning = useEvents((s) => backgroundFor({ parentID: session.id, statuses: s.sessionStatus, sessions: useSessions.getState().sessions })?.running ?? 0)
+  const allSessions = useSessions((s) => s.sessions)
+  const statuses = useEvents((s) => s.sessionStatus)
+  const terminalChildIDs = useEvents((s) => s.terminalChildIDs)
+  const backgroundRunning = backgroundFor({ parentID: session.id, statuses, sessions: allSessions, terminalChildIDs })?.running ?? 0
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
@@ -287,7 +290,10 @@ const SessionRowV2 = memo(function SessionRowV2({
   const providers = useCatalog((c) => c.providers)
   const preview = useSessions((s) => s.previews[session.id]?.text)
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
-  const backgroundRunning = useEvents((s) => backgroundFor({ parentID: session.id, statuses: s.sessionStatus, sessions: useSessions.getState().sessions })?.running ?? 0)
+  const allSessions = useSessions((s) => s.sessions)
+  const statuses = useEvents((s) => s.sessionStatus)
+  const terminalChildIDs = useEvents((s) => s.terminalChildIDs)
+  const backgroundRunning = backgroundFor({ parentID: session.id, statuses, sessions: allSessions, terminalChildIDs })?.running ?? 0
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined

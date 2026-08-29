@@ -12,6 +12,7 @@ import { isAuthError } from "../lib/api-error"
 import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
+import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Last-known statuses, persisted eagerly so the sessions list renders real
@@ -32,7 +33,6 @@ export async function restoreStatusCache() {
 import { isHealthy, shouldReconnectOnResume, shouldResetRetries, type TransportState } from "../lib/sse-liveness"
 import { RECONCILE_MESSAGE_LIMIT } from "../lib/message-page"
 import type { Client, Part, Session, Message } from "../lib/sdk"
-import type { SessionStatus as StatusSnapshot } from "../lib/sdk"
 
 interface EventsState {
   /**
@@ -53,7 +53,8 @@ interface EventsState {
   authError: boolean
   reconnectAttempts: number
   lastDisconnectAt: number | null
-  sessionStatus: Record<string, SessionStatus & Pick<StatusSnapshot, "background">>
+  sessionStatus: Record<string, SessionStatus>
+  terminalChildIDs: Record<string, true>
   statusText: Record<string, string>
   // Permissions & questions (pending per session)
   permissions: Record<
@@ -96,18 +97,15 @@ interface EventsState {
 
 let controller: AbortController | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-let statusRevision = 0
 let statusLifecycle = 0
 const liveStatusIDs = new Set<string>()
 
-async function hydrateStatus(client: Client, revision: number, lifecycle: number) {
+async function hydrateStatus(client: Client, lifecycle: number) {
   try {
     const snapshot = await client.session.status()
-    // An SSE event that landed after this request started is newer truth.
-    if (statusRevision !== revision || statusLifecycle !== lifecycle) return
+    if (statusLifecycle !== lifecycle || !snapshot) return
     useEvents.setState((state) => {
-      const current = Object.fromEntries(Object.entries(state.sessionStatus).filter(([id]) => liveStatusIDs.has(id)))
-      return { sessionStatus: { ...(snapshot as EventsState["sessionStatus"]), ...current } }
+      return { sessionStatus: mergeStatusSnapshot(state.sessionStatus, snapshot, liveStatusIDs) }
     })
   } catch (error) {
     console.warn("[Events] Failed to hydrate session status:", error)
@@ -245,6 +243,7 @@ export const useEvents = create<EventsState>((set, get) => ({
   reconnectAttempts: 0,
   lastDisconnectAt: null,
   sessionStatus: {},
+  terminalChildIDs: {},
   statusText: {},
   permissions: {},
   questions: {},
@@ -349,7 +348,7 @@ export const useEvents = create<EventsState>((set, get) => ({
             if (shouldResetRetries({ receivedEvent: true })) {
               set({ connected: true, transport: "live", reconnectAttempts: 0, lastDisconnectAt: null })
             }
-            void hydrateStatus(client, statusRevision, lifecycle)
+            void hydrateStatus(client, lifecycle)
           }
 
           const payload = (event as any).payload || event
@@ -359,9 +358,8 @@ export const useEvents = create<EventsState>((set, get) => ({
           switch (type) {
             case "session.status": {
               const sessionID = props.sessionID as string
-              const status = props.status as SessionStatus & Pick<StatusSnapshot, "background">
+              const status = props.status as SessionStatus
               if (!sessionID) break
-              statusRevision++
               liveStatusIDs.add(sessionID)
 
               // Detect busy → idle transition for completion notification
@@ -380,9 +378,9 @@ export const useEvents = create<EventsState>((set, get) => ({
                 useSessions.getState().clearRunningTools(sessionID)
               }
 
-              const next = nextSessionStatus(previous, status, Date.now())
+              const next = nextSessionStatus(previous, mergeStatusEvent(previous, status, Date.now()), Date.now())
               set((state) => ({
-                sessionStatus: { ...state.sessionStatus, [sessionID]: { ...next, ...(status.background ? { background: status.background } : {}) } },
+                sessionStatus: { ...state.sessionStatus, [sessionID]: next },
                 // Clear status text when idle
                 statusText: status.type === "idle" ? { ...state.statusText, [sessionID]: "" } : state.statusText,
               }))
@@ -441,6 +439,19 @@ export const useEvents = create<EventsState>((set, get) => ({
             case "message.part.updated": {
               const part = props.part as Part | undefined
               if (!part) break
+
+              if (part.type === "tool" && part.tool === "task") {
+                const metadata = part.state?.metadata as { sessionId?: unknown } | undefined
+                const childID = typeof metadata?.sessionId === "string" ? metadata.sessionId : undefined
+                if (childID) {
+                  const terminal = part.state?.status === "completed" || part.state?.status === "error"
+                  set((state) => ({
+                    terminalChildIDs: terminal
+                      ? { ...state.terminalChildIDs, [childID]: true }
+                      : Object.fromEntries(Object.entries(state.terminalChildIDs).filter(([id]) => id !== childID)),
+                  }))
+                }
+              }
 
               // Update status text from the latest part
               const sessionID = (part as any).sessionID as string
@@ -646,6 +657,7 @@ export const useEvents = create<EventsState>((set, get) => ({
       reconnectAttempts: 0,
       lastDisconnectAt: null,
       sessionStatus: {},
+      terminalChildIDs: {},
       statusText: {},
       permissions: {},
       questions: {},

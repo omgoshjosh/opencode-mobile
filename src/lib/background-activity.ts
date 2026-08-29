@@ -1,4 +1,4 @@
-import type { Part, Session } from "./sdk"
+import type { Part, Session, SessionStatus } from "./sdk"
 import { toolCallTitle } from "./tool-titles.ts"
 
 export interface BackgroundJob {
@@ -9,10 +9,7 @@ export interface BackgroundJob {
   status: "busy"
 }
 
-export interface SessionStatusSnapshot {
-  type: string
-  background?: { running: number; jobs: Array<Omit<BackgroundJob, "status">> }
-}
+export type SessionStatusSnapshot = SessionStatus
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
@@ -37,11 +34,13 @@ export function backgroundFor({
   statuses,
   sessions,
   parts = [],
+  terminalChildIDs = {},
 }: {
   parentID: string
   statuses: Record<string, SessionStatusSnapshot>
   sessions: Session[]
   parts?: Part[]
+  terminalChildIDs?: Record<string, true>
 }): { running: number; jobs: BackgroundJob[] } | undefined {
   const modern = statuses[parentID]?.background
   if (modern) {
@@ -50,7 +49,7 @@ export function backgroundFor({
   }
 
   const jobs = sessions.flatMap((session) => {
-    if (session.parentID !== parentID || statuses[session.id]?.type !== "busy") return []
+    if (session.parentID !== parentID || statuses[session.id]?.type !== "busy" || terminalChildIDs[session.id]) return []
     const task = taskFor(parts, session.id)
     // A parent task completion/error closes its child immediately, even when
     // the child's busy event arrived late or its idle event was missed.
@@ -71,8 +70,17 @@ export function compareJobs(a: BackgroundJob, b: BackgroundJob): number {
   return a.since - b.since || a.sessionID.localeCompare(b.sessionID)
 }
 
-export function runningChildren(parentID: string, statuses: Record<string, SessionStatusSnapshot>, sessions: Session[]): Session[] {
-  return sessions
-    .filter((session) => session.parentID === parentID && statuses[session.id]?.type === "busy")
-    .sort((a, b) => a.time.updated - b.time.updated || a.id.localeCompare(b.id))
+export function mergeStatusEvent(previous: SessionStatus | undefined, incoming: SessionStatus, now: number): SessionStatus {
+  const next = { ...previous, ...incoming } as SessionStatus
+  if (next.type !== "busy") return next
+  const inherited = incoming.type === "busy" && incoming.since === undefined && previous?.type === "busy" ? previous.since : undefined
+  return { ...next, ...(inherited !== undefined ? { since: inherited } : {}), ...(next.since === undefined ? { since: now, lastActivityAt: now } : {}) }
+}
+
+export function mergeStatusSnapshot(
+  current: Record<string, SessionStatus>,
+  snapshot: Record<string, SessionStatus>,
+  touched: Set<string>,
+): Record<string, SessionStatus> {
+  return { ...snapshot, ...Object.fromEntries(Object.entries(current).filter(([id]) => touched.has(id))) }
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { backgroundFor } from "./background-activity.ts"
+import { backgroundFor, mergeStatusEvent, mergeStatusSnapshot } from "./background-activity.ts"
 
 const parent = "parent"
 const child = (id: string) => ({ id, parentID: parent, title: id, agent: "general", time: { created: 1, updated: 20 } }) as any
@@ -28,4 +28,23 @@ test("completed parent task excludes stale busy child", () => {
     parts: [{ type: "tool", tool: "task", state: { status: "completed", metadata: { sessionId: "child" } } } as any],
   })
   assert.equal(result, undefined)
+})
+
+test("SSE keeps only touched IDs over a GET snapshot", () => {
+  assert.deepEqual(
+    mergeStatusSnapshot({ fresh: { type: "busy" }, stale: { type: "busy" } }, { fresh: { type: "idle" }, stale: { type: "idle" } }, new Set(["fresh"])),
+    { fresh: { type: "busy" }, stale: { type: "idle" } },
+  )
+})
+
+test("omitted background preserves while explicit zero clears", () => {
+  const prior = { type: "busy", background: { running: 1, jobs: [{ sessionID: "child", role: "QA", title: "Check", since: 1 }] } } as const
+  assert.equal(mergeStatusEvent(prior, { type: "busy" }, 2).background?.running, 1)
+  assert.equal(mergeStatusEvent(prior, { type: "idle", background: { running: 0, jobs: [] } }, 2).background?.running, 0)
+})
+
+test("modern jobs control sibling order and terminal legacy jobs disappear everywhere", () => {
+  const modern = backgroundFor({ parentID: parent, sessions: [child("a"), child("b")], statuses: { [parent]: { type: "busy", background: { running: 2, jobs: [{ sessionID: "b", role: "B", title: "B", since: 2 }, { sessionID: "a", role: "A", title: "A", since: 1 }] } } } })
+  assert.deepEqual(modern?.jobs.map((job) => job.sessionID), ["a", "b"])
+  assert.equal(backgroundFor({ parentID: parent, sessions: [child("a")], statuses: { a: { type: "busy" } }, terminalChildIDs: { a: true } }), undefined)
 })
