@@ -9,7 +9,7 @@ import { addBreadcrumb } from "../lib/sentry"
 import { AnalyticsEvent, track } from "../lib/analytics"
 import { recordSuccessfulSession } from "../lib/store-review"
 import { isAuthError } from "../lib/api-error"
-import { fetchReconnectMessages, isSessionActuallyIdle } from "../lib/session-status-reconcile"
+import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
@@ -248,7 +248,7 @@ async function resyncBusySessions() {
         // enough. This previously fetched the ENTIRE session — on every
         // reconnect, for every session this client believed was busy.
         const sendingRevision = optimisticSendingRevision(sessionID)
-        const response = await fetchReconnectMessages(client, sessionID)
+        const response = await client.session.messages(sessionID, { limit: 1 })
         const messages = (response || []).map((m) => m.info)
         if (!isSessionActuallyIdle(messages)) return // server says still busy - leave it alone
 
