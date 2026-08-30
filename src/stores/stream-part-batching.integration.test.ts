@@ -3,7 +3,15 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 
 const session = (id: string) => ({ id, slug: id, projectID: "p", directory: "", title: id, version: "1", time: { created: 1, updated: 1 } })
-const drain = async () => { for (let i = 0; i < 12; i++) await Promise.resolve() }
+const waitForStore = (store: { getState: () => unknown; subscribe: (listener: () => void) => () => void }, matches: () => boolean) =>
+  new Promise<void>((resolve) => {
+    if (matches()) return resolve()
+    const stop = store.subscribe(() => {
+      if (!matches()) return
+      stop()
+      resolve()
+    })
+  })
 
 test("part received during selectSession fetch lands in its destination transcript", async () => {
   const { useSessions } = await import("./sessions")
@@ -144,12 +152,13 @@ test("SSE dispatcher flushes queued content on idle and stream closure", async (
   } } }
   useConnections.setState({ client })
   useEvents.getState().connect()
-  await drain()
+  await waitForStore(useEvents, () => useEvents.getState().sessionStatus.s1?.type === "idle")
   assert.equal(useSessions.getState().parts.m?.[0]?.text, "idle final")
   assert.equal(useEvents.getState().sessionStatus.s1.type, "idle")
   const status = useEvents.getState().statusText.s1
   flushPendingPartStatus(); flushPendingStreamParts()
   assert.equal(useEvents.getState().statusText.s1, status)
+  await waitForStore(useEvents, () => useEvents.getState().reconnectAttempts === 1)
   assert.equal(useEvents.getState().reconnectAttempts, 1)
   useEvents.getState().disconnect()
 })
@@ -168,7 +177,7 @@ test("SSE dispatcher flushes queued content before session.error cleanup", async
   } } }
   useConnections.setState({ client })
   useEvents.getState().connect()
-  await drain()
+  await waitForStore(useSessions, () => useSessions.getState().error === "boom")
   assert.equal(useSessions.getState().parts.m?.[0]?.text, "error final")
   assert.equal(useSessions.getState().error, "boom")
   const writes = useEvents.getState().statusText.s1
