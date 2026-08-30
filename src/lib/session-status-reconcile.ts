@@ -1,4 +1,15 @@
-import type { Message } from "./sdk"
+import type { Message, MessageWithParts } from "./sdk"
+
+type ReconcileMessagesClient = {
+  session: {
+    messages: (sessionID: string, params?: { limit?: number }) => Promise<MessageWithParts[] | null>
+  }
+}
+
+/** Fetch only the tail required to reconcile a missed busy -> idle event. */
+export function fetchReconnectMessages(client: ReconcileMessagesClient, sessionID: string) {
+  return client.session.messages(sessionID, { limit: 1 })
+}
 
 /**
  * Decide whether a session the client believes is "busy" has actually

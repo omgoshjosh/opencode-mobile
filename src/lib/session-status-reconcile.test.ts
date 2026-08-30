@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { inferBusyFromMessages, isSessionActuallyIdle } from "./session-status-reconcile.ts"
-import type { Message } from "./sdk.ts"
+import { fetchReconnectMessages, inferBusyFromMessages, isSessionActuallyIdle } from "./session-status-reconcile.ts"
+import type { Message, MessageWithParts } from "./sdk.ts"
 
 const userMsg = (id: string, overrides: Partial<Message> = {}): Message => ({
   id,
@@ -17,6 +17,22 @@ const assistantMsg = (id: string, overrides: Partial<Message> = {}): Message => 
   role: "assistant",
   time: { created: 1 },
   ...overrides,
+})
+
+test("reconnect reconciliation requests only the newest message", async () => {
+  let received: { sessionID?: string; params?: { limit?: number } } = {}
+  const client = {
+    session: {
+      messages: async (sessionID: string, params?: { limit?: number }): Promise<MessageWithParts[]> => {
+        received = { sessionID, params }
+        return []
+      },
+    },
+  }
+
+  await fetchReconnectMessages(client, "s1")
+
+  assert.deepEqual(received, { sessionID: "s1", params: { limit: 1 } })
 })
 
 test("no messages -> still busy (nothing to reconcile from)", () => {

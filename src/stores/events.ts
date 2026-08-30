@@ -9,7 +9,7 @@ import { addBreadcrumb } from "../lib/sentry"
 import { AnalyticsEvent, track } from "../lib/analytics"
 import { recordSuccessfulSession } from "../lib/store-review"
 import { isAuthError } from "../lib/api-error"
-import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
+import { fetchReconnectMessages, isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
@@ -32,7 +32,6 @@ export async function restoreStatusCache() {
   useEvents.setState((state) => ({ sessionStatus: { ...cached, ...state.sessionStatus } }))
 }
 import { isHealthy, shouldReconnectOnResume, shouldResetRetries, type TransportState } from "../lib/sse-liveness"
-import { RECONCILE_MESSAGE_LIMIT } from "../lib/message-page"
 import type { Client, Part, Session, Message } from "../lib/sdk"
 
 interface EventsState {
@@ -249,7 +248,7 @@ async function resyncBusySessions() {
         // enough. This previously fetched the ENTIRE session — on every
         // reconnect, for every session this client believed was busy.
         const sendingRevision = optimisticSendingRevision(sessionID)
-        const response = await client.session.messages(sessionID, { limit: RECONCILE_MESSAGE_LIMIT })
+        const response = await fetchReconnectMessages(client, sessionID)
         const messages = (response || []).map((m) => m.info)
         if (!isSessionActuallyIdle(messages)) return // server says still busy - leave it alone
 
