@@ -88,3 +88,44 @@ test("terminal and disconnect receipt paths synchronously drain queued real-stor
   stop()
   assert.equal(lateWrites, 0)
 })
+
+test("background-only parts update previews and tools without foreground status selectors", async () => {
+  const { useSessions, cancelPendingStreamParts, flushPendingStreamParts } = await import("./sessions")
+  const { useEvents, receiveStreamPart, flushPendingPartStatus } = await import("./events")
+  cancelPendingStreamParts()
+  useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1", previews: {}, runningTools: {}, pendingWakes: {} })
+  useEvents.setState({ sessionStatus: { s1: { type: "busy", lastActivityAt: 1 } }, statusText: { s1: "Writing..." } })
+  let textWrites = 0
+  let activityWrites = 0
+  let text = useEvents.getState().statusText.s1
+  let activity = useEvents.getState().sessionStatus.s1.lastActivityAt
+  const stop = useEvents.subscribe((state) => {
+    if (state.statusText.s1 !== text) { text = state.statusText.s1; textWrites++ }
+    if (state.sessionStatus.s1.lastActivityAt !== activity) { activity = state.sessionStatus.s1.lastActivityAt; activityWrites++ }
+  })
+  receiveStreamPart({ id: "bg-text", sessionID: "s2", messageID: "m", type: "text", text: "background" } as any, 2)
+  receiveStreamPart({ id: "bg-tool", sessionID: "s2", messageID: "m", type: "tool", tool: "bash", state: { status: "running" } } as any, 3)
+  flushPendingPartStatus()
+  flushPendingStreamParts()
+  stop()
+  assert.equal(useSessions.getState().previews.s2?.text, "background")
+  assert.equal(useSessions.getState().runningTools.s2?.[0]?.partID, "bg-tool")
+  assert.equal(textWrites, 0)
+  assert.equal(activityWrites, 0)
+})
+
+test("navigation synchronously drains outgoing transcript and status without resurrection", async () => {
+  const { useSessions, cancelPendingStreamParts, flushPendingStreamParts } = await import("./sessions")
+  const { useEvents, receiveStreamPart, flushPendingPartStatus } = await import("./events")
+  cancelPendingStreamParts()
+  useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1", parts: {}, previews: {}, runningTools: {}, pendingWakes: {} })
+  useEvents.setState({ sessionStatus: { s1: { type: "busy" } }, statusText: {} })
+  receiveStreamPart({ id: "outgoing", sessionID: "s1", messageID: "m", type: "text", text: "before switch" } as any, 9)
+  useSessions.getState().setTranscriptActive("s1", false)
+  assert.equal(useSessions.getState().parts.m?.[0]?.text, "before switch")
+  assert.equal(useEvents.getState().statusText.s1, "Writing...")
+  const before = useEvents.getState().statusText.s1
+  flushPendingPartStatus()
+  flushPendingStreamParts()
+  assert.equal(useEvents.getState().statusText.s1, before)
+})
