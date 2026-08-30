@@ -107,3 +107,12 @@ export function refreshWindowSize(loadedCount: number, pageSize: number): number
   const loaded = Math.max(0, loadedCount)
   return Math.min(REFRESH_WINDOW_CAP, Math.max(page, loaded))
 }
+
+/**
+ * How many messages the SSE busy-session reconcile needs.
+ *
+ * `isSessionActuallyIdle` inspects only the final message, so one is enough.
+ * This used to fetch the entire session — on every reconnect, for every
+ * session the client believed was busy.
+ */
+export const RECONCILE_MESSAGE_LIMIT = 1
