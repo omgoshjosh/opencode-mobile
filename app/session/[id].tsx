@@ -54,6 +54,7 @@ import { inferBusyFromMessages } from "../../src/lib/session-status-reconcile"
 import { slashPopoverQuery } from "../../src/lib/slash-trigger"
 import { summarizeModel } from "../../src/lib/summarize-model"
 import { awaitingTurn, inFlightUserCreatedAt } from "../../src/lib/message-delivery"
+import { mergeQueuedText, queuedUserMessages, shouldApplyQueuedEdit } from "../../src/lib/queued-message-edit"
 import { shouldApplyRestoredDraft, shouldPersistFocusedDraft } from "../../src/lib/draft-lifecycle"
 import { TitlePeek } from "../../src/components/chat/TitlePeek"
 import { visibleTranscriptEntry } from "../../src/lib/transcript-visibility"
@@ -368,6 +369,8 @@ export default function SessionScreen() {
   // keystrokes for MessageBubble's custom memo comparator.
   const inputRef = useRef(input)
   inputRef.current = input
+  const attachmentsRef = useRef(attachments)
+  attachmentsRef.current = attachments
   const savedDraftRef = useRef<Record<string, string>>({})
   const draftFocusedRef = useRef(false)
   const draftRestoredRef = useRef(false)
@@ -466,6 +469,53 @@ export default function SessionScreen() {
     // Edit/revert stays user-only — reverting to an assistant message is not
     // a supported operation.
     if (isUser) {
+      const session = state.currentSession
+      const status = session ? useEvents.getState().sessionStatus[session.id]?.type : undefined
+      const queue = session
+        ? queuedUserMessages({
+            messages: state.messages.map((message) => ({ ...message, createdAt: message.time?.created })),
+            sessionID: session.id,
+            busy: status === "busy" || status === "retry",
+            inFlightUserCreatedAt: inFlightUserCreatedAt(state.messages),
+            failedIDs: state.failedMessageIDs,
+          })
+        : []
+      if (session && queue.some((message) => message.id === messageID)) {
+        actions.push({
+          text: t("session.actions.editQueuedMessages"),
+          onPress: async () => {
+            const latest = useSessions.getState()
+            const current = latest.currentSession
+            const currentStatus = current ? useEvents.getState().sessionStatus[current.id]?.type : undefined
+            if (!current || current.id !== id) return
+            const currentQueue = queuedUserMessages({
+              messages: latest.messages.map((message) => ({ ...message, createdAt: message.time?.created })),
+              sessionID: current.id,
+              busy: currentStatus === "busy" || currentStatus === "retry",
+              inFlightUserCreatedAt: inFlightUserCreatedAt(latest.messages),
+              failedIDs: latest.failedMessageIDs,
+            })
+            if (!currentQueue.some((message) => message.id === messageID)) return
+            const text = mergeQueuedText(currentQueue.map((message) => extractCopyText(latest.parts[message.id])), inputRef.current)
+            const files = currentQueue.flatMap((message) => latest.parts[message.id] ?? [])
+              .filter((part) => part.type === "file" && !!part.url && !!part.mime)
+              .map((part) => ({ uri: part.url!, mime: part.mime!, filename: part.filename }))
+            const result = await useSessions.getState().revertToMessage(currentQueue[0].id)
+            if (!result.ok) {
+              applyRevertResult(result)
+              return
+            }
+            if (!shouldApplyQueuedEdit(draftFocusedRef.current, id, current.id, useSessions.getState().currentSession?.id)) return
+            const restored = [...files, ...attachmentsRef.current]
+            inputRef.current = text
+            draftTouchedRef.current = true
+            savedDraftRef.current[current.id] = text
+            saveDraft(current.id, text)
+            setInput(text)
+            setAttachments(restored)
+          },
+        })
+      }
       actions.push({
         text: t("session.actions.editMessage"),
         onPress: () => {

@@ -124,6 +124,7 @@
     },
     "actions": {
       "editMessage": "编辑消息",
+      "editQueuedMessages": "编辑排队中的消息",
       "replace": "替换",
       "copyMessage": "复制消息",
       "selectText": "选择文本"

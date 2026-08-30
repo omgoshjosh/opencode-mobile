@@ -124,6 +124,7 @@
     },
     "actions": {
       "editMessage": "Edit message",
+      "editQueuedMessages": "Edit queued messages",
       "replace": "Replace",
       "copyMessage": "Copy message",
       "selectText": "Select text"
