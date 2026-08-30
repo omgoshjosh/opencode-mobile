@@ -8,7 +8,7 @@ import { extractPromptFromParts, type PromptFromParts } from "../lib/prompt-from
 import { mergePendingMessages } from "../lib/message-delivery"
 import { mergeIncomingMessage } from "../lib/message-merge"
 import { isColdSessionLoad, isLiveEventForSession } from "../lib/session-load-reconcile"
-import { mergeNewestPage, mergeOlderPage, mergeOlderParts, refreshWindowSize } from "../lib/message-page"
+import { mergeOlderPage, mergeOlderParts, refreshWindowSize } from "../lib/message-page"
 import { canRenderFromCache, dropTranscript, getTranscript, putTranscript, type TranscriptCache } from "../lib/transcript-cache"
 import { dropPreview, parsePreviewMap, previewFromParts, previewText, putPreview, type PreviewMap } from "../lib/session-preview"
 import { markViewed, parseLastViewed, type LastViewedMap } from "../lib/session-attention"
@@ -19,6 +19,7 @@ import { toolCallTitle } from "../lib/tool-titles"
 import { createFocusReadCoordinator } from "../lib/focus-read"
 import { isTranscriptActive, nextActiveTranscript, shouldApplyTranscriptSnapshot } from "../lib/transcript-focus"
 import { createOpenTranscriptReconciler } from "../lib/open-transcript-reconcile"
+import { mergeReconciledTranscript } from "../lib/reconnect-transcript"
 import { warmSessionFor } from "../lib/warm-session"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
@@ -752,12 +753,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
           !isTranscriptActive(get().activeTranscriptSessionID, session.id) ||
           !shouldApplyTranscriptSnapshot(revision, transcriptRevision(session.id))
         ) return
-        const { messages, parts } = parseMessages(response)
         bumpTranscriptRevision(session.id)
-        set((state) => ({
-          messages: mergeNewestPage({ existing: state.messages, newest: messages }),
-          parts: { ...state.parts, ...parts },
-        }))
+        set((state) => mergeReconciledTranscript(state, response))
       } catch (error) {
         if (
           seq !== selectSeq ||
