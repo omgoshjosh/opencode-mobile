@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mergeQueuedText, queuedUserMessages, recoverQueuedMessages, shouldApplyQueuedEdit, unionQueuedMessages } from "./queued-message-edit.ts"
+import { mergeQueuedText, queuedUserMessages, recoverQueuedMessages, shouldApplyQueuedEdit } from "./queued-message-edit.ts"
 
 const message = (id: string, createdAt: number, role = "user", sessionID = "s1") => ({ id, createdAt, role, sessionID })
 
@@ -47,14 +47,6 @@ test("refuses missing, unrecoverable, and malformed queued parts before revertin
   for (const parts of [{}, { one: [] }, { one: [{ type: "file", url: "file" }] }, { one: [{ type: "file", url: " ", mime: "image/png" }] }, { one: [{ type: "file", url: "file", mime: {} }] }]) {
     assert.deepEqual(recoverQueuedMessages({ messages: [message("one", 20)], parts, draft: "", extractText: () => "" }), { ok: false })
   }
-})
-
-test("unions the original queue with prompts that arrive during the request", () => {
-  const result = unionQueuedMessages(
-    [message("first", 20), message("second", 30)],
-    [message("second", 30), message("new", 40), message("earlier", 15)],
-  )
-  assert.deepEqual(result.map((item) => item.id), ["earlier", "first", "second", "new"])
 })
 
 test("only the focused originating session may receive the result", () => {

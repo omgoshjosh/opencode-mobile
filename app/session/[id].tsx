@@ -54,7 +54,7 @@ import { inferBusyFromMessages } from "../../src/lib/session-status-reconcile"
 import { slashPopoverQuery } from "../../src/lib/slash-trigger"
 import { summarizeModel } from "../../src/lib/summarize-model"
 import { awaitingTurn, inFlightUserCreatedAt } from "../../src/lib/message-delivery"
-import { queuedUserMessages, recoverQueuedMessages, shouldApplyQueuedEdit, unionQueuedMessages } from "../../src/lib/queued-message-edit"
+import { queuedUserMessages, recoverQueuedMessages, shouldApplyQueuedEdit } from "../../src/lib/queued-message-edit"
 import { shouldApplyRestoredDraft, shouldPersistFocusedDraft } from "../../src/lib/draft-lifecycle"
 import { TitlePeek } from "../../src/components/chat/TitlePeek"
 import { visibleTranscriptEntry } from "../../src/lib/transcript-visibility"
@@ -272,6 +272,7 @@ export default function SessionScreen() {
   // render); state drives the button's instant pending dim.
   const sendInFlight = useRef(false)
   const [sendPending, setSendPending] = useState(false)
+  const [queuedEditPending, setQueuedEditPending] = useState(false)
 
   // SSE reconnect banner
   const reconnectAttempts = useEvents((s) => s.reconnectAttempts)
@@ -495,6 +496,7 @@ export default function SessionScreen() {
           onPress: async () => {
             if (queuedEditInFlight.current) return
             queuedEditInFlight.current = true
+            setQueuedEditPending(true)
             try {
               const latest = useSessions.getState()
               const current = latest.currentSession
@@ -519,57 +521,23 @@ export default function SessionScreen() {
                 return
               }
               const original = { sessionID: current.id, text: inputRef.current, files: attachmentsRef.current }
-              const originClient = useConnections.getState().clientForDirectory(current.directory)
-              if (!originClient) {
-                applyRevertResult({ ok: false, reason: "error" })
-                return
-              }
               const result = await useSessions.getState().revertToMessage(currentQueue[0].id)
               if (!result.ok) {
                 applyRevertResult(result)
                 return
               }
-              let combined: ReturnType<typeof recoverQueuedMessages> = recovered
-              try {
-                const response = await originClient.session.messages(current.id)
-                const postMessages = response.map(({ info }) => ({ ...info, createdAt: info.time?.created }))
-                const postQueue = queuedUserMessages({
-                  messages: postMessages,
-                  sessionID: current.id,
-                  busy: true,
-                  inFlightUserCreatedAt: inFlightUserCreatedAt(postMessages),
-                  failedIDs: {},
-                })
-                const postParts = Object.fromEntries(response.map(({ info, parts }) => [info.id, parts]))
-                combined = recoverQueuedMessages({
-                  messages: unionQueuedMessages(currentQueue, postQueue),
-                  parts: { ...latest.parts, ...postParts },
-                  draft: original.text,
-                  extractText: (parts) => extractCopyText(parts as Part[]),
-                })
-              } catch {
-                combined = { ok: false }
-              }
-              if (!combined.ok) {
-                await originClient.session.unrevert(current.id).then((updated) => {
-                  useSessions.setState((state) => ({
-                    currentSession: state.currentSession?.id === current.id ? updated : state.currentSession,
-                  }))
-                }).catch(() => {})
-                applyRevertResult({ ok: false, reason: "error" })
-                return
-              }
               revertSnapshotRef.current = original
-              savedDraftRef.current[current.id] = combined.text
-              saveDraft(current.id, combined.text)
+              savedDraftRef.current[current.id] = recovered.text
+              saveDraft(current.id, recovered.text)
               if (!shouldApplyQueuedEdit(draftFocusedRef.current, id, current.id, useSessions.getState().currentSession?.id)) return
-              const restored = [...combined.files, ...original.files]
-              inputRef.current = combined.text
+              const restored = [...recovered.files, ...original.files]
+              inputRef.current = recovered.text
               draftTouchedRef.current = true
-              setInput(combined.text)
+              setInput(recovered.text)
               setAttachments(restored)
             } finally {
               queuedEditInFlight.current = false
+              setQueuedEditPending(false)
             }
           },
         })
@@ -843,6 +811,7 @@ export default function SessionScreen() {
 
   // --- Send ---
   const handleSend = async () => {
+    if (queuedEditInFlight.current) return
     if (!input.trim() && attachments.length === 0) return
     // Synchronous re-entrancy guard — the double-send bug. The await on
     // authentication yields before the input is consumed, so every tap
@@ -1468,12 +1437,12 @@ export default function SessionScreen() {
                 refuses further taps until the flight resolves. */}
             {!speech.listening && (input.trim() || attachments.length > 0) && (
               <TouchableOpacity
-                style={[s.sendBtn, sendPending && s.sendBtnPending]}
+                style={[s.sendBtn, (sendPending || queuedEditPending) && s.sendBtnPending]}
                 onPress={handleSend}
-                disabled={sendPending}
+                disabled={sendPending || queuedEditPending}
                 testID="chat-send-button"
               >
-                {sendPending ? (
+                {sendPending || queuedEditPending ? (
                   <ActivityIndicator size="small" color="#ffffff" />
                 ) : (
                   <Ionicons name="send" size={20} color="#ffffff" />
