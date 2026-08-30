@@ -90,6 +90,19 @@ export function mergeOlderParts(
 }
 
 /**
+ * Merge a fresh newest page without discarding history the user paged into.
+ * The response wins inside its window; optimistic messages remain last.
+ */
+export function mergeNewestPage(input: { existing: Message[]; newest: Message[] }): Message[] {
+  const existing = input.existing ?? []
+  const newest = input.newest ?? []
+  const newestIDs = new Set(newest.map((message) => message.id))
+  const settled = existing.filter((message) => !isPendingMessage(message) && !newestIDs.has(message.id))
+  const pending = existing.filter((message) => isPendingMessage(message) && !newestIDs.has(message.id))
+  return [...settled, ...newest, ...pending]
+}
+
+/**
  * How many messages to ask for when refreshing the open session.
  *
  * A refresh must not shrink the window: if the user paged back through 300
