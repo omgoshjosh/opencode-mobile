@@ -263,13 +263,6 @@ async function resyncBusySessions() {
         useEvents.setState((state) => ({ sessionStatus: { ...state.sessionStatus, [sessionID]: { type: "idle" } } }))
         persistStatusCache(useEvents.getState().sessionStatus)
         clearIdleSessions([sessionID])
-        const latestSessions = useSessions.getState()
-        if (
-          latestSessions.activeTranscriptSessionID === sessionID &&
-          latestSessions.currentSession?.id === sessionID
-        ) {
-          latestSessions.refreshMessages()
-        }
       } catch (err) {
         console.warn("[Events] Failed to resync session status for", sessionID, err)
       }
@@ -291,18 +284,13 @@ async function resyncBusySessions() {
 // stale until the user navigates away and back, which is the reported
 // cross-client staleness symptom.
 //
-// refreshMessages() re-fetches the current session and replaces messages/parts
-// without touching isLoading, so this lands as a silent background reconcile
-// rather than a spinner over content the user is already reading.
-//
-// Note this can overlap with resyncBusySessions() for a session that was busy
-// and has since gone idle — both would refresh. That costs one redundant GET
-// on an infrequent event, which is cheaper than the coupling needed to dedupe.
+// reconcileOpenMessages() fetches one bounded page and merges it into the
+// current transcript without discarding pagination or optimistic content.
 async function reconcileOpenSession() {
   const sessions = useSessions.getState()
   if (!sessions.currentSession || sessions.activeTranscriptSessionID !== sessions.currentSession.id) return
   try {
-    await sessions.refreshMessages()
+    await sessions.reconcileOpenMessages()
   } catch (err) {
     console.warn("[Events] Failed to reconcile open session after reconnect:", err)
   }
@@ -357,6 +345,7 @@ export const useEvents = create<EventsState>((set, get) => ({
       // is exactly the set that can be stale (disk-restored or missed-idle).
       const isReconnect = get().reconnectAttempts > 0
       let resyncedAfterReconnect = false
+      let reconciledOpenSession = false
       // Retry state resets on demonstrated liveness, not on a timer. The old
       // 10s timeout cleared the backoff whether or not anything had ever
       // arrived, so a silently-failing connection kept resetting its own
@@ -409,9 +398,9 @@ export const useEvents = create<EventsState>((set, get) => ({
           if ((isReconnect || hasBusyStatuses) && !resyncedAfterReconnect) {
             resyncedAfterReconnect = true
             void resyncBusySessions()
-            // Backfill content missed while the stream was down. Separate from
-            // resyncBusySessions(), which only repairs *status* and only for
-            // sessions already known to be busy — see reconcileOpenSession().
+          }
+          if (isReconnect && !reconciledOpenSession) {
+            reconciledOpenSession = true
             void reconcileOpenSession()
           }
 
@@ -455,7 +444,7 @@ export const useEvents = create<EventsState>((set, get) => ({
                 // Refresh messages if this is the session the user is viewing
                 const sessions = useSessions.getState()
                 if (sessions.activeTranscriptSessionID === sessionID && sessions.currentSession?.id === sessionID) {
-                  sessions.refreshMessages()
+                  sessions.reconcileOpenMessages()
                 }
               }
 
