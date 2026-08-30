@@ -14,6 +14,7 @@ import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
 import { canApplyFocusedStatusHydration, canApplyResyncIdle, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "../lib/status-hydration"
+import { createReconnectTranscriptEpoch } from "../lib/reconnect-transcript-epoch"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Last-known statuses, persisted eagerly so the sessions list renders real
@@ -284,16 +285,12 @@ async function resyncBusySessions() {
 // stale until the user navigates away and back, which is the reported
 // cross-client staleness symptom.
 //
-// reconcileOpenMessages() fetches one bounded page and merges it into the
-// current transcript without discarding pagination or optimistic content.
-async function reconcileOpenSession() {
+// The reconnect epoch fetches one bounded page for this active transcript,
+// without discarding pagination or optimistic content.
+function activeOpenSessionID(): string | null {
   const sessions = useSessions.getState()
-  if (!sessions.currentSession || sessions.activeTranscriptSessionID !== sessions.currentSession.id) return
-  try {
-    await sessions.reconcileOpenMessages()
-  } catch (err) {
-    console.warn("[Events] Failed to reconcile open session after reconnect:", err)
-  }
+  if (!sessions.currentSession || sessions.activeTranscriptSessionID !== sessions.currentSession.id) return null
+  return sessions.currentSession.id
 }
 
 export const useEvents = create<EventsState>((set, get) => ({
@@ -345,7 +342,7 @@ export const useEvents = create<EventsState>((set, get) => ({
       // is exactly the set that can be stale (disk-restored or missed-idle).
       const isReconnect = get().reconnectAttempts > 0
       let resyncedAfterReconnect = false
-      let reconciledOpenSession = false
+      const reconnectTranscript = createReconnectTranscriptEpoch(isReconnect)
       // Retry state resets on demonstrated liveness, not on a timer. The old
       // 10s timeout cleared the backoff whether or not anything had ever
       // arrived, so a silently-failing connection kept resetting its own
@@ -399,10 +396,8 @@ export const useEvents = create<EventsState>((set, get) => ({
             resyncedAfterReconnect = true
             void resyncBusySessions()
           }
-          if (isReconnect && !reconciledOpenSession) {
-            reconciledOpenSession = true
-            void reconcileOpenSession()
-          }
+          const reconnectSessionID = reconnectTranscript.reconcileOpen(activeOpenSessionID())
+          if (reconnectSessionID) void useSessions.getState().reconcileOpenMessages()
 
           if (!receivedAnyEvent) {
             receivedAnyEvent = true
@@ -443,8 +438,12 @@ export const useEvents = create<EventsState>((set, get) => ({
                 clearIdleSessions([sessionID])
                 // Refresh messages if this is the session the user is viewing
                 const sessions = useSessions.getState()
-                if (sessions.activeTranscriptSessionID === sessionID && sessions.currentSession?.id === sessionID) {
-                  sessions.reconcileOpenMessages()
+                if (
+                  sessions.activeTranscriptSessionID === sessionID &&
+                  sessions.currentSession?.id === sessionID &&
+                  reconnectTranscript.shouldRefreshAfterIdle(sessionID)
+                ) {
+                  sessions.refreshMessages()
                 }
               }
 
