@@ -9,8 +9,8 @@ export interface QueueMessage {
 
 export interface QueuePart {
   type: string
-  url?: string
-  mime?: string
+  url?: unknown
+  mime?: unknown
   filename?: string
 }
 
@@ -50,6 +50,15 @@ export function mergeQueuedText(queued: readonly string[], draft: string): strin
   return [...queued, draft].map((text) => text.trim()).filter(Boolean).join("\n\n")
 }
 
+/** Preserve the original queue and add newly observed server queue entries once. */
+export function unionQueuedMessages(before: readonly QueueMessage[], after: readonly QueueMessage[]): QueueMessage[] {
+  return [...before, ...after]
+    .map((message, index) => ({ message, index }))
+    .filter(({ message }, index, all) => all.findIndex((item) => item.message.id === message.id) === index)
+    .sort((a, b) => (a.message.createdAt! - b.message.createdAt!) || a.index - b.index)
+    .map(({ message }) => message)
+}
+
 /** Refuse a revert unless every queued prompt can be faithfully recovered. */
 export function recoverQueuedMessages(input: {
   messages: readonly QueueMessage[]
@@ -65,7 +74,7 @@ export function recoverQueuedMessages(input: {
     const messageFiles: QueueAttachment[] = []
     for (const part of parts) {
       if (part.type !== "file") continue
-      if (!part.url || !part.mime) return { ok: false }
+      if (typeof part.url !== "string" || !part.url.trim() || typeof part.mime !== "string" || !part.mime.trim()) return { ok: false }
       messageFiles.push({ uri: part.url, mime: part.mime, ...(part.filename ? { filename: part.filename } : {}) })
     }
     const text = input.extractText(parts).trim()
