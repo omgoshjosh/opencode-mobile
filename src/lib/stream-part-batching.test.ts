@@ -1,6 +1,11 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { canFlushVisiblePartStatus, queueStreamPart } from "./stream-part-batching.ts"
+import {
+  canFlushVisiblePartStatus,
+  flushPendingPartStatusForTranscriptBoundary,
+  queueStreamPart,
+  registerPartStatusFlusher,
+} from "./stream-part-batching.ts"
 
 type Part = { id: string; messageID: string; sessionID: string; text: string }
 const part = (id: string, text: string, messageID = "m1", sessionID = "s1"): Part => ({ id, text, messageID, sessionID })
@@ -40,6 +45,13 @@ test("background and replaced sessions cannot flush foreground status", () => {
   assert.equal(canFlushVisiblePartStatus("s1", "s1", "s2"), false)
   assert.equal(canFlushVisiblePartStatus("s2", "s2", "s1"), false)
   assert.equal(canFlushVisiblePartStatus("s1", "s1", "s1"), true)
+})
+
+test("transcript navigation synchronously flushes outgoing status before replacement", () => {
+  const applied: string[] = []
+  registerPartStatusFlusher(() => applied.push("s1"))
+  flushPendingPartStatusForTranscriptBoundary()
+  assert.deepEqual(applied, ["s1"])
 })
 
 test("terminal and disconnect boundaries can synchronously flush or cancel queued work", () => {

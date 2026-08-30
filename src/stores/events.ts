@@ -21,7 +21,7 @@ import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
-import { canFlushVisiblePartStatus } from "../lib/stream-part-batching"
+import { canFlushVisiblePartStatus, registerPartStatusFlusher } from "../lib/stream-part-batching"
 import { canApplyFocusedStatusHydration, canApplyResyncIdle, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "../lib/status-hydration"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
@@ -137,6 +137,8 @@ export function flushPendingPartStatus() {
     return changed ? { statusText, sessionStatus } : state
   })
 }
+
+registerPartStatusFlusher(flushPendingPartStatus)
 
 function flushPendingStreamWork() {
   flushPendingPartStatus()

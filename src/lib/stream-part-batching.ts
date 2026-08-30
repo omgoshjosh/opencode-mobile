@@ -17,3 +17,16 @@ export function queueStreamPart<T extends StreamPartIdentity>(queue: Map<string,
 export function canFlushVisiblePartStatus(visibleSessionID: string | undefined, activeTranscriptSessionID: string | null, sessionID: string): boolean {
   return visibleSessionID === sessionID && activeTranscriptSessionID === sessionID
 }
+
+// sessions.ts cannot import events.ts without a store cycle. events.ts
+// registers its synchronous status flush so transcript navigation can drain
+// the outgoing foreground turn before replacing it.
+let flushPartStatus = () => {}
+
+export function registerPartStatusFlusher(flush: () => void): void {
+  flushPartStatus = flush
+}
+
+export function flushPendingPartStatusForTranscriptBoundary(): void {
+  flushPartStatus()
+}

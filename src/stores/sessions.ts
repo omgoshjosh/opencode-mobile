@@ -19,7 +19,7 @@ import { toolCallTitle } from "../lib/tool-titles"
 import { createFocusReadCoordinator } from "../lib/focus-read"
 import { isTranscriptActive, nextActiveTranscript, shouldApplyTranscriptSnapshot } from "../lib/transcript-focus"
 import { warmSessionFor } from "../lib/warm-session"
-import { streamPartKey } from "../lib/stream-part-batching"
+import { flushPendingPartStatusForTranscriptBoundary, streamPartKey } from "../lib/stream-part-batching"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Helper to convert API response to our internal format
@@ -305,6 +305,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
   setTranscriptActive: (sessionID, active) => {
     if (nextActiveTranscript(get().activeTranscriptSessionID, sessionID, active) !== get().activeTranscriptSessionID) {
+      flushPendingPartStatusForTranscriptBoundary()
       flushStreamPartUpdates()
       bumpTranscriptRevision(sessionID)
     }
@@ -415,6 +416,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
   },
 
   selectSession: async (sessionID, directory, signal) => {
+    flushPendingPartStatusForTranscriptBoundary()
     flushStreamPartUpdates()
     // Use directory-specific client if the session belongs to a different project
     const connState = useConnections.getState()
@@ -612,6 +614,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
   },
 
   createSession: async (title) => {
+    flushPendingPartStatusForTranscriptBoundary()
     flushStreamPartUpdates()
     const connState = useConnections.getState()
     const client = connState.client
