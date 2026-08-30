@@ -71,6 +71,13 @@ test("snapshot idle or absence settles stale busy IDs", () => {
   )
 })
 
+test("local resync idle revision prevents an older snapshot from resurrecting busy", () => {
+  assert.deepEqual(
+    mergeStatusSnapshot({ session: { type: "idle" } }, { session: { type: "busy" } }, new Set(["session"]), 1),
+    { session: { type: "idle" } },
+  )
+})
+
 test("omitted background preserves while explicit zero clears", () => {
   const prior = { type: "busy", background: { running: 1, jobs: [{ sessionID: "child", role: "QA", title: "Check", since: 1 }] } } as const
   assert.deepEqual(mergeStatusEvent(prior, { type: "idle" }), { type: "idle", background: prior.background })

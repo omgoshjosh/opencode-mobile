@@ -162,6 +162,15 @@ export type RevertResult = ({ ok: true } & PromptFromParts) | { ok: false; reaso
 // success toward the store review prompt. events.ts (which already imports
 // this module) clears entries on busy and checks them on busy -> idle.
 export const abortedSessions = new Set<string>()
+const optimisticSendingRevisions = new Map<string, number>()
+
+export function optimisticSendingRevision(sessionID: string): number {
+  return optimisticSendingRevisions.get(sessionID) ?? 0
+}
+
+export function optimisticSendingRevisionSnapshot(): Map<string, number> {
+  return new Map(optimisticSendingRevisions)
+}
 
 // Same guard for loadSessions: the two-phase load below commits twice, and a
 // pull-to-refresh (or filter flip) issued mid-flight must not have an older
@@ -585,6 +594,9 @@ export const useSessions = create<SessionsState>((set, get) => ({
     let optimisticID: string | null = null
 
     try {
+      if (!get().sending[session.id]) {
+        optimisticSendingRevisions.set(session.id, optimisticSendingRevision(session.id) + 1)
+      }
       set((state) => ({ sending: { ...state.sending, [session.id]: true }, error: null }))
       track(AnalyticsEvent.MessageSent)
 

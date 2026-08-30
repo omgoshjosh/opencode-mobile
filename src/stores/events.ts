@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import { useConnections } from "./connections"
-import { useSessions, abortedSessions } from "./sessions"
+import { useSessions, abortedSessions, optimisticSendingRevision, optimisticSendingRevisionSnapshot } from "./sessions"
 import { canRefreshPending } from "../lib/focus-read"
 import { send as notify } from "../lib/notifications"
 import { sanitizeBody } from "../lib/notify-format"
@@ -13,7 +13,7 @@ import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
-import { canApplyFocusedStatusHydration, canApplyStatusHydration, clearIdleSessionState } from "../lib/status-hydration"
+import { canApplyFocusedStatusHydration, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "../lib/status-hydration"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Last-known statuses, persisted eagerly so the sessions list renders real
@@ -99,12 +99,15 @@ interface EventsState {
 let controller: AbortController | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let statusLifecycle = 0
-const statusEventRevisions = new Map<string, number>()
+const statusMutationRevisions = new Map<string, number>()
 
-function changedStatusIDsSince(revisions: Map<string, number>) {
+function changedStatusIDsSince(revisions: Map<string, number>, sendingRevisions: Map<string, number>) {
+  const currentSendingRevisions = optimisticSendingRevisionSnapshot()
   return new Set(
-    [...new Set([...revisions.keys(), ...statusEventRevisions.keys()])].filter(
-      (sessionID) => revisions.get(sessionID) !== statusEventRevisions.get(sessionID),
+    [...new Set([...revisions.keys(), ...statusMutationRevisions.keys(), ...sendingRevisions.keys(), ...currentSendingRevisions.keys()])].filter(
+      (sessionID) =>
+        revisions.get(sessionID) !== statusMutationRevisions.get(sessionID) ||
+        sendingRevisions.get(sessionID) !== currentSendingRevisions.get(sessionID),
     ),
   )
 }
@@ -128,17 +131,18 @@ function clearIdleSessions(sessionIDs: string[]) {
 }
 
 async function hydrateStatus(client: Client, lifecycle: number, signal: AbortSignal) {
-  const revisions = new Map(statusEventRevisions)
+  const revisions = new Map(statusMutationRevisions)
+  const sendingRevisions = optimisticSendingRevisionSnapshot()
   try {
     const snapshot = await client.session.status(signal)
     if (!canApplyStatusHydration(lifecycle, statusLifecycle, signal) || !snapshot) return
-    const changed = changedStatusIDsSince(revisions)
+    const changed = changedStatusIDsSince(revisions, sendingRevisions)
     let merged: Record<string, SessionStatus> = {}
     useEvents.setState((state) => {
       merged = mergeStatusSnapshot(state.sessionStatus, snapshot, changed, Date.now())
       return { sessionStatus: merged }
     })
-    clearIdleSessions(Object.entries(merged).flatMap(([sessionID, status]) => (status.type === "idle" ? [sessionID] : [])))
+    clearIdleSessions(settledIdleSessionIDs(merged, changed))
     persistStatusCache(merged)
   } catch (error) {
     if (signal.aborted) return
@@ -148,7 +152,8 @@ async function hydrateStatus(client: Client, lifecycle: number, signal: AbortSig
 
 export async function refreshFocusedStatus(client: Client, sessionID: string, signal: AbortSignal) {
   const lifecycle = statusLifecycle
-  const revision = statusEventRevisions.get(sessionID) ?? 0
+  const revision = statusMutationRevisions.get(sessionID) ?? 0
+  const sendingRevision = optimisticSendingRevision(sessionID)
   try {
     const snapshot = await client.session.status(signal)
     if (!snapshot) return
@@ -160,7 +165,9 @@ export async function refreshFocusedStatus(client: Client, sessionID: string, si
         currentSessionID: useSessions.getState().currentSession?.id,
         sessionID,
         revision,
-        currentRevision: statusEventRevisions.get(sessionID) ?? 0,
+        currentRevision: statusMutationRevisions.get(sessionID) ?? 0,
+        sendingRevision,
+        currentSendingRevision: optimisticSendingRevision(sessionID),
       })
     ) return
     const status = snapshot[sessionID] ?? { type: "idle" as const }
@@ -250,12 +257,10 @@ async function resyncBusySessions() {
         // stomp on it.
         if (useEvents.getState().sessionStatus[sessionID]?.type !== "busy") return
 
-        useEvents.setState((state) => ({
-          sessionStatus: { ...state.sessionStatus, [sessionID]: { type: "idle" } },
-          statusText: { ...state.statusText, [sessionID]: "" },
-        }))
+        statusMutationRevisions.set(sessionID, (statusMutationRevisions.get(sessionID) ?? 0) + 1)
+        useEvents.setState((state) => ({ sessionStatus: { ...state.sessionStatus, [sessionID]: { type: "idle" } } }))
         persistStatusCache(useEvents.getState().sessionStatus)
-        useSessions.setState((state) => ({ sending: { ...state.sending, [sessionID]: false } }))
+        clearIdleSessions([sessionID])
         const latestSessions = useSessions.getState()
         if (
           latestSessions.activeTranscriptSessionID === sessionID &&
@@ -325,9 +330,9 @@ export const useEvents = create<EventsState>((set, get) => ({
     const client = useConnections.getState().client
     if (!client) return
 
-    // A reconnect's GET is its fresh baseline. Only events from this socket,
-    // not cached or previous-socket values, may protect a newer local update.
-    statusEventRevisions.clear()
+    // A reconnect's GET is its fresh baseline. Only mutations after this
+    // socket begins may protect a newer local update.
+    statusMutationRevisions.clear()
     const lifecycle = ++statusLifecycle
 
     controller = new AbortController()
@@ -425,7 +430,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               const sessionID = props.sessionID as string
               const status = props.status as SessionStatus
               if (!sessionID) break
-              statusEventRevisions.set(sessionID, (statusEventRevisions.get(sessionID) ?? 0) + 1)
+              statusMutationRevisions.set(sessionID, (statusMutationRevisions.get(sessionID) ?? 0) + 1)
 
               // Detect busy → idle transition for completion notification
               const previous = get().sessionStatus[sessionID]
@@ -437,11 +442,7 @@ export const useEvents = create<EventsState>((set, get) => ({
                 abortedSessions.delete(sessionID)
               }
               const next = nextSessionStatus(previous, mergeStatusEvent(previous, status), Date.now())
-              set((state) => ({
-                sessionStatus: { ...state.sessionStatus, [sessionID]: next },
-                // Clear status text when idle
-                statusText: status.type === "idle" ? { ...state.statusText, [sessionID]: "" } : state.statusText,
-              }))
+              set((state) => ({ sessionStatus: { ...state.sessionStatus, [sessionID]: next } }))
               // Eager, on every transition: the sessions list must be able to
               // render last-known truth at next cold start.
               persistStatusCache(get().sessionStatus)
@@ -708,7 +709,7 @@ export const useEvents = create<EventsState>((set, get) => ({
     controller = null
     erroredSessions.clear()
     abortedSessions.clear()
-    statusEventRevisions.clear()
+    statusMutationRevisions.clear()
     set({
       connected: false,
       authError: false,

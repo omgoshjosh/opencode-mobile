@@ -12,6 +12,8 @@ export function canApplyFocusedStatusHydration({
   sessionID,
   revision,
   currentRevision,
+  sendingRevision,
+  currentSendingRevision,
 }: {
   lifecycle: number
   currentLifecycle: number
@@ -20,11 +22,14 @@ export function canApplyFocusedStatusHydration({
   sessionID: string
   revision: number
   currentRevision: number
+  sendingRevision: number
+  currentSendingRevision: number
 }) {
   return (
     canApplyStatusHydration(lifecycle, currentLifecycle, signal) &&
     currentSessionID === sessionID &&
-    revision === currentRevision
+    revision === currentRevision &&
+    sendingRevision === currentSendingRevision
   )
 }
 
@@ -44,4 +49,8 @@ export function clearIdleSessionState({
     sending: { ...sending, [sessionID]: false },
     runningTools: clearSessionTools(runningTools, sessionID),
   }
+}
+
+export function settledIdleSessionIDs(statuses: Record<string, { type: string }>, protectedIDs: Set<string>): string[] {
+  return Object.entries(statuses).flatMap(([sessionID, status]) => (status.type === "idle" && !protectedIDs.has(sessionID) ? [sessionID] : []))
 }
