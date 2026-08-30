@@ -11,7 +11,7 @@ import { SSEParser } from "./sse"
 import { apiErrorFor, ApiError } from "./api-error"
 import { loadSessionList } from "./session-list"
 import { LIVENESS_TIMEOUT_MS } from "./sse-liveness"
-import { nextCursorFrom, shouldRetryWithoutPartBudget, transcriptPageQuery } from "./message-page"
+import { createMessageTransport } from "./message-transport"
 import { requestSignal } from "./request-signal"
 import type { FileRoot } from "./file-roots"
 import type { RoleInput as SwarmRoleInput, Swarm as SwarmInfo } from "./swarm-crud"
@@ -359,7 +359,9 @@ export function createClient(config: ClientConfig) {
   // reconstructs a clean URL, reports "works now"). A bare URL with no
   // trailing slash is untouched.
   config = { ...config, baseUrl: config.baseUrl.replace(/\/+$/, "") }
-  let supportsPartBudget = true
+  const messageTransport = createMessageTransport(<T>(path: string, options?: RequestInit, sampleLatency?: boolean) =>
+    requestWithHeaders<T>(config, path, options, sampleLatency),
+  )
   return {
     global: {
       // `timeoutMs` overrides the default REQUEST_TIMEOUT_MS — used by the
@@ -538,8 +540,7 @@ export function createClient(config: ClientConfig) {
       cancel: async (sessionID: string, messageID: string): Promise<MessageCancelOutcome> =>
         messageCancelOutcome(await request<unknown>(config, `/session/${sessionID}/message/${messageID}/cancel`, { method: "POST" })),
 
-      message: (sessionID: string, messageID: string, signal?: AbortSignal) =>
-        request<MessageWithParts>(config, `/session/${sessionID}/message/${messageID}`, { signal }),
+      message: messageTransport.message,
 
       /**
        * One page of a transcript, newest-first from `before` (or from the end
@@ -553,31 +554,7 @@ export function createClient(config: ClientConfig) {
        * The server rejects `before` without `limit` (400), so `limit` is
        * required here rather than optional.
        */
-      messagesPage: async (
-        sessionID: string,
-        params: { limit: number; before?: string; renderBudget?: number; partBudget?: number },
-        signal?: AbortSignal,
-        options?: { sampleLatency?: boolean },
-      ): Promise<{ items: MessageWithParts[]; nextCursor?: string }> => {
-        const page = async (partBudget = supportsPartBudget ? params.partBudget : undefined) => {
-          const query = transcriptPageQuery({ ...params, partBudget })
-          return requestWithHeaders<MessageWithParts[]>(config, `/session/${sessionID}/message?${query}`, { signal }, options?.sampleLatency)
-        }
-        try {
-          const { body, headers } = await page()
-          return { items: body, nextCursor: nextCursorFrom(headers) }
-        } catch (error) {
-          if (!(error instanceof ApiError) || !shouldRetryWithoutPartBudget(error.status, supportsPartBudget ? params.partBudget : undefined)) throw error
-          const { body, headers } = await requestWithHeaders<MessageWithParts[]>(
-            config,
-            `/session/${sessionID}/message?${transcriptPageQuery({ ...params, partBudget: undefined })}`,
-            { signal },
-            false,
-          )
-          supportsPartBudget = false
-          return { items: body, nextCursor: nextCursorFrom(headers) }
-        }
-      },
+      messagesPage: messageTransport.messagesPage,
 
       // Sends a message and returns the response
       // Fire-and-forget async prompt - SSE events drive all real-time updates
