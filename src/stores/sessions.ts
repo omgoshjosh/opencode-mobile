@@ -19,6 +19,7 @@ import { toolCallTitle } from "../lib/tool-titles"
 import { createFocusReadCoordinator } from "../lib/focus-read"
 import { isTranscriptActive, nextActiveTranscript, shouldApplyTranscriptSnapshot } from "../lib/transcript-focus"
 import { warmSessionFor } from "../lib/warm-session"
+import { streamPartKey } from "../lib/stream-part-batching"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Helper to convert API response to our internal format
@@ -268,7 +269,7 @@ export function enqueueStreamPart(part: Part, receivedAt = Date.now()) {
     bumpTranscriptRevision(sessionID)
     pendingTranscriptGenerations.set(sessionID, transcriptRevision(sessionID))
   }
-  pendingParts.set(part.id, { part, receivedAt })
+  pendingParts.set(streamPartKey(part), { part, receivedAt })
   if (!streamPartTimer) streamPartTimer = setTimeout(flushStreamPartUpdates, STREAM_PART_FLUSH_WINDOW_MS)
 }
 

@@ -21,6 +21,7 @@ import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
+import { canFlushVisiblePartStatus } from "../lib/stream-part-batching"
 import { canApplyFocusedStatusHydration, canApplyResyncIdle, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "../lib/status-hydration"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
@@ -122,12 +123,18 @@ export function flushPendingPartStatus() {
   useEvents.setState((state) => {
     let statusText = state.statusText
     let sessionStatus = state.sessionStatus
+    let changed = false
     for (const [sessionID, update] of updates) {
+      const sessions = useSessions.getState()
+      // The session may have been replaced while this window was open. Never
+      // let an old foreground timer paint status into a newly visible turn.
+      if (!canFlushVisiblePartStatus(sessions.currentSession?.id, sessions.activeTranscriptSessionID, sessionID)) continue
       statusText = { ...statusText, [sessionID]: update.text }
+      changed = true
       const next = noteTextActivity(sessionStatus[sessionID], update.receivedAt)
       if (next !== sessionStatus[sessionID]) sessionStatus = { ...sessionStatus, [sessionID]: next! }
     }
-    return { statusText, sessionStatus }
+    return changed ? { statusText, sessionStatus } : state
   })
 }
 
