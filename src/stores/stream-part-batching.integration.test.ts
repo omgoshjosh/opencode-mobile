@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 
 const session = (id: string) => ({ id, slug: id, projectID: "p", directory: "", title: id, version: "1", time: { created: 1, updated: 1 } })
+const drain = async () => { for (let i = 0; i < 12; i++) await Promise.resolve() }
 
 test("part received during selectSession fetch lands in its destination transcript", async () => {
   const { useSessions } = await import("./sessions")
@@ -128,4 +129,50 @@ test("navigation synchronously drains outgoing transcript and status without res
   flushPendingPartStatus()
   flushPendingStreamParts()
   assert.equal(useEvents.getState().statusText.s1, before)
+})
+
+test("SSE dispatcher flushes queued content on idle and stream closure", async () => {
+  const { useSessions, cancelPendingStreamParts, flushPendingStreamParts } = await import("./sessions")
+  const { useEvents, flushPendingPartStatus } = await import("./events")
+  const { useConnections } = await import("./connections")
+  cancelPendingStreamParts()
+  useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1", parts: {}, previews: {}, runningTools: {}, pendingWakes: {} })
+  useEvents.setState({ sessionStatus: { s1: { type: "busy" } }, statusText: {}, reconnectAttempts: 0 })
+  const client: any = { session: { messages: async () => [] }, global: { events: async function* () {
+    yield { type: "message.part.updated", properties: { part: { id: "idle-text", sessionID: "s1", messageID: "m", type: "text", text: "idle final" } } }
+    yield { type: "session.status", properties: { sessionID: "s1", status: { type: "idle" } } }
+  } } }
+  useConnections.setState({ client })
+  useEvents.getState().connect()
+  await drain()
+  assert.equal(useSessions.getState().parts.m?.[0]?.text, "idle final")
+  assert.equal(useEvents.getState().sessionStatus.s1.type, "idle")
+  const status = useEvents.getState().statusText.s1
+  flushPendingPartStatus(); flushPendingStreamParts()
+  assert.equal(useEvents.getState().statusText.s1, status)
+  assert.equal(useEvents.getState().reconnectAttempts, 1)
+  useEvents.getState().disconnect()
+})
+
+test("SSE dispatcher flushes queued content before session.error cleanup", async () => {
+  const { useSessions, cancelPendingStreamParts, flushPendingStreamParts } = await import("./sessions")
+  const { useEvents, flushPendingPartStatus } = await import("./events")
+  const { useConnections } = await import("./connections")
+  cancelPendingStreamParts()
+  useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1", parts: {}, previews: {}, runningTools: {}, pendingWakes: {} })
+  useEvents.setState({ sessionStatus: { s1: { type: "busy" } }, statusText: {} })
+  const client: any = { session: { messages: async () => [] }, global: { events: async function* () {
+    yield { type: "message.part.updated", properties: { part: { id: "error-text", sessionID: "s1", messageID: "m", type: "text", text: "error final" } } }
+    yield { type: "session.error", properties: { sessionID: "s1", error: { message: "boom" } } }
+    await new Promise(() => {})
+  } } }
+  useConnections.setState({ client })
+  useEvents.getState().connect()
+  await drain()
+  assert.equal(useSessions.getState().parts.m?.[0]?.text, "error final")
+  assert.equal(useSessions.getState().error, "boom")
+  const writes = useEvents.getState().statusText.s1
+  flushPendingPartStatus(); flushPendingStreamParts()
+  assert.equal(useEvents.getState().statusText.s1, writes)
+  useEvents.getState().disconnect()
 })
