@@ -192,6 +192,7 @@ export const STREAM_PART_FLUSH_WINDOW_MS = 100
 const pendingParts = new Map<string, { part: Part; receivedAt: number }>()
 const pendingTranscriptGenerations = new Map<string, number>()
 let streamPartTimer: ReturnType<typeof setTimeout> | null = null
+let selectingSessionID: string | null = null
 
 function transcriptRevision(sessionID: string): number {
   return transcriptRevisions.get(sessionID) ?? 0
@@ -208,7 +209,7 @@ function flushStreamPartUpdates() {
   }
   if (pendingParts.size === 0) return
 
-  const updates = [...pendingParts.values()]
+  const updates = [...pendingParts.entries()]
   pendingParts.clear()
   const generations = new Map(pendingTranscriptGenerations)
   pendingTranscriptGenerations.clear()
@@ -218,7 +219,14 @@ function flushStreamPartUpdates() {
     let pendingWakes = state.pendingWakes
     let parts = state.parts
     let transcriptChanged = false
-    for (const { part, receivedAt } of updates) {
+    for (const [key, { part, receivedAt }] of updates) {
+      // A destination transcript is not installed until selectSession's GET
+      // resolves. Keep its live events instead of consuming them against the
+      // outgoing transcript while that request is in flight.
+      if (selectingSessionID === part.sessionID && state.currentSession?.id !== part.sessionID) {
+        pendingParts.set(key, { part, receivedAt })
+        continue
+      }
       if (part.sessionID && part.type === "text") {
         const text = previewText(part.text)
         if (text) previews = persistedPutPreview(previews, part.sessionID, { text, at: part.time?.start ?? receivedAt })
@@ -427,6 +435,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
     }
 
     const seq = ++selectSeq
+    selectingSessionID = sessionID
     const read = focusReads.begin(signal)
     if (!read.isCurrent()) return false
     addBreadcrumb({ category: "session", message: "select", data: { sessionID, hasDirectory: Boolean(directory) } })
@@ -540,6 +549,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
         nextCursor: page.nextCursor,
         hasMore: Boolean(page.nextCursor),
       }))
+      selectingSessionID = null
+      flushStreamPartUpdates()
       return true
     } catch (err) {
       if (seq !== selectSeq || !read.isCurrent()) return false
@@ -547,6 +558,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
       set({ error: "Failed to load session", isLoading: false })
       return false
     } finally {
+      if (selectingSessionID === sessionID) {
+        selectingSessionID = null
+        flushStreamPartUpdates()
+      }
       read.dispose()
     }
   },
