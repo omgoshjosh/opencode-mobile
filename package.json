@@ -10,7 +10,8 @@
     "android": "expo run:android",
     "typecheck": "tsc --noEmit",
     "check:versions": "node scripts/check-version-parity.mjs",
-    "test": "node --test 'src/**/*.test.ts' 'scripts/*.test.mjs'"
+    "test:stores": "node --experimental-test-module-mocks --import tsx --test --test-concurrency=1 'src/stores/*.integration.test.ts'",
+    "test": "node --experimental-test-module-mocks --import tsx --test 'src/**/*.test.ts' 'scripts/*.test.mjs'"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -51,6 +52,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.10",
+    "tsx": "4.20.5",
     "typescript": "~5.9.2"
   },
   "expo": {

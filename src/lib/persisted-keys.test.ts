@@ -80,7 +80,7 @@ const ALLOWED_ASYNC_KEYS = new Map<string, string>([
 // which are exactly where a "remember what the user was looking at" cache
 // gets added. GROUP_MODE_KEY and SESSION_FILTER_KEY both live there and were
 // unscanned until this was widened.
-const ROOTS = [path.join(import.meta.dirname, ".."), path.join(import.meta.dirname, "..", "..", "app")].filter((dir) =>
+const ROOTS = [path.join(process.cwd(), "src"), path.join(process.cwd(), "app")].filter((dir) =>
   fs.existsSync(dir),
 )
 
