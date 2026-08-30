@@ -9,7 +9,7 @@ import { addBreadcrumb } from "../lib/sentry"
 import { AnalyticsEvent, track } from "../lib/analytics"
 import { recordSuccessfulSession } from "../lib/store-review"
 import { isAuthError } from "../lib/api-error"
-import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
+import { resyncBusySession } from "../lib/reconnect-resync"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
@@ -244,31 +244,26 @@ async function resyncBusySessions() {
           : connState.client
         if (!client) return
 
-        // isSessionActuallyIdle only inspects the final message, so one is
-        // enough. This previously fetched the ENTIRE session — on every
-        // reconnect, for every session this client believed was busy.
         const sendingRevision = optimisticSendingRevision(sessionID)
-        const response = await client.session.messages(sessionID, { limit: 1 })
-        const messages = (response || []).map((m) => m.info)
-        if (!isSessionActuallyIdle(messages)) return // server says still busy - leave it alone
-
-        // A fresh session.status event may have landed on the SSE stream
-        // while this fetch was in flight — that's authoritative, don't
-        // stomp on it.
-        if (useEvents.getState().sessionStatus[sessionID]?.type !== "busy") return
-        if (!canApplyResyncIdle(sendingRevision, optimisticSendingRevision(sessionID))) return
-
-        statusMutationRevisions.set(sessionID, (statusMutationRevisions.get(sessionID) ?? 0) + 1)
-        useEvents.setState((state) => ({ sessionStatus: { ...state.sessionStatus, [sessionID]: { type: "idle" } } }))
-        persistStatusCache(useEvents.getState().sessionStatus)
-        clearIdleSessions([sessionID])
-        const latestSessions = useSessions.getState()
-        if (
-          latestSessions.activeTranscriptSessionID === sessionID &&
-          latestSessions.currentSession?.id === sessionID
-        ) {
-          latestSessions.refreshMessages()
-        }
+        await resyncBusySession({
+          client,
+          sessionID,
+          isBusy: () => useEvents.getState().sessionStatus[sessionID]?.type === "busy",
+          canApply: () => canApplyResyncIdle(sendingRevision, optimisticSendingRevision(sessionID)),
+          markIdle: () => {
+            statusMutationRevisions.set(sessionID, (statusMutationRevisions.get(sessionID) ?? 0) + 1)
+            useEvents.setState((state) => ({ sessionStatus: { ...state.sessionStatus, [sessionID]: { type: "idle" } } }))
+            persistStatusCache(useEvents.getState().sessionStatus)
+            clearIdleSessions([sessionID])
+            const latestSessions = useSessions.getState()
+            if (
+              latestSessions.activeTranscriptSessionID === sessionID &&
+              latestSessions.currentSession?.id === sessionID
+            ) {
+              latestSessions.refreshMessages()
+            }
+          },
+        })
       } catch (err) {
         console.warn("[Events] Failed to resync session status for", sessionID, err)
       }
