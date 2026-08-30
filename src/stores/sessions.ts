@@ -273,7 +273,11 @@ export function cancelPendingStreamParts() {
 export function enqueueStreamPart(part: Part, receivedAt = Date.now()) {
   const state = useSessions.getState()
   const sessionID = part.sessionID
-  if (sessionID && state.currentSession?.id === sessionID && isTranscriptActive(state.activeTranscriptSessionID, sessionID)) {
+  if (
+    sessionID &&
+    isTranscriptActive(state.activeTranscriptSessionID, sessionID) &&
+    (state.currentSession?.id === sessionID || selectingSessionID === sessionID)
+  ) {
     bumpTranscriptRevision(sessionID)
     pendingTranscriptGenerations.set(sessionID, transcriptRevision(sessionID))
   }
