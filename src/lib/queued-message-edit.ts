@@ -1,4 +1,5 @@
 import { awaitingTurn, isOptimisticID } from "./message-delivery.ts"
+import type { MessageCancelOutcome } from "./message-cancel"
 
 export interface QueueMessage {
   id: string
@@ -48,6 +49,14 @@ export function queuedUserMessages(input: {
 /** Queued prompts lead the existing draft without blank separators. */
 export function mergeQueuedText(queued: readonly string[], draft: string): string {
   return [...queued, draft].map((text) => text.trim()).filter(Boolean).join("\n\n")
+}
+
+/** Only explicitly cancelled messages can be safely restored to the draft. */
+export function cancelledQueuedMessages(
+  messages: readonly QueueMessage[],
+  outcomes: Readonly<Record<string, MessageCancelOutcome | undefined>>,
+): QueueMessage[] {
+  return messages.filter((message) => outcomes[message.id] === "cancelled")
 }
 
 /** Refuse a revert unless every queued prompt can be faithfully recovered. */

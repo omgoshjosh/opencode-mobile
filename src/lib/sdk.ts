@@ -15,8 +15,11 @@ import { nextCursorFrom } from "./message-page"
 import { requestSignal } from "./request-signal"
 import type { FileRoot } from "./file-roots"
 import type { RoleInput as SwarmRoleInput, Swarm as SwarmInfo } from "./swarm-crud"
+import { messageCancelOutcome, type MessageCancelOutcome } from "./message-cancel"
 
 export { ApiError, ApiAuthError, isAuthError } from "./api-error"
+export { messageCancelOutcome }
+export type { MessageCancelOutcome }
 
 export interface ClientConfig {
   baseUrl: string
@@ -524,6 +527,9 @@ export function createClient(config: ClientConfig) {
         const qs = query.toString()
         return request<MessageWithParts[]>(config, `/session/${sessionID}/message${qs ? `?${qs}` : ""}`, { signal })
       },
+
+      cancel: async (sessionID: string, messageID: string): Promise<MessageCancelOutcome> =>
+        messageCancelOutcome(await request<unknown>(config, `/session/${sessionID}/message/${messageID}/cancel`, { method: "POST" })),
 
       /**
        * One page of a transcript, newest-first from `before` (or from the end
