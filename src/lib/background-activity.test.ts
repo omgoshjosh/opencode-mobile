@@ -39,7 +39,7 @@ test("completed parent task excludes stale busy child", () => {
   assert.equal(result, undefined)
 })
 
-test("SSE keeps only touched IDs over a GET snapshot", () => {
+test("only SSE received during a GET keeps its status over the snapshot", () => {
   assert.deepEqual(
     mergeStatusSnapshot({ fresh: { type: "busy" }, stale: { type: "busy" } }, { fresh: { type: "idle" }, stale: { type: "idle" } }, new Set(["fresh"]), 1),
     { fresh: { type: "busy" }, stale: { type: "idle" } },
@@ -59,7 +59,7 @@ test("touched SSE inherits GET background only when it omits it", () => {
   )
 })
 
-test("snapshot absence clears untouched stale IDs but retains touched current IDs", () => {
+test("snapshot idle or absence settles stale busy IDs", () => {
   assert.deepEqual(
     mergeStatusSnapshot(
       { stale: { type: "busy" }, touched: { type: "busy" } },
@@ -67,7 +67,7 @@ test("snapshot absence clears untouched stale IDs but retains touched current ID
       new Set(["touched"]),
       1,
     ),
-    { server: { type: "idle" }, touched: { type: "busy" } },
+    { stale: { type: "idle" }, touched: { type: "busy" }, server: { type: "idle" } },
   )
 })
 

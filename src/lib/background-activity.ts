@@ -96,10 +96,12 @@ export function mergeStatusSnapshot(
   now: number,
 ): Record<string, SessionStatus> {
   return Object.fromEntries(
-    [...new Set([...Object.keys(snapshot), ...[...touched]])].map((id) => {
+    [...new Set([...Object.keys(current), ...Object.keys(snapshot)])].map((id) => {
       const latest = current[id]
-      if (!latest || !touched.has(id)) return [id, snapshot[id] ?? latest]
-      return [id, mergeStatusEvent(snapshot[id], latest, now)]
+      // Only an SSE event received while this GET was in flight can be newer
+      // than the snapshot. A status omitted by the server is explicitly idle.
+      if (latest && touched.has(id)) return [id, mergeStatusEvent(snapshot[id], latest, now)]
+      return [id, mergeStatusEvent(latest, snapshot[id] ?? { type: "idle" }, now)]
     }),
   )
 }

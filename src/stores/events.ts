@@ -13,7 +13,7 @@ import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
-import { canApplyStatusHydration } from "../lib/status-hydration"
+import { canApplyFocusedStatusHydration, canApplyStatusHydration, clearIdleSessionState } from "../lib/status-hydration"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Last-known statuses, persisted eagerly so the sessions list renders real
@@ -99,17 +99,81 @@ interface EventsState {
 let controller: AbortController | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let statusLifecycle = 0
-const liveStatusIDs = new Set<string>()
+const statusEventRevisions = new Map<string, number>()
+
+function changedStatusIDsSince(revisions: Map<string, number>) {
+  return new Set(
+    [...new Set([...revisions.keys(), ...statusEventRevisions.keys()])].filter(
+      (sessionID) => revisions.get(sessionID) !== statusEventRevisions.get(sessionID),
+    ),
+  )
+}
+
+function clearIdleSessions(sessionIDs: string[]) {
+  if (sessionIDs.length === 0) return
+  useEvents.setState((state) => ({
+    statusText: sessionIDs.reduce((statusText, sessionID) => ({ ...statusText, [sessionID]: "" }), state.statusText),
+  }))
+  useSessions.setState((state) =>
+    sessionIDs.reduce((next, sessionID) => {
+      const cleared = clearIdleSessionState({
+        sessionID,
+        statusText: useEvents.getState().statusText,
+        sending: next.sending,
+        runningTools: next.runningTools,
+      })
+      return { ...next, sending: cleared.sending, runningTools: cleared.runningTools }
+    }, state),
+  )
+}
 
 async function hydrateStatus(client: Client, lifecycle: number, signal: AbortSignal) {
+  const revisions = new Map(statusEventRevisions)
   try {
     const snapshot = await client.session.status(signal)
     if (!canApplyStatusHydration(lifecycle, statusLifecycle, signal) || !snapshot) return
+    const changed = changedStatusIDsSince(revisions)
+    let merged: Record<string, SessionStatus> = {}
     useEvents.setState((state) => {
-      return { sessionStatus: mergeStatusSnapshot(state.sessionStatus, snapshot, liveStatusIDs, Date.now()) }
+      merged = mergeStatusSnapshot(state.sessionStatus, snapshot, changed, Date.now())
+      return { sessionStatus: merged }
     })
+    clearIdleSessions(Object.entries(merged).flatMap(([sessionID, status]) => (status.type === "idle" ? [sessionID] : [])))
+    persistStatusCache(merged)
   } catch (error) {
+    if (signal.aborted) return
     console.warn("[Events] Failed to hydrate session status:", error)
+  }
+}
+
+export async function refreshFocusedStatus(client: Client, sessionID: string, signal: AbortSignal) {
+  const lifecycle = statusLifecycle
+  const revision = statusEventRevisions.get(sessionID) ?? 0
+  try {
+    const snapshot = await client.session.status(signal)
+    if (!snapshot) return
+    if (
+      !canApplyFocusedStatusHydration({
+        lifecycle,
+        currentLifecycle: statusLifecycle,
+        signal,
+        currentSessionID: useSessions.getState().currentSession?.id,
+        sessionID,
+        revision,
+        currentRevision: statusEventRevisions.get(sessionID) ?? 0,
+      })
+    ) return
+    const status = snapshot[sessionID] ?? { type: "idle" as const }
+    let next: SessionStatus = status
+    useEvents.setState((state) => {
+      next = mergeStatusEvent(state.sessionStatus[sessionID], status)
+      return { sessionStatus: { ...state.sessionStatus, [sessionID]: next } }
+    })
+    if (next.type === "idle") clearIdleSessions([sessionID])
+    persistStatusCache(useEvents.getState().sessionStatus)
+  } catch (error) {
+    if (signal.aborted) return
+    console.warn("[Events] Failed to refresh focused session status:", error)
   }
 }
 
@@ -263,7 +327,7 @@ export const useEvents = create<EventsState>((set, get) => ({
 
     // A reconnect's GET is its fresh baseline. Only events from this socket,
     // not cached or previous-socket values, may protect a newer local update.
-    liveStatusIDs.clear()
+    statusEventRevisions.clear()
     const lifecycle = ++statusLifecycle
 
     controller = new AbortController()
@@ -361,7 +425,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               const sessionID = props.sessionID as string
               const status = props.status as SessionStatus
               if (!sessionID) break
-              liveStatusIDs.add(sessionID)
+              statusEventRevisions.set(sessionID, (statusEventRevisions.get(sessionID) ?? 0) + 1)
 
               // Detect busy → idle transition for completion notification
               const previous = get().sessionStatus[sessionID]
@@ -372,13 +436,6 @@ export const useEvents = create<EventsState>((set, get) => ({
                 erroredSessions.delete(sessionID)
                 abortedSessions.delete(sessionID)
               }
-              // Idle is authoritative for the waiting-on panel: any tool
-              // still marked running for this session is a straggler from a
-              // lost completion event.
-              if (status.type === "idle") {
-                useSessions.getState().clearRunningTools(sessionID)
-              }
-
               const next = nextSessionStatus(previous, mergeStatusEvent(previous, status), Date.now())
               set((state) => ({
                 sessionStatus: { ...state.sessionStatus, [sessionID]: next },
@@ -391,9 +448,7 @@ export const useEvents = create<EventsState>((set, get) => ({
 
               // SSE is the source of truth — update sending state unconditionally
               if (status.type === "idle") {
-                useSessions.setState((state) => ({
-                  sending: { ...state.sending, [sessionID]: false },
-                }))
+                clearIdleSessions([sessionID])
                 // Refresh messages if this is the session the user is viewing
                 const sessions = useSessions.getState()
                 if (sessions.activeTranscriptSessionID === sessionID && sessions.currentSession?.id === sessionID) {
@@ -653,7 +708,7 @@ export const useEvents = create<EventsState>((set, get) => ({
     controller = null
     erroredSessions.clear()
     abortedSessions.clear()
-    liveStatusIDs.clear()
+    statusEventRevisions.clear()
     set({
       connected: false,
       authError: false,

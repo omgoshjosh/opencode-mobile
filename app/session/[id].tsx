@@ -59,7 +59,7 @@ import { TitlePeek } from "../../src/components/chat/TitlePeek"
 import { visibleTranscriptEntry } from "../../src/lib/transcript-visibility"
 import { useSessions } from "../../src/stores/sessions"
 import { useDrafts } from "../../src/stores/drafts"
-import { useEvents, refreshPending } from "../../src/stores/events"
+import { useEvents, refreshFocusedStatus, refreshPending } from "../../src/stores/events"
 import { useConnections } from "../../src/stores/connections"
 import { useAuth } from "../../src/stores/auth"
 import { useCatalog } from "../../src/stores/catalog"
@@ -561,7 +561,10 @@ export default function SessionScreen() {
         // missed SSE events or failed optimistic removals
         const connState = useConnections.getState()
         const c = directory ? (connState.clientForDirectory(directory) ?? connState.client) : connState.client
-        if (c) refreshPending(c, id, controller.signal)
+        if (c) {
+          refreshPending(c, id, controller.signal)
+          refreshFocusedStatus(c, id, controller.signal)
+        }
       })
       return () => {
         setTranscriptActive(id, false)

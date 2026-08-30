@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { canApplyStatusHydration } from "./status-hydration.ts"
+import { mergeStatusSnapshot } from "./background-activity.ts"
+import { canApplyFocusedStatusHydration, canApplyStatusHydration, clearIdleSessionState } from "./status-hydration.ts"
 
 test("late status hydration is rejected after disconnect invalidates its lifecycle", () => {
   const controller = new AbortController()
@@ -10,4 +11,62 @@ test("late status hydration is rejected after disconnect invalidates its lifecyc
 
   controller.abort()
   assert.equal(canApplyStatusHydration(1, 1, controller.signal), false)
+})
+
+test("cached busy hydrated idle clears every stop input", () => {
+  const statuses = mergeStatusSnapshot({ session: { type: "busy" } }, { session: { type: "idle" } }, new Set(), 1)
+  assert.equal(statuses.session.type, "idle")
+  assert.deepEqual(
+    clearIdleSessionState({
+      sessionID: "session",
+      statusText: { session: "Running tool" },
+      sending: { session: true },
+      runningTools: { session: [{ partID: "tool", messageID: "message", sessionID: "session", title: "Tool", tool: "bash", startedAt: 1 }] },
+    }),
+    { statusText: { session: "" }, sending: { session: false }, runningTools: {} },
+  )
+})
+
+test("focused hydration loses to a newer SSE status event", () => {
+  assert.equal(
+    canApplyFocusedStatusHydration({
+      lifecycle: 1,
+      currentLifecycle: 1,
+      signal: new AbortController().signal,
+      currentSessionID: "session",
+      sessionID: "session",
+      revision: 3,
+      currentRevision: 4,
+    }),
+    false,
+  )
+})
+
+test("aborted or navigated focused hydration cannot apply", () => {
+  const controller = new AbortController()
+  controller.abort()
+  assert.equal(
+    canApplyFocusedStatusHydration({
+      lifecycle: 1,
+      currentLifecycle: 1,
+      signal: controller.signal,
+      currentSessionID: "session",
+      sessionID: "session",
+      revision: 1,
+      currentRevision: 1,
+    }),
+    false,
+  )
+  assert.equal(
+    canApplyFocusedStatusHydration({
+      lifecycle: 1,
+      currentLifecycle: 1,
+      signal: new AbortController().signal,
+      currentSessionID: "other",
+      sessionID: "session",
+      revision: 1,
+      currentRevision: 1,
+    }),
+    false,
+  )
 })
