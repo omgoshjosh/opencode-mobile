@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { cancelledQueuedMessages, mergeQueuedText, queuedUserMessages, recoverQueuedMessages, shouldApplyQueuedEdit } from "./queued-message-edit.ts"
+import { cancelledQueuedMessages, mergeQueuedText, prependQueuedAttachments, queuedUserMessages, recoverQueuedMessages, shouldApplyQueuedEdit } from "./queued-message-edit.ts"
 
 const message = (id: string, createdAt: number, role = "user", sessionID = "s1") => ({ id, createdAt, role, sessionID })
 
@@ -55,6 +55,24 @@ test("restores only cancelled messages in original chronological order", () => {
     cancelledQueuedMessages(messages, { first: "cancelled", second: "running", third: "cancelled" }).map((item) => item.id),
     ["first", "third"],
   )
+})
+
+test("prepends cancellation recovery to composer changes made while it runs", () => {
+  const recovered = recoverQueuedMessages({
+    messages: [message("queued", 20)],
+    parts: { queued: [{ type: "file", url: "queued.png", mime: "image/png" }] },
+    draft: "typed while cancelling",
+    extractText: () => "queued text",
+  })
+  assert.deepEqual(recovered, {
+    ok: true,
+    text: "queued text\n\ntyped while cancelling",
+    files: [{ uri: "queued.png", mime: "image/png" }],
+  })
+  assert.deepEqual(prependQueuedAttachments(recovered.ok ? recovered.files : [], [{ uri: "new.png", mime: "image/png" }]), [
+    { uri: "queued.png", mime: "image/png" },
+    { uri: "new.png", mime: "image/png" },
+  ])
 })
 
 test("only the focused originating session may receive the result", () => {

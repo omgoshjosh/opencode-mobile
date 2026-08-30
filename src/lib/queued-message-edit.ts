@@ -59,6 +59,11 @@ export function cancelledQueuedMessages(
   return messages.filter((message) => outcomes[message.id] === "cancelled")
 }
 
+/** Recovered files lead attachments added while cancellation was in flight. */
+export function prependQueuedAttachments<T>(queued: readonly T[], composer: readonly T[]): T[] {
+  return [...queued, ...composer]
+}
+
 /** Refuse a revert unless every queued prompt can be faithfully recovered. */
 export function recoverQueuedMessages(input: {
   messages: readonly QueueMessage[]

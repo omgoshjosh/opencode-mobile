@@ -54,7 +54,7 @@ import { inferBusyFromMessages } from "../../src/lib/session-status-reconcile"
 import { slashPopoverQuery } from "../../src/lib/slash-trigger"
 import { summarizeModel } from "../../src/lib/summarize-model"
 import { awaitingTurn, inFlightUserCreatedAt } from "../../src/lib/message-delivery"
-import { cancelledQueuedMessages, queuedUserMessages, recoverQueuedMessages, shouldApplyQueuedEdit } from "../../src/lib/queued-message-edit"
+import { cancelledQueuedMessages, prependQueuedAttachments, queuedUserMessages, recoverQueuedMessages, shouldApplyQueuedEdit } from "../../src/lib/queued-message-edit"
 import type { MessageCancelOutcome } from "../../src/lib/message-cancel"
 import { shouldApplyRestoredDraft, shouldPersistFocusedDraft } from "../../src/lib/draft-lifecycle"
 import { TitlePeek } from "../../src/components/chat/TitlePeek"
@@ -521,7 +521,6 @@ export default function SessionScreen() {
                 applyRevertResult({ ok: false, reason: "error" })
                 return
               }
-              const original = { sessionID: current.id, text: inputRef.current, files: attachmentsRef.current }
               const client = useConnections.getState().clientForDirectory(current.directory)
               if (!client) {
                 applyRevertResult({ ok: false, reason: "error" })
@@ -546,7 +545,7 @@ export default function SessionScreen() {
               const restored = recoverQueuedMessages({
                 messages: cancelled,
                 parts: latest.parts,
-                draft: original.text,
+                draft: inputRef.current,
                 extractText: (parts) => extractCopyText(parts as Part[]),
               })
               if (!restored.ok) {
@@ -556,7 +555,7 @@ export default function SessionScreen() {
               savedDraftRef.current[current.id] = restored.text
               saveDraft(current.id, restored.text)
               if (!shouldApplyQueuedEdit(draftFocusedRef.current, id, current.id, useSessions.getState().currentSession?.id)) return
-              const files = [...restored.files, ...original.files]
+              const files = prependQueuedAttachments(restored.files, attachmentsRef.current)
               inputRef.current = restored.text
               draftTouchedRef.current = true
               setInput(restored.text)
