@@ -184,6 +184,13 @@ let listLoadSeq = 0
 let selectSeq = 0
 const focusReads = createFocusReadCoordinator()
 const transcriptRevisions = new Map<string, number>()
+export const STREAM_PART_FLUSH_WINDOW_MS = 100
+
+// A stream can deliver one event per token. Keep only the newest version of a
+// part while retaining the insertion order of distinct parts in this window.
+const pendingParts = new Map<string, { part: Part; receivedAt: number }>()
+const pendingTranscriptGenerations = new Map<string, number>()
+let streamPartTimer: ReturnType<typeof setTimeout> | null = null
 
 function transcriptRevision(sessionID: string): number {
   return transcriptRevisions.get(sessionID) ?? 0
@@ -191,6 +198,78 @@ function transcriptRevision(sessionID: string): number {
 
 function bumpTranscriptRevision(sessionID: string) {
   transcriptRevisions.set(sessionID, transcriptRevision(sessionID) + 1)
+}
+
+function flushStreamPartUpdates() {
+  if (streamPartTimer) {
+    clearTimeout(streamPartTimer)
+    streamPartTimer = null
+  }
+  if (pendingParts.size === 0) return
+
+  const updates = [...pendingParts.values()]
+  pendingParts.clear()
+  const generations = new Map(pendingTranscriptGenerations)
+  pendingTranscriptGenerations.clear()
+  useSessions.setState((state) => {
+    let previews = state.previews
+    let runningTools = state.runningTools
+    let pendingWakes = state.pendingWakes
+    let parts = state.parts
+    let transcriptChanged = false
+    for (const { part, receivedAt } of updates) {
+      if (part.sessionID && part.type === "text") {
+        const text = previewText(part.text)
+        if (text) previews = persistedPutPreview(previews, part.sessionID, { text, at: part.time?.start ?? receivedAt })
+      }
+      if (part.sessionID && part.type === "tool") {
+        runningTools = trackToolPart(runningTools, part, toolCallTitle(part), receivedAt)
+        pendingWakes = trackWakePart(pendingWakes, part, receivedAt)
+      }
+      const sessionID = part.sessionID
+      if (
+        !sessionID ||
+        state.currentSession?.id !== sessionID ||
+        !isTranscriptActive(state.activeTranscriptSessionID, sessionID) ||
+        generations.get(sessionID) !== transcriptRevision(sessionID)
+      ) continue
+      const messageParts = parts[part.messageID] || []
+      const index = messageParts.findIndex((item) => item.id === part.id)
+      const next = index === -1 ? [...messageParts, part] : messageParts.map((item, i) => (i === index ? part : item))
+      if (next === messageParts) continue
+      if (!transcriptChanged) parts = { ...parts }
+      parts[part.messageID] = next
+      transcriptChanged = true
+    }
+    return {
+      ...(previews !== state.previews ? { previews } : null),
+      ...(runningTools !== state.runningTools ? { runningTools } : null),
+      ...(pendingWakes !== state.pendingWakes ? { pendingWakes } : null),
+      ...(transcriptChanged ? { parts, isLoading: false } : null),
+    }
+  })
+}
+
+export function flushPendingStreamParts() {
+  flushStreamPartUpdates()
+}
+
+export function cancelPendingStreamParts() {
+  if (streamPartTimer) clearTimeout(streamPartTimer)
+  streamPartTimer = null
+  pendingParts.clear()
+  pendingTranscriptGenerations.clear()
+}
+
+export function enqueueStreamPart(part: Part, receivedAt = Date.now()) {
+  const state = useSessions.getState()
+  const sessionID = part.sessionID
+  if (sessionID && state.currentSession?.id === sessionID && isTranscriptActive(state.activeTranscriptSessionID, sessionID)) {
+    bumpTranscriptRevision(sessionID)
+    pendingTranscriptGenerations.set(sessionID, transcriptRevision(sessionID))
+  }
+  pendingParts.set(part.id, { part, receivedAt })
+  if (!streamPartTimer) streamPartTimer = setTimeout(flushStreamPartUpdates, STREAM_PART_FLUSH_WINDOW_MS)
 }
 
 // Get the right client for a session's directory
@@ -224,6 +303,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
   listLoadFailed: false,
 
   setTranscriptActive: (sessionID, active) => {
+    if (nextActiveTranscript(get().activeTranscriptSessionID, sessionID, active) !== get().activeTranscriptSessionID) {
+      flushStreamPartUpdates()
+      bumpTranscriptRevision(sessionID)
+    }
     set((state) => ({
       activeTranscriptSessionID: nextActiveTranscript(state.activeTranscriptSessionID, sessionID, active),
     }))
@@ -331,6 +414,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
   },
 
   selectSession: async (sessionID, directory, signal) => {
+    flushStreamPartUpdates()
     // Use directory-specific client if the session belongs to a different project
     const connState = useConnections.getState()
     const client = directory ? connState.clientForDirectory(directory) : connState.client
@@ -527,6 +611,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
   },
 
   createSession: async (title) => {
+    flushStreamPartUpdates()
     const connState = useConnections.getState()
     const client = connState.client
     if (!client) {
@@ -557,6 +642,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
   },
 
   deleteSession: async (sessionID) => {
+    flushStreamPartUpdates()
     const session = get().sessions.find((s) => s.id === sessionID)
     const client = clientFor(session?.directory)
     if (!client) {
@@ -694,6 +780,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
   },
 
   refreshMessages: async (signal) => {
+    flushStreamPartUpdates()
     const client = clientFor(get().currentSession?.directory)
     const session = get().currentSession
     if (!client || !session) return
@@ -786,33 +873,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
   handleEvent: (event) => {
     const props = (event as any).properties || {}
 
-    // Capture the list preview BEFORE any current-session filtering below.
-    // Every part of every session crosses this stream; the client was
-    // discarding everything not belonging to the open session, which is why
-    // the list could never say what a session was about without an extra
-    // request per row. See src/lib/session-preview.ts.
     if (event.type === "message.part.updated") {
       const part = props.part as Part | undefined
-      if (part?.sessionID && part.type === "text") {
-        const text = previewText(part.text)
-        if (text) {
-          set((state) => ({
-            previews: putPreview(state.previews, part.sessionID!, {
-              text,
-              at: part.time?.start ?? Date.now(),
-            }),
-          }))
-          schedulePersistPreviews()
-        }
-      }
-      // Farm-wide in-flight tool map (waiting-on panel). Rides the same
-      // global stream as the preview harvest; bounded in running-tools.ts.
-      if (part?.sessionID && part.type === "tool") {
-        set((state) => ({
-          runningTools: trackToolPart(state.runningTools, part, toolCallTitle(part), Date.now()),
-          pendingWakes: trackWakePart(state.pendingWakes, part, Date.now()),
-        }))
-      }
+      if (part) enqueueStreamPart(part, typeof props.receivedAt === "number" ? props.receivedAt : Date.now())
+      return
     }
 
     const { currentSession } = get()
@@ -820,6 +884,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
     switch (event.type) {
       case "message.updated": {
+        flushStreamPartUpdates()
         if (!isTranscriptActive(get().activeTranscriptSessionID, currentSession.id)) return
         const message = (props.info || props.message) as Message | undefined
         if (!message) return
@@ -839,35 +904,6 @@ export const useSessions = create<SessionsState>((set, get) => ({
           // (issue #150). Only ever clears, never sets it back to true.
           isLoading: false,
         }))
-        break
-      }
-
-      case "message.part.updated": {
-        if (!isTranscriptActive(get().activeTranscriptSessionID, currentSession.id)) return
-        const part = props.part as Part | undefined
-        if (!part) return
-        // See message.updated: parked transcript caches stay snapshots until
-        // their session is focused and reconciled.
-        if (part.sessionID && part.sessionID !== currentSession.id) {
-          return
-        }
-
-        bumpTranscriptRevision(currentSession.id)
-        set((state) => {
-          const messageParts = state.parts[part.messageID] || []
-          const exists = messageParts.some((p) => p.id === part.id)
-          return {
-            parts: {
-              ...state.parts,
-              [part.messageID]: exists
-                ? messageParts.map((p) => (p.id === part.id ? part : p))
-                : [...messageParts, part],
-            },
-            // See message.updated above — a live part update is just as
-            // much proof of life as a message update.
-            isLoading: false,
-          }
-        })
         break
       }
 
