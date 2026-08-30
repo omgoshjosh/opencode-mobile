@@ -13,7 +13,7 @@ import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
-import { canApplyFocusedStatusHydration, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "../lib/status-hydration"
+import { canApplyFocusedStatusHydration, canApplyResyncIdle, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "../lib/status-hydration"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Last-known statuses, persisted eagerly so the sessions list renders real
@@ -248,6 +248,7 @@ async function resyncBusySessions() {
         // isSessionActuallyIdle only inspects the final message, so one is
         // enough. This previously fetched the ENTIRE session — on every
         // reconnect, for every session this client believed was busy.
+        const sendingRevision = optimisticSendingRevision(sessionID)
         const response = await client.session.messages(sessionID, { limit: RECONCILE_MESSAGE_LIMIT })
         const messages = (response || []).map((m) => m.info)
         if (!isSessionActuallyIdle(messages)) return // server says still busy - leave it alone
@@ -256,6 +257,7 @@ async function resyncBusySessions() {
         // while this fetch was in flight — that's authoritative, don't
         // stomp on it.
         if (useEvents.getState().sessionStatus[sessionID]?.type !== "busy") return
+        if (!canApplyResyncIdle(sendingRevision, optimisticSendingRevision(sessionID))) return
 
         statusMutationRevisions.set(sessionID, (statusMutationRevisions.get(sessionID) ?? 0) + 1)
         useEvents.setState((state) => ({ sessionStatus: { ...state.sessionStatus, [sessionID]: { type: "idle" } } }))

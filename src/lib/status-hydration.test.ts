@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { mergeStatusSnapshot } from "./background-activity.ts"
-import { canApplyFocusedStatusHydration, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "./status-hydration.ts"
+import { canApplyFocusedStatusHydration, canApplyResyncIdle, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "./status-hydration.ts"
 
 test("late status hydration is rejected after disconnect invalidates its lifecycle", () => {
   const controller = new AbortController()
@@ -60,6 +60,10 @@ test("optimistic send started during hydration keeps an old idle snapshot from s
     false,
   )
   assert.deepEqual(settledIdleSessionIDs({ session: { type: "idle" } }, new Set(["session"])), [])
+})
+
+test("send started during resync cannot write idle or clear sending", () => {
+  assert.equal(canApplyResyncIdle(0, 1), false)
 })
 
 test("aborted or navigated focused hydration cannot apply", () => {

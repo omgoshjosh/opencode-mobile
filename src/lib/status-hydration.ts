@@ -54,3 +54,7 @@ export function clearIdleSessionState({
 export function settledIdleSessionIDs(statuses: Record<string, { type: string }>, protectedIDs: Set<string>): string[] {
   return Object.entries(statuses).flatMap(([sessionID, status]) => (status.type === "idle" && !protectedIDs.has(sessionID) ? [sessionID] : []))
 }
+
+export function canApplyResyncIdle(sendingRevision: number, currentSendingRevision: number): boolean {
+  return sendingRevision === currentSendingRevision
+}
