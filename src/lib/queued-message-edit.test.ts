@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mergeQueuedText, queuedUserMessages, shouldApplyQueuedEdit } from "./queued-message-edit.ts"
+import { mergeQueuedText, queuedUserMessages, recoverQueuedMessages, shouldApplyQueuedEdit } from "./queued-message-edit.ts"
 
 const message = (id: string, createdAt: number, role = "user", sessionID = "s1") => ({ id, createdAt, role, sessionID })
 
@@ -24,6 +24,29 @@ test("excludes active, answered, failed, temporary, and other-session messages",
 test("merges every queued text before the existing draft without empty gaps", () => {
   assert.equal(mergeQueuedText([" first ", "", "second"], " draft "), "first\n\nsecond\n\ndraft")
   assert.equal(mergeQueuedText([""], ""), "")
+})
+
+test("recovers queued text and attachments in chronological message order", () => {
+  const result = recoverQueuedMessages({
+    messages: [message("first", 20), message("second", 30)],
+    parts: {
+      first: [{ type: "file", url: "first.png", mime: "image/png" }],
+      second: [{ type: "file", url: "second.jpg", mime: "image/jpeg" }],
+    },
+    draft: "draft",
+    extractText: (parts) => parts[0]?.url === "first.png" ? "one" : "",
+  })
+  assert.deepEqual(result, {
+    ok: true,
+    text: "one\n\ndraft",
+    files: [{ uri: "first.png", mime: "image/png" }, { uri: "second.jpg", mime: "image/jpeg" }],
+  })
+})
+
+test("refuses missing, unrecoverable, and malformed queued parts before reverting", () => {
+  for (const parts of [{}, { one: [] }, { one: [{ type: "file", url: "file" }] }]) {
+    assert.deepEqual(recoverQueuedMessages({ messages: [message("one", 20)], parts, draft: "", extractText: () => "" }), { ok: false })
+  }
 })
 
 test("only the focused originating session may receive the result", () => {

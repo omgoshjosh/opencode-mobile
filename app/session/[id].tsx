@@ -54,7 +54,7 @@ import { inferBusyFromMessages } from "../../src/lib/session-status-reconcile"
 import { slashPopoverQuery } from "../../src/lib/slash-trigger"
 import { summarizeModel } from "../../src/lib/summarize-model"
 import { awaitingTurn, inFlightUserCreatedAt } from "../../src/lib/message-delivery"
-import { mergeQueuedText, queuedUserMessages, shouldApplyQueuedEdit } from "../../src/lib/queued-message-edit"
+import { queuedUserMessages, recoverQueuedMessages, shouldApplyQueuedEdit } from "../../src/lib/queued-message-edit"
 import { shouldApplyRestoredDraft, shouldPersistFocusedDraft } from "../../src/lib/draft-lifecycle"
 import { TitlePeek } from "../../src/components/chat/TitlePeek"
 import { visibleTranscriptEntry } from "../../src/lib/transcript-visibility"
@@ -65,6 +65,7 @@ import { useConnections } from "../../src/stores/connections"
 import { useAuth } from "../../src/stores/auth"
 import { useCatalog } from "../../src/stores/catalog"
 import { useSpeech } from "../../src/lib/speech"
+import type { Part } from "../../src/lib/sdk"
 
 // --- Builtin slash commands ---
 const BUILTIN_COMMANDS: SlashCommand[] = [
@@ -375,6 +376,8 @@ export default function SessionScreen() {
   const draftFocusedRef = useRef(false)
   const draftRestoredRef = useRef(false)
   const draftTouchedRef = useRef(false)
+  const queuedEditInFlight = useRef(false)
+  const revertSnapshotRef = useRef<{ sessionID: string; text: string; files: Attachment[] } | null>(null)
 
   const persistDraft = useCallback(() => {
     if (!id) return
@@ -416,7 +419,7 @@ export default function SessionScreen() {
     }, [id, loadDrafts, persistDraft]),
   )
 
-  const applyRevertResult = useCallback((result: Awaited<ReturnType<typeof revertToMessage>>) => {
+  const applyRevertResult = useCallback((result: Awaited<ReturnType<typeof revertToMessage>>, sessionID?: string) => {
     if (!result.ok) {
       if (result.reason === "unsupported") {
         Alert.alert(t("session.alerts.notSupportedTitle"), t("session.alerts.notSupportedMessage"))
@@ -427,6 +430,12 @@ export default function SessionScreen() {
       }
       return
     }
+    if (!sessionID) return
+    savedDraftRef.current[sessionID] = result.text
+    saveDraft(sessionID, result.text)
+    if (!shouldApplyQueuedEdit(draftFocusedRef.current, id, sessionID, useSessions.getState().currentSession?.id)) return
+    inputRef.current = result.text
+    draftTouchedRef.current = true
     setInput(result.text)
     // Restore attachments in the same shape the composer's own picker
     // functions (pickFromLibrary/pickFromCamera/pasteFromClipboard) use.
@@ -435,7 +444,7 @@ export default function SessionScreen() {
         .filter((f): f is typeof f & { url: string; mime: string } => !!f.url && !!f.mime)
         .map((f) => ({ uri: f.url, mime: f.mime, filename: f.filename })),
     )
-  }, [t])
+  }, [id, saveDraft, t])
 
   // Stable across renders (reads fresh state via getState() rather than
   // closing over props) so MessageBubble's custom memo comparator can bail
@@ -484,44 +493,60 @@ export default function SessionScreen() {
         actions.push({
           text: t("session.actions.editQueuedMessages"),
           onPress: async () => {
-            const latest = useSessions.getState()
-            const current = latest.currentSession
-            const currentStatus = current ? useEvents.getState().sessionStatus[current.id]?.type : undefined
-            if (!current || current.id !== id) return
-            const currentQueue = queuedUserMessages({
-              messages: latest.messages.map((message) => ({ ...message, createdAt: message.time?.created })),
-              sessionID: current.id,
-              busy: currentStatus === "busy" || currentStatus === "retry",
-              inFlightUserCreatedAt: inFlightUserCreatedAt(latest.messages),
-              failedIDs: latest.failedMessageIDs,
-            })
-            if (!currentQueue.some((message) => message.id === messageID)) return
-            const text = mergeQueuedText(currentQueue.map((message) => extractCopyText(latest.parts[message.id])), inputRef.current)
-            const files = currentQueue.flatMap((message) => latest.parts[message.id] ?? [])
-              .filter((part) => part.type === "file" && !!part.url && !!part.mime)
-              .map((part) => ({ uri: part.url!, mime: part.mime!, filename: part.filename }))
-            const result = await useSessions.getState().revertToMessage(currentQueue[0].id)
-            if (!result.ok) {
-              applyRevertResult(result)
-              return
+            if (queuedEditInFlight.current) return
+            queuedEditInFlight.current = true
+            try {
+              const latest = useSessions.getState()
+              const current = latest.currentSession
+              const currentStatus = current ? useEvents.getState().sessionStatus[current.id]?.type : undefined
+              if (!current || current.id !== id) return
+              const currentQueue = queuedUserMessages({
+                messages: latest.messages.map((message) => ({ ...message, createdAt: message.time?.created })),
+                sessionID: current.id,
+                busy: currentStatus === "busy" || currentStatus === "retry",
+                inFlightUserCreatedAt: inFlightUserCreatedAt(latest.messages),
+                failedIDs: latest.failedMessageIDs,
+              })
+              if (!currentQueue.some((message) => message.id === messageID)) return
+              const recovered = recoverQueuedMessages({
+                messages: currentQueue,
+                parts: latest.parts,
+                draft: inputRef.current,
+                extractText: (parts) => extractCopyText(parts as Part[]),
+              })
+              if (!recovered.ok) {
+                applyRevertResult({ ok: false, reason: "error" })
+                return
+              }
+              const original = { sessionID: current.id, text: inputRef.current, files: attachmentsRef.current }
+              const result = await useSessions.getState().revertToMessage(currentQueue[0].id)
+              if (!result.ok) {
+                applyRevertResult(result)
+                return
+              }
+              revertSnapshotRef.current = original
+              savedDraftRef.current[current.id] = recovered.text
+              saveDraft(current.id, recovered.text)
+              if (!shouldApplyQueuedEdit(draftFocusedRef.current, id, current.id, useSessions.getState().currentSession?.id)) return
+              const restored = [...recovered.files, ...original.files]
+              inputRef.current = recovered.text
+              draftTouchedRef.current = true
+              setInput(recovered.text)
+              setAttachments(restored)
+            } finally {
+              queuedEditInFlight.current = false
             }
-            if (!shouldApplyQueuedEdit(draftFocusedRef.current, id, current.id, useSessions.getState().currentSession?.id)) return
-            const restored = [...files, ...attachmentsRef.current]
-            inputRef.current = text
-            draftTouchedRef.current = true
-            savedDraftRef.current[current.id] = text
-            saveDraft(current.id, text)
-            setInput(text)
-            setAttachments(restored)
           },
         })
-      }
-      actions.push({
+      } else actions.push({
         text: t("session.actions.editMessage"),
         onPress: () => {
           const doRevert = async () => {
+            const current = useSessions.getState().currentSession
+            if (!current || current.id !== id) return
+            revertSnapshotRef.current = { sessionID: current.id, text: inputRef.current, files: attachmentsRef.current }
             const result = await useSessions.getState().revertToMessage(messageID)
-            applyRevertResult(result)
+            applyRevertResult(result, current.id)
           }
           // Editing overwrites the composer — don't silently clobber an
           // in-progress unsent draft.
@@ -1157,13 +1182,17 @@ export default function SessionScreen() {
           <View style={[s.banner, s.bannerRevert]}>
             <Text style={s.bannerText}>{t("session.banners.reverted")}</Text>
             <TouchableOpacity
-              onPress={() => {
-                unrevertSession()
-                // The composer was prefilled with the reverted message's text/
-                // attachments (see applyRevertResult) — clear it so Undo doesn't
-                // leave a stale draft that could be sent as a duplicate.
-                setInput("")
-                setAttachments([])
+              onPress={async () => {
+                const snapshot = revertSnapshotRef.current
+                if (!snapshot || snapshot.sessionID !== useSessions.getState().currentSession?.id) return
+                if (!await unrevertSession()) return
+                savedDraftRef.current[snapshot.sessionID] = snapshot.text
+                saveDraft(snapshot.sessionID, snapshot.text)
+                if (!shouldApplyQueuedEdit(draftFocusedRef.current, id, snapshot.sessionID, useSessions.getState().currentSession?.id)) return
+                inputRef.current = snapshot.text
+                draftTouchedRef.current = true
+                setInput(snapshot.text)
+                setAttachments(snapshot.files)
               }}
               hitSlop={8}
             >

@@ -144,7 +144,7 @@ interface SessionsState {
 
   // Revert (edit sent message) / unrevert (undo the pending revert)
   revertToMessage: (messageID: string) => Promise<RevertResult>
-  unrevertSession: () => Promise<void>
+  unrevertSession: () => Promise<boolean>
 
   // Event handling
   handleEvent: (event: Event) => void
@@ -768,16 +768,18 @@ export const useSessions = create<SessionsState>((set, get) => ({
   unrevertSession: async () => {
     const client = clientFor(get().currentSession?.directory)
     const session = get().currentSession
-    if (!client || !session) return
+    if (!client || !session) return false
 
     try {
       const updated = await client.session.unrevert(session.id)
       set((state) => ({
         currentSession: state.currentSession?.id === session.id ? updated : state.currentSession,
       }))
+      return true
     } catch (err) {
       console.error("Failed to unrevert session:", err)
       set({ error: "Failed to restore reverted messages" })
+      return false
     }
   },
 
