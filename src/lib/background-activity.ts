@@ -63,11 +63,8 @@ export function backgroundFor({
   const modern = statuses[parentID]?.background
   if (modern) {
     const jobs: BackgroundJob[] = modern.jobs
-      .filter((job) => !terminalChildIDs[job.sessionID] && !taskIsTerminal(parts, job.sessionID))
       .map((job) => ({ ...job, status: "busy" as const }))
-    // The aggregate can include jobs not listed in this response. Remove only
-    // contradicted listed jobs, leaving unrelated work and parent status alone.
-    return { running: Math.max(0, modern.running - (modern.jobs.length - jobs.length)), jobs: jobs.sort(compareJobs) }
+    return { running: modern.running, jobs: jobs.sort(compareJobs) }
   }
 
   const jobs = sessions.flatMap((session) => {
