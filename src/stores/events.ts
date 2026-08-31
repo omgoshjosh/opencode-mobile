@@ -737,6 +737,9 @@ export const useEvents = create<EventsState>((set, get) => ({
 
   resume: () => {
     const { transport } = get()
+    // Foregrounding can expose a transcript gap even when iOS kept the socket
+    // live, so this is deliberately independent of whether resume reconnects.
+    void useSessions.getState().reconcileOpenMessages()
     // reconnectTimer set means a retry is already scheduled; controller set
     // with a non-aborted signal means one is dialling right now.
     const attemptInFlight = reconnectTimer !== null || (controller !== null && !controller.signal.aborted)
