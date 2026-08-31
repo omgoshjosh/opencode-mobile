@@ -1,9 +1,18 @@
 import { create } from "zustand"
 import { useConnections } from "./connections"
-import { useSessions, abortedSessions, optimisticSendingRevision, optimisticSendingRevisionSnapshot } from "./sessions"
+import {
+  useSessions,
+  abortedSessions,
+  optimisticSendingRevision,
+  optimisticSendingRevisionSnapshot,
+  cancelPendingStreamParts,
+  flushPendingStreamParts,
+  STREAM_PART_FLUSH_WINDOW_MS,
+} from "./sessions"
 import { canRefreshPending } from "../lib/focus-read"
 import { send as notify } from "../lib/notifications"
 import { sanitizeBody } from "../lib/notify-format"
+import { notifySessionError } from "../lib/session-error-notification"
 import { statusFromPart } from "../lib/status-labels"
 import { addBreadcrumb } from "../lib/sentry"
 import { AnalyticsEvent, track } from "../lib/analytics"
@@ -13,7 +22,9 @@ import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
+import { canFlushVisiblePartStatus, registerPartStatusFlusher } from "../lib/stream-part-batching"
 import { canApplyFocusedStatusHydration, canApplyResyncIdle, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "../lib/status-hydration"
+import { createReconnectTranscriptCoordinator } from "../lib/reconnect-transcript"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Last-known statuses, persisted eagerly so the sessions list renders real
@@ -32,7 +43,7 @@ export async function restoreStatusCache() {
   useEvents.setState((state) => ({ sessionStatus: { ...cached, ...state.sessionStatus } }))
 }
 import { isHealthy, shouldReconnectOnResume, shouldResetRetries, type TransportState } from "../lib/sse-liveness"
-import { RECONCILE_MESSAGE_LIMIT } from "../lib/message-page"
+import { RECONCILE_MESSAGE_LIMIT, transcriptPageParams } from "../lib/message-page"
 import type { Client, Part, Session, Message } from "../lib/sdk"
 
 interface EventsState {
@@ -100,6 +111,65 @@ let controller: AbortController | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let statusLifecycle = 0
 const statusMutationRevisions = new Map<string, number>()
+const pendingPartStatus = new Map<string, { text: string; receivedAt: number }>()
+let partStatusTimer: ReturnType<typeof setTimeout> | null = null
+
+export function flushPendingPartStatus() {
+  if (partStatusTimer) {
+    clearTimeout(partStatusTimer)
+    partStatusTimer = null
+  }
+  if (pendingPartStatus.size === 0) return
+  const updates = new Map(pendingPartStatus)
+  pendingPartStatus.clear()
+  useEvents.setState((state) => {
+    let statusText = state.statusText
+    let sessionStatus = state.sessionStatus
+    let changed = false
+    for (const [sessionID, update] of updates) {
+      const sessions = useSessions.getState()
+      // The session may have been replaced while this window was open. Never
+      // let an old foreground timer paint status into a newly visible turn.
+      if (!canFlushVisiblePartStatus(sessions.currentSession?.id, sessions.activeTranscriptSessionID, sessionID)) continue
+      statusText = { ...statusText, [sessionID]: update.text }
+      changed = true
+      const next = noteTextActivity(sessionStatus[sessionID], update.receivedAt)
+      if (next !== sessionStatus[sessionID]) sessionStatus = { ...sessionStatus, [sessionID]: next! }
+    }
+    return changed ? { statusText, sessionStatus } : state
+  })
+}
+
+registerPartStatusFlusher(flushPendingPartStatus)
+
+function flushPendingStreamWork() {
+  flushPendingPartStatus()
+  flushPendingStreamParts()
+}
+
+function cancelPendingStreamWork() {
+  if (partStatusTimer) clearTimeout(partStatusTimer)
+  partStatusTimer = null
+  pendingPartStatus.clear()
+  cancelPendingStreamParts()
+}
+
+function enqueuePartStatus(part: Part, receivedAt: number) {
+  const sessionID = part.sessionID
+  const sessions = useSessions.getState()
+  // Background farm activity belongs in its preview/tool bookkeeping only;
+  // it must not wake subscribers to foreground status state.
+  if (!sessionID || sessions.currentSession?.id !== sessionID || sessions.activeTranscriptSessionID !== sessionID) return
+  pendingPartStatus.set(sessionID, { text: statusFromPart(part), receivedAt })
+  if (!partStatusTimer) partStatusTimer = setTimeout(flushPendingPartStatus, STREAM_PART_FLUSH_WINDOW_MS)
+}
+
+/** Single receipt path kept exportable so stream batching is deterministic in tests. */
+export function receiveStreamPart(part: Part, receivedAt = Date.now()) {
+  enqueuePartStatus(part, receivedAt)
+  useSessions.getState().handleEvent({ type: "message.part.updated", properties: { part, receivedAt } } as any)
+  if (part.type === "tool" && (part.state?.status === "completed" || part.state?.status === "error")) flushPendingStreamWork()
+}
 
 function changedStatusIDsSince(revisions: Map<string, number>, sendingRevisions: Map<string, number>) {
   const currentSendingRevisions = optimisticSendingRevisionSnapshot()
@@ -249,8 +319,8 @@ async function resyncBusySessions() {
         // enough. This previously fetched the ENTIRE session — on every
         // reconnect, for every session this client believed was busy.
         const sendingRevision = optimisticSendingRevision(sessionID)
-        const response = await client.session.messages(sessionID, { limit: RECONCILE_MESSAGE_LIMIT })
-        const messages = (response || []).map((m) => m.info)
+        const response = await client.session.messagesPage(sessionID, transcriptPageParams(RECONCILE_MESSAGE_LIMIT))
+        const messages = response.items.map((m) => m.info)
         if (!isSessionActuallyIdle(messages)) return // server says still busy - leave it alone
 
         // A fresh session.status event may have landed on the SSE stream
@@ -263,13 +333,6 @@ async function resyncBusySessions() {
         useEvents.setState((state) => ({ sessionStatus: { ...state.sessionStatus, [sessionID]: { type: "idle" } } }))
         persistStatusCache(useEvents.getState().sessionStatus)
         clearIdleSessions([sessionID])
-        const latestSessions = useSessions.getState()
-        if (
-          latestSessions.activeTranscriptSessionID === sessionID &&
-          latestSessions.currentSession?.id === sessionID
-        ) {
-          latestSessions.refreshMessages()
-        }
       } catch (err) {
         console.warn("[Events] Failed to resync session status for", sessionID, err)
       }
@@ -291,21 +354,12 @@ async function resyncBusySessions() {
 // stale until the user navigates away and back, which is the reported
 // cross-client staleness symptom.
 //
-// refreshMessages() re-fetches the current session and replaces messages/parts
-// without touching isLoading, so this lands as a silent background reconcile
-// rather than a spinner over content the user is already reading.
-//
-// Note this can overlap with resyncBusySessions() for a session that was busy
-// and has since gone idle — both would refresh. That costs one redundant GET
-// on an infrequent event, which is cheaper than the coupling needed to dedupe.
-async function reconcileOpenSession() {
+// The reconnect coordinator fetches one bounded page for this active transcript,
+// without discarding pagination or optimistic content.
+function activeOpenSessionID(): string | null {
   const sessions = useSessions.getState()
-  if (!sessions.currentSession || sessions.activeTranscriptSessionID !== sessions.currentSession.id) return
-  try {
-    await sessions.refreshMessages()
-  } catch (err) {
-    console.warn("[Events] Failed to reconcile open session after reconnect:", err)
-  }
+  if (!sessions.currentSession || sessions.activeTranscriptSessionID !== sessions.currentSession.id) return null
+  return sessions.currentSession.id
 }
 
 export const useEvents = create<EventsState>((set, get) => ({
@@ -321,6 +375,7 @@ export const useEvents = create<EventsState>((set, get) => ({
   questions: {},
 
   connect: () => {
+    flushPendingStreamWork()
     controller?.abort()
     controller = null
     set({ transport: "idle" })
@@ -357,6 +412,12 @@ export const useEvents = create<EventsState>((set, get) => ({
       // is exactly the set that can be stale (disk-restored or missed-idle).
       const isReconnect = get().reconnectAttempts > 0
       let resyncedAfterReconnect = false
+      const reconnectTranscript = createReconnectTranscriptCoordinator({
+        reconnecting: isReconnect,
+        activeSessionID: activeOpenSessionID,
+        reconcileOpen: () => void useSessions.getState().reconcileOpenMessages(),
+        refreshAfterIdle: () => void useSessions.getState().refreshMessages(),
+      })
       // Retry state resets on demonstrated liveness, not on a timer. The old
       // 10s timeout cleared the backoff whether or not anything had ever
       // arrived, so a silently-failing connection kept resetting its own
@@ -365,6 +426,7 @@ export const useEvents = create<EventsState>((set, get) => ({
 
       const scheduleReconnect = (reason: unknown) => {
         if (reconnectScheduled || currentController.signal.aborted) return
+        flushPendingStreamWork()
         reconnectScheduled = true
         const state = get()
         const reconnectAttempts = state.reconnectAttempts + 1
@@ -409,11 +471,8 @@ export const useEvents = create<EventsState>((set, get) => ({
           if ((isReconnect || hasBusyStatuses) && !resyncedAfterReconnect) {
             resyncedAfterReconnect = true
             void resyncBusySessions()
-            // Backfill content missed while the stream was down. Separate from
-            // resyncBusySessions(), which only repairs *status* and only for
-            // sessions already known to be busy — see reconcileOpenSession().
-            void reconcileOpenSession()
           }
+          reconnectTranscript.onEvent()
 
           if (!receivedAnyEvent) {
             receivedAnyEvent = true
@@ -432,6 +491,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               const sessionID = props.sessionID as string
               const status = props.status as SessionStatus
               if (!sessionID) break
+              if (status.type === "idle") flushPendingStreamWork()
               statusMutationRevisions.set(sessionID, (statusMutationRevisions.get(sessionID) ?? 0) + 1)
 
               // Detect busy → idle transition for completion notification
@@ -454,8 +514,11 @@ export const useEvents = create<EventsState>((set, get) => ({
                 clearIdleSessions([sessionID])
                 // Refresh messages if this is the session the user is viewing
                 const sessions = useSessions.getState()
-                if (sessions.activeTranscriptSessionID === sessionID && sessions.currentSession?.id === sessionID) {
-                  sessions.refreshMessages()
+                if (
+                  sessions.activeTranscriptSessionID === sessionID &&
+                  sessions.currentSession?.id === sessionID
+                ) {
+                  reconnectTranscript.onIdle(sessionID, true)
                 }
               }
 
@@ -491,6 +554,7 @@ export const useEvents = create<EventsState>((set, get) => ({
             case "message.updated": {
               const info = props.info as Message | undefined
               if (!info) break
+              flushPendingStreamWork()
               useSessions.getState().handleEvent({ type, properties: { info } } as any)
               break
             }
@@ -498,6 +562,8 @@ export const useEvents = create<EventsState>((set, get) => ({
             case "message.part.updated": {
               const part = props.part as Part | undefined
               if (!part) break
+              const receivedAt = Date.now()
+              receiveStreamPart(part, receivedAt)
 
               if (part.type === "tool" && part.tool === "task") {
                 const metadata = part.state?.metadata as { sessionId?: unknown } | undefined
@@ -512,20 +578,6 @@ export const useEvents = create<EventsState>((set, get) => ({
                 }
               }
 
-              // Update status text from the latest part
-              const sessionID = (part as any).sessionID as string
-              if (sessionID) {
-                set((state) => {
-                  const previous = state.sessionStatus[sessionID]
-                  const next = part.type === "text" ? noteTextActivity(previous, Date.now()) : previous
-                  return {
-                    statusText: { ...state.statusText, [sessionID]: statusFromPart(part) },
-                    sessionStatus: next === previous ? state.sessionStatus : { ...state.sessionStatus, [sessionID]: next! },
-                  }
-                })
-              }
-
-              useSessions.getState().handleEvent({ type, properties: { part } } as any)
               break
             }
 
@@ -552,6 +604,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               const error = props.error as { message?: string } | undefined
               const sessionID = props.sessionID as string
               if (!sessionID) break
+              flushPendingStreamWork()
               // Mark so the eventual busy -> idle transition is not counted
               // as a success for the store review prompt
               erroredSessions.add(sessionID)
@@ -570,12 +623,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               ) {
                 latestSessions.refreshMessages()
               }
-              notify({
-                category: "errors",
-                title: "Session error",
-                body: sanitizeBody(error?.message, "Something went wrong"),
-                sessionId: sessionID,
-              })
+              notifySessionError(notify, sessionID, error?.message)
               break
             }
 
@@ -701,6 +749,8 @@ export const useEvents = create<EventsState>((set, get) => ({
   disconnect: () => {
     console.log("[SSE] Disconnecting")
     addBreadcrumb({ category: "sse", message: "disconnected" })
+    flushPendingStreamWork()
+    cancelPendingStreamWork()
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
       reconnectTimer = null
