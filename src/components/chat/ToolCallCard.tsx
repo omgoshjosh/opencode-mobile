@@ -9,7 +9,7 @@ import { useTranslation } from "react-i18next"
 import { router } from "expo-router"
 import type { Part } from "../../lib/sdk"
 import { DiffView } from "./DiffView"
-import { isSubagentOpenable, subagentBadge, subagentLinkFrom } from "../../lib/subagent-link"
+import { isCompletedSubagentReportMissing, isSubagentOpenable, subagentBadge, subagentLinkFrom } from "../../lib/subagent-link"
 import { toolCallTitle } from "../../lib/tool-titles"
 import { modelIDDisplayLabel } from "../../lib/model-label"
 import { useViewer } from "../../stores/viewer"
@@ -237,10 +237,12 @@ function SubagentBanner({
   link,
   directory,
   isDark,
+  missingReport = false,
 }: {
   link: NonNullable<ReturnType<typeof subagentLinkFrom>>
   directory?: string
   isDark: boolean
+  missingReport?: boolean
 }) {
   const badge = subagentBadge(link)
   const providers = useCatalog((c) => c.providers)
@@ -261,7 +263,7 @@ function SubagentBanner({
     >
       <Ionicons name="git-branch-outline" size={14} color="#8b5cf6" />
       <Text style={s.subagentLinkText} numberOfLines={1}>
-        {link.status === "running" ? "Watch subagent" : "Open subagent"}
+        {missingReport ? "Open diagnostics" : link.status === "running" ? "Watch subagent" : "Open subagent"}
       </Text>
       {badge && (
         <View style={s.subagentBadge}>
@@ -293,7 +295,7 @@ function TaskDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
   // transcript showed the prompt and stopped, leaving the subagent's actual
   // work unreachable — see src/lib/subagent-link.ts.
   const link = subagentLinkFrom(tool)
-  const directory = useSessions((st) => st.currentSession?.directory)
+  const missingReport = isCompletedSubagentReportMissing(tool)
 
   return (
     <View style={s.detailSection}>
@@ -303,6 +305,13 @@ function TaskDetail({ tool, isDark }: { tool: Part; isDark: boolean }) {
           see SubagentBanner for why it must never live in here. */}
       {Boolean(link && !isSubagentOpenable(link)) && (
         <Text style={[s.detailMeta, isDark && s.detailMetaDark]}>Subagent session no longer available.</Text>
+      )}
+
+      {missingReport && (
+        <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={[s.missingReport, isDark && s.missingReportDark]}>
+          <Text style={[s.missingReportTitle, isDark && s.missingReportTitleDark]}>Completed without a report</Text>
+          <Text style={[s.detailMeta, isDark && s.detailMetaDark]}>Open diagnostics to review the child session.</Text>
+        </View>
       )}
 
       {typeof prompt === "string" && prompt.length > 0 && (
@@ -690,6 +699,7 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded, fallbackStartTim
   // (the Watch-subagent link) — use its title. An explicit description
   // still wins: the orchestrator wrote it for exactly this purpose.
   const taskLink = tool.tool === "task" ? subagentLinkFrom(tool) : null
+  const taskMissingReport = tool.tool === "task" && isCompletedSubagentReportMissing(tool)
   const directory = useSessions((st) => st.currentSession?.directory)
   const spawnedTitle = useSessions((st) =>
     taskLink ? st.sessions.find((x) => x.id === taskLink.sessionID)?.title : undefined,
@@ -715,7 +725,7 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded, fallbackStartTim
     deviceUses24hClock(),
   )
   const calledAt = shorthandTimestamp(tool.state?.time?.start ?? fallbackStartTime, Date.now(), timeZone, clockMode)
-  const hasDetail = tool.state?.input !== undefined || tool.state?.output !== undefined || error
+  const hasDetail = tool.state?.input !== undefined || tool.state?.output !== undefined || error || taskMissingReport
 
   const toggle = useCallback(() => {
     if (hasDetail) setExpanded((v) => !v)
@@ -770,7 +780,7 @@ export function ToolCallCard({ tool, isDark, initiallyExpanded, fallbackStartTim
       {expanded && (
         <>
           {taskLink && isSubagentOpenable(taskLink) && (
-            <SubagentBanner link={taskLink} directory={directory} isDark={isDark} />
+            <SubagentBanner link={taskLink} directory={directory} isDark={isDark} missingReport={taskMissingReport} />
           )}
           <ScrollView style={s.detailScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
             {error && <ErrorBanner message={error} isDark={isDark} />}
@@ -867,6 +877,10 @@ const s = StyleSheet.create({
   proseBodyDark: { color: "#e5e5e5" },
   detailMeta: { fontSize: 12, color: "#666666", lineHeight: 18 },
   detailMetaDark: { color: "#888888" },
+  missingReport: { gap: 2, marginTop: 4, padding: 8, borderRadius: 6, backgroundColor: "#fffbeb" },
+  missingReportDark: { backgroundColor: "#2a230a" },
+  missingReportTitle: { fontSize: 12, fontWeight: "600", color: "#92400e" },
+  missingReportTitleDark: { color: "#fcd34d" },
   // Subagent entry point. Purple matches the swarm accent used on session
   // rows, so "this leads to another agent's work" reads consistently.
   subagentLink: {

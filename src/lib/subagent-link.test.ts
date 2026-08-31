@@ -1,11 +1,11 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { isSubagentOpenable, subagentBadge, subagentLinkFrom } from "./subagent-link.ts"
+import { isCompletedSubagentReportMissing, isSubagentOpenable, subagentBadge, subagentLinkFrom } from "./subagent-link.ts"
 import type { Part } from "./sdk.ts"
 
 // `in` rather than `??` so a test can pass an explicit undefined to mean
 // "absent" without silently getting the default back.
-function taskPart(overrides: { input?: unknown; metadata?: unknown; status?: string; title?: string } = {}): Part {
+function taskPart(overrides: { input?: unknown; metadata?: unknown; output?: unknown; status?: string; title?: string } = {}): Part {
   return {
     id: "prt_1",
     messageID: "msg_1",
@@ -16,6 +16,7 @@ function taskPart(overrides: { input?: unknown; metadata?: unknown; status?: str
       title: overrides.title,
       input: "input" in overrides ? overrides.input : { description: "Review sync rework", subagent_type: "general", prompt: "..." },
       metadata: "metadata" in overrides ? overrides.metadata : { sessionId: "ses_child", parentSessionId: "ses_parent" },
+      output: "output" in overrides ? overrides.output : "Report arrived after completion",
     },
   }
 }
@@ -68,6 +69,26 @@ test("a task with neither description nor title still gets a label", () => {
 test("malformed input does not throw", () => {
   assert.equal(subagentLinkFrom(taskPart({ input: "not an object" }))?.title, "Subagent")
   assert.equal(subagentLinkFrom(taskPart({ metadata: [1, 2] })), null)
+})
+
+test("completed task with a child session warns when its report is absent or blank", () => {
+  for (const output of [undefined, null, 0, {}, "", "   ", "\n\t "]) {
+    assert.equal(isCompletedSubagentReportMissing(taskPart({ output })), true)
+  }
+})
+
+test("a valid report that arrives after completion suppresses the missing-report warning", () => {
+  assert.equal(isCompletedSubagentReportMissing(taskPart({ output: "Completed the requested review." })), false)
+})
+
+test("missing-report warning excludes non-terminal, failed, non-task, and unlinked parts", () => {
+  assert.equal(isCompletedSubagentReportMissing(taskPart({ status: "running", output: undefined })), false)
+  assert.equal(isCompletedSubagentReportMissing(taskPart({ status: "error", output: undefined })), false)
+  assert.equal(isCompletedSubagentReportMissing(taskPart({ metadata: {}, output: undefined })), false)
+  assert.equal(
+    isCompletedSubagentReportMissing({ id: "p", messageID: "m", type: "tool", tool: "bash", state: { status: "completed" } }),
+    false,
+  )
 })
 
 // --- badge ---

@@ -91,6 +91,40 @@ test("modern jobs control sibling order and terminal legacy jobs disappear every
   assert.equal(backgroundFor({ parentID: parent, sessions: [child("a")], statuses: { a: { type: "busy" } }, terminalChildIDs: { a: true } }), undefined)
 })
 
+test("modern jobs omit terminal children while retaining unrelated jobs and count", () => {
+  const result = backgroundFor({
+    parentID: parent,
+    sessions: [child("done"), child("active")],
+    statuses: {
+      [parent]: {
+        type: "busy",
+        background: {
+          running: 2,
+          jobs: [
+            { sessionID: "done", role: "QA", title: "Finished", since: 1 },
+            { sessionID: "active", role: "Code", title: "Working", since: 2 },
+          ],
+        },
+      },
+    },
+    parts: [{ type: "tool", tool: "task", state: { status: "completed", metadata: { sessionId: "done" } } } as any],
+  })
+  assert.deepEqual(result, {
+    running: 1,
+    jobs: [{ sessionID: "active", role: "Code", title: "Working", since: 2, status: "busy" }],
+  })
+})
+
+test("modern terminal child IDs do not mutate the parent status", () => {
+  const result = backgroundFor({
+    parentID: parent,
+    sessions: [],
+    statuses: { [parent]: { type: "busy", background: { running: 1, jobs: [{ sessionID: "done", role: "QA", title: "Finished", since: 1 }] } } },
+    terminalChildIDs: { done: true },
+  })
+  assert.deepEqual(result, { running: 0, jobs: [] })
+})
+
 test("swarm role derives a useful task title", () => {
   const result = backgroundFor({
     parentID: parent,
