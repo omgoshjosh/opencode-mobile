@@ -19,9 +19,15 @@ function parseMessages(response: MessageWithParts[]): Transcript {
 /** Apply a bounded newest-page snapshot without resetting pagination state. */
 export function mergeReconciledTranscript(state: Transcript, response: MessageWithParts[]): Transcript {
   const { messages, parts } = parseMessages(response)
+  const mergedParts: Record<string, Part[]> = { ...state.parts }
+  for (const [messageID, incoming] of Object.entries(parts)) {
+    // The page is authoritative for settled messages. Deduping by part ID also
+    // tolerates an overlap at the page boundary without rendering a part twice.
+    mergedParts[messageID] = [...new Map(incoming.map((part) => [part.id, part])).values()]
+  }
   return {
     messages: mergeNewestPage({ existing: state.messages, newest: messages }),
-    parts: { ...state.parts, ...parts },
+    parts: mergedParts,
   }
 }
 

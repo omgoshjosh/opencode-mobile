@@ -10,15 +10,7 @@ let useSessions: typeof import("./sessions").useSessions
 let useSettings: typeof import("./settings").useSettings
 
 function session(id: string): Session {
-  return {
-    id,
-    slug: id,
-    projectID: "project",
-    directory: "/project",
-    title: id,
-    version: "1",
-    time: { created: 1, updated: 1 },
-  }
+  return { id, slug: id, projectID: "project", directory: "/project", title: id, version: "1", time: { created: 1, updated: 1 } }
 }
 
 function message(id: string, sessionID = "s1"): Message {
@@ -26,18 +18,35 @@ function message(id: string, sessionID = "s1"): Message {
 }
 
 function page(...ids: string[]): MessageWithParts[] {
-  return ids.map((id) => ({
-    info: message(id),
-    parts: [{ id: `part-${id}`, messageID: id, type: "text", text: id }],
-  }))
+  return ids.map((id) => ({ info: message(id), parts: [{ id: `part-${id}`, messageID: id, type: "text", text: id }] }))
 }
 
 function deferred<T>() {
-  let resolve: (value: T) => void = () => {}
-  const promise = new Promise<T>((done) => {
-    resolve = done
-  })
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
   return { promise, resolve }
+}
+
+function waitForStore(check: () => boolean): Promise<void> {
+  if (check()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const unsubscribe = useSessions.subscribe(() => {
+      if (!check()) return
+      unsubscribe()
+      resolve()
+    })
+  })
+}
+
+function waitForEvents(check: () => boolean): Promise<void> {
+  if (check()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const unsubscribe = useEvents.subscribe(() => {
+      if (!check()) return
+      unsubscribe()
+      resolve()
+    })
+  })
 }
 
 function liveStream(...events: object[]) {
@@ -45,11 +54,6 @@ function liveStream(...events: object[]) {
     for (const event of events) yield event
     await new Promise<void>((resolve) => signal.addEventListener("abort", resolve, { once: true }))
   }
-}
-
-async function settle() {
-  await new Promise<void>((resolve) => setImmediate(resolve))
-  await new Promise<void>((resolve) => setImmediate(resolve))
 }
 
 before(async () => {
@@ -68,123 +72,105 @@ beforeEach(() => {
   useSettings.setState({ pageSize: 2 })
 })
 
-afterEach(() => {
-  useEvents.getState().disconnect()
-})
+afterEach(() => useEvents.getState().disconnect())
 
-test("reconnect reconciles the active transcript once with a bounded page and preserves local state", async () => {
-  const requests: Array<{ sessionID: string; options: { limit: number } }> = []
-  const client = {
-    global: {
-      events: liveStream({ payload: { type: "session.status", properties: { sessionID: "s1", status: { type: "idle" } } } }),
-    },
-    session: {
-      status: async () => ({}),
-      messages: async (sessionID: string, options: { limit: number }) => {
-        requests.push({ sessionID, options })
-        return page("new")
-      },
-    },
-  }
-  const optimistic = { ...message("temp-local"), role: "user" as const }
-  useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
-  useSessions.setState({
-    currentSession: session("s1"),
-    activeTranscriptSessionID: "s1",
-    messages: [message("old"), optimistic],
-    parts: { old: [], "temp-local": [] },
-    nextCursor: "older",
-    hasMore: true,
-  })
-  useEvents.setState({ reconnectAttempts: 1 })
-
-  useEvents.getState().connect()
-  await settle()
-
-  assert.deepEqual(requests, [{ sessionID: "s1", options: { limit: 2 } }])
-  const state = useSessions.getState()
-  assert.deepEqual(state.messages.map((item) => item.id), ["old", "new", "temp-local"])
-  assert.equal(state.nextCursor, "older")
-  assert.equal(state.hasMore, true)
-})
-
-test("a late reconnect page cannot overwrite a newer active transcript", async () => {
-  const response = deferred<MessageWithParts[]>()
+test("missed idle-session messages and parts are recovered after disconnect", async () => {
+  const request = deferred<{ items: MessageWithParts[]; nextCursor?: string }>()
+  const started = deferred<void>()
   const client = {
     global: { events: liveStream({ payload: { type: "connected", properties: {} } }) },
-    session: { status: async () => ({}), messages: async () => response.promise },
+    session: { status: async () => ({}), messagesPage: async () => { started.resolve(); return request.promise } },
   }
   useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
-  useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1", messages: [message("one")] })
+  useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1", messages: [message("old")], parts: { old: [] } })
   useEvents.setState({ reconnectAttempts: 1 })
 
   useEvents.getState().connect()
-  await settle()
-  useSessions.setState({ currentSession: session("s2"), activeTranscriptSessionID: "s2", messages: [message("two", "s2")] })
-  response.resolve(page("late"))
-  await settle()
+  await started.promise
+  request.resolve({ items: page("old", "missed"), nextCursor: "older" })
+  await waitForStore(() => useSessions.getState().messages.some((item) => item.id === "missed"))
 
-  assert.deepEqual(useSessions.getState().messages.map((item) => item.id), ["two"])
+  const state = useSessions.getState()
+  assert.deepEqual(state.messages.map((item) => item.id), ["old", "missed"])
+  assert.equal(state.parts.missed[0].id, "part-missed")
 })
 
-test("busy recovery and its idle event do not duplicate the open transcript request", async () => {
-  const requests: Array<{ source: "messages" | "messagesPage"; limit: number }> = []
+test("successful reconnect reconciles exactly one bounded idle transcript page", async () => {
+  const started = deferred<void>()
+  const requests: Array<{ sessionID: string; options: object }> = []
   const client = {
-    global: {
-      events: liveStream(
-        { payload: { type: "connected", properties: {} } },
-        { payload: { type: "session.status", properties: { sessionID: "s1", status: { type: "idle" } } } },
-      ),
-    },
+    global: { events: liveStream({ payload: { type: "session.status", properties: { sessionID: "s1", status: { type: "idle" } } } }) },
     session: {
       status: async () => ({}),
-      messages: async (_sessionID: string, options: { limit: number }) => {
-        requests.push({ source: "messages", ...options })
-        return page("offline")
-      },
-      messagesPage: async (_sessionID: string, options: { limit: number }) => {
-        requests.push({ source: "messagesPage", ...options })
-        if (options.limit === 1) return { items: [{ info: { ...message("done"), time: { created: 1, completed: 2 } }, parts: [] }], nextCursor: undefined }
-        return { items: page("offline"), nextCursor: undefined }
+      messagesPage: async (sessionID: string, options: object) => {
+        requests.push({ sessionID, options })
+        started.resolve()
+        return { items: page("missed"), nextCursor: undefined }
       },
     },
   }
   useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
   useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1" })
-  useEvents.setState({ reconnectAttempts: 1, sessionStatus: { s1: { type: "busy" } } })
+  useEvents.setState({ reconnectAttempts: 1 })
 
   useEvents.getState().connect()
-  await settle()
+  await started.promise
+  await waitForStore(() => useSessions.getState().messages.some((item) => item.id === "missed"))
 
-  assert.equal(requests.filter((request) => request.source === "messages" && request.limit === 2).length, 1)
-  assert.equal(requests.filter((request) => request.source === "messagesPage" && request.limit === 1).length, 1)
-  assert.equal(useEvents.getState().sessionStatus.s1?.type, "idle")
+  assert.deepEqual(requests, [{ sessionID: "s1", options: { limit: 2, before: undefined, renderBudget: 40000, partBudget: 4000 } }])
 })
 
-test("older pagination remains cursor-bounded after reconnect setup", async () => {
-  const requests: Array<{ sessionID: string; options: { limit: number; before?: string } }> = []
+test("foreground reconciles a live stream without opening another stream", async () => {
+  const started = deferred<void>()
+  let streams = 0
   const client = {
-    session: {
-      messagesPage: async (sessionID: string, options: { limit: number; before?: string }) => {
-        requests.push({ sessionID, options })
-        return { items: page("older"), nextCursor: "oldest" }
-      },
-    },
+    global: { events: async function* (signal: AbortSignal) { streams += 1; yield { payload: { type: "connected", properties: {} } }; await new Promise<void>((resolve) => signal.addEventListener("abort", resolve, { once: true })) } },
+    session: { status: async () => ({}), messagesPage: async () => { started.resolve(); return { items: page("foreground"), nextCursor: undefined } } },
   }
   useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
-  useSessions.setState({
-    currentSession: session("s1"),
-    activeTranscriptSessionID: "s1",
-    messages: [message("new"), { ...message("temp-local"), role: "user" as const }],
-    nextCursor: "older",
-    hasMore: true,
-  })
+  useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1" })
 
-  await useSessions.getState().loadOlderMessages()
+  useEvents.getState().connect()
+  await waitForEvents(() => useEvents.getState().transport === "live")
+  useEvents.getState().resume()
+  await started.promise
+  await waitForStore(() => useSessions.getState().messages.some((item) => item.id === "foreground"))
 
-  assert.deepEqual(requests, [{ sessionID: "s1", options: { limit: 2, before: "older", renderBudget: 40000, partBudget: 4000 } }])
+  assert.equal(streams, 1)
+})
+
+test("a live SSE update wins while lifecycle reconciliation is in flight", async () => {
+  const response = deferred<{ items: MessageWithParts[]; nextCursor?: string }>()
+  const client = { session: { messagesPage: async () => response.promise } }
+  useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
+  useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1" })
+
+  const reconciliation = useSessions.getState().reconcileOpenMessages()
+  useSessions.getState().handleEvent({ type: "message.updated", properties: { info: message("live") } } as never)
+  assert.deepEqual(useSessions.getState().messages.map((item) => item.id), ["live"])
+  response.resolve({ items: page("stale"), nextCursor: undefined })
+  await reconciliation
+
+  assert.deepEqual(useSessions.getState().messages.map((item) => item.id), ["live"])
+})
+
+test("overlapping lifecycle reconciliations are idempotent and preserve pagination", async () => {
+  const response = deferred<{ items: MessageWithParts[]; nextCursor?: string }>()
+  let requests = 0
+  const client = { session: { messagesPage: async () => { requests += 1; return response.promise } } }
+  useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
+  useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1", messages: [message("old")], parts: { old: [] }, nextCursor: "older", hasMore: true })
+
+  const first = useSessions.getState().reconcileOpenMessages()
+  const second = useSessions.getState().reconcileOpenMessages()
+  assert.equal(first, second)
+  response.resolve({ items: [...page("old", "new"), ...page("new")], nextCursor: undefined })
+  await Promise.all([first, second])
+
   const state = useSessions.getState()
-  assert.deepEqual(state.messages.map((item) => item.id), ["older", "new", "temp-local"])
-  assert.equal(state.nextCursor, "oldest")
+  assert.equal(requests, 1)
+  assert.deepEqual(state.messages.map((item) => item.id), ["old", "new"])
+  assert.deepEqual(state.parts.new.map((part) => part.id), ["part-new"])
+  assert.equal(state.nextCursor, "older")
   assert.equal(state.hasMore, true)
 })
