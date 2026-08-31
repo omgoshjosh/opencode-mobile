@@ -6,6 +6,7 @@ import {
   isPendingMessage,
   mergeOlderPage,
   mergeOlderParts,
+  mergeNewestPage,
   nextCursorFrom,
   refreshWindowSize,
 } from "./message-page.ts"
@@ -75,6 +76,14 @@ test("pending messages survive a merge and stay last", () => {
 test("pending messages stay last even when the page is empty", () => {
   const merged = mergeOlderPage({ existing: [msg("temp-1"), msg("c")], older: [] })
   assert.deepEqual(merged.map((m) => m.id), ["c", "temp-1"])
+})
+
+test("a newest-page refresh preserves paged history and optimistic messages", () => {
+  const merged = mergeNewestPage({
+    existing: [msg("a"), msg("b"), msg("c"), msg("temp-1")],
+    newest: [msg("c", "assistant"), msg("d", "assistant")],
+  })
+  assert.deepEqual(merged.map((m) => m.id), ["a", "b", "c", "d", "temp-1"])
 })
 
 test("merging tolerates missing inputs", () => {

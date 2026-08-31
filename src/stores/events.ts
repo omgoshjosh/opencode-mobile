@@ -14,6 +14,7 @@ import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
 import { canApplyFocusedStatusHydration, canApplyResyncIdle, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "../lib/status-hydration"
+import { createReconnectTranscriptCoordinator } from "../lib/reconnect-transcript"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Last-known statuses, persisted eagerly so the sessions list renders real
@@ -263,13 +264,6 @@ async function resyncBusySessions() {
         useEvents.setState((state) => ({ sessionStatus: { ...state.sessionStatus, [sessionID]: { type: "idle" } } }))
         persistStatusCache(useEvents.getState().sessionStatus)
         clearIdleSessions([sessionID])
-        const latestSessions = useSessions.getState()
-        if (
-          latestSessions.activeTranscriptSessionID === sessionID &&
-          latestSessions.currentSession?.id === sessionID
-        ) {
-          latestSessions.refreshMessages()
-        }
       } catch (err) {
         console.warn("[Events] Failed to resync session status for", sessionID, err)
       }
@@ -291,21 +285,12 @@ async function resyncBusySessions() {
 // stale until the user navigates away and back, which is the reported
 // cross-client staleness symptom.
 //
-// refreshMessages() re-fetches the current session and replaces messages/parts
-// without touching isLoading, so this lands as a silent background reconcile
-// rather than a spinner over content the user is already reading.
-//
-// Note this can overlap with resyncBusySessions() for a session that was busy
-// and has since gone idle — both would refresh. That costs one redundant GET
-// on an infrequent event, which is cheaper than the coupling needed to dedupe.
-async function reconcileOpenSession() {
+// The reconnect coordinator fetches one bounded page for this active transcript,
+// without discarding pagination or optimistic content.
+function activeOpenSessionID(): string | null {
   const sessions = useSessions.getState()
-  if (!sessions.currentSession || sessions.activeTranscriptSessionID !== sessions.currentSession.id) return
-  try {
-    await sessions.refreshMessages()
-  } catch (err) {
-    console.warn("[Events] Failed to reconcile open session after reconnect:", err)
-  }
+  if (!sessions.currentSession || sessions.activeTranscriptSessionID !== sessions.currentSession.id) return null
+  return sessions.currentSession.id
 }
 
 export const useEvents = create<EventsState>((set, get) => ({
@@ -357,6 +342,12 @@ export const useEvents = create<EventsState>((set, get) => ({
       // is exactly the set that can be stale (disk-restored or missed-idle).
       const isReconnect = get().reconnectAttempts > 0
       let resyncedAfterReconnect = false
+      const reconnectTranscript = createReconnectTranscriptCoordinator({
+        reconnecting: isReconnect,
+        activeSessionID: activeOpenSessionID,
+        reconcileOpen: () => void useSessions.getState().reconcileOpenMessages(),
+        refreshAfterIdle: () => void useSessions.getState().refreshMessages(),
+      })
       // Retry state resets on demonstrated liveness, not on a timer. The old
       // 10s timeout cleared the backoff whether or not anything had ever
       // arrived, so a silently-failing connection kept resetting its own
@@ -409,11 +400,8 @@ export const useEvents = create<EventsState>((set, get) => ({
           if ((isReconnect || hasBusyStatuses) && !resyncedAfterReconnect) {
             resyncedAfterReconnect = true
             void resyncBusySessions()
-            // Backfill content missed while the stream was down. Separate from
-            // resyncBusySessions(), which only repairs *status* and only for
-            // sessions already known to be busy — see reconcileOpenSession().
-            void reconcileOpenSession()
           }
+          reconnectTranscript.onEvent()
 
           if (!receivedAnyEvent) {
             receivedAnyEvent = true
@@ -454,8 +442,11 @@ export const useEvents = create<EventsState>((set, get) => ({
                 clearIdleSessions([sessionID])
                 // Refresh messages if this is the session the user is viewing
                 const sessions = useSessions.getState()
-                if (sessions.activeTranscriptSessionID === sessionID && sessions.currentSession?.id === sessionID) {
-                  sessions.refreshMessages()
+                if (
+                  sessions.activeTranscriptSessionID === sessionID &&
+                  sessions.currentSession?.id === sessionID
+                ) {
+                  reconnectTranscript.onIdle(sessionID, true)
                 }
               }
 

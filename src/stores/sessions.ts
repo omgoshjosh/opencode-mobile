@@ -18,6 +18,8 @@ import { trackWakePart, type PendingWakeMap } from "../lib/pending-wakes"
 import { toolCallTitle } from "../lib/tool-titles"
 import { createFocusReadCoordinator } from "../lib/focus-read"
 import { isTranscriptActive, nextActiveTranscript, shouldApplyTranscriptSnapshot } from "../lib/transcript-focus"
+import { createOpenTranscriptReconciler } from "../lib/open-transcript-reconcile"
+import { mergeReconciledTranscript } from "../lib/reconnect-transcript"
 import { warmSessionFor } from "../lib/warm-session"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
@@ -140,6 +142,7 @@ interface SessionsState {
   ) => Promise<void>
   abortSession: () => Promise<void>
   refreshMessages: (signal?: AbortSignal) => Promise<void>
+  reconcileOpenMessages: () => Promise<void>
   setTranscriptActive: (sessionID: string, active: boolean) => void
 
   // Revert (edit sent message) / unrevert (undo the pending revert)
@@ -184,6 +187,7 @@ let listLoadSeq = 0
 let selectSeq = 0
 const focusReads = createFocusReadCoordinator()
 const transcriptRevisions = new Map<string, number>()
+const openTranscriptReconciler = createOpenTranscriptReconciler()
 
 function transcriptRevision(sessionID: string): number {
   return transcriptRevisions.get(sessionID) ?? 0
@@ -731,6 +735,35 @@ export const useSessions = create<SessionsState>((set, get) => ({
       ) return
       set({ error: "Failed to refresh messages" })
     }
+  },
+
+  reconcileOpenMessages: () => {
+    const session = get().currentSession
+    const client = clientFor(session?.directory)
+    if (!client || !session || !isTranscriptActive(get().activeTranscriptSessionID, session.id)) return Promise.resolve()
+
+    const seq = selectSeq
+    const revision = transcriptRevision(session.id)
+    return openTranscriptReconciler.run(session.id, async () => {
+      try {
+        const response = await client.session.messages(session.id, { limit: pageSize() })
+        if (
+          seq !== selectSeq ||
+          get().currentSession?.id !== session.id ||
+          !isTranscriptActive(get().activeTranscriptSessionID, session.id) ||
+          !shouldApplyTranscriptSnapshot(revision, transcriptRevision(session.id))
+        ) return
+        bumpTranscriptRevision(session.id)
+        set((state) => mergeReconciledTranscript(state, response))
+      } catch (error) {
+        if (
+          seq !== selectSeq ||
+          get().currentSession?.id !== session.id ||
+          !isTranscriptActive(get().activeTranscriptSessionID, session.id)
+        ) return
+        set({ error: "Failed to reconcile messages" })
+      }
+    })
   },
 
   // Marks messageID (and everything after it) as pending revert, so the
