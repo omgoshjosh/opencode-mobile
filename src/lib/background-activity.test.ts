@@ -85,13 +85,13 @@ test("omitted background preserves while explicit zero clears", () => {
   assert.deepEqual(mergeStatusEvent(prior, { type: "idle", background: { running: 0, jobs: [] } }), { type: "idle", background: { running: 0, jobs: [] } })
 })
 
-test("modern jobs control sibling order and terminal legacy jobs disappear everywhere", () => {
+test("modern jobs are sorted while legacy terminal children disappear", () => {
   const modern = backgroundFor({ parentID: parent, sessions: [child("a"), child("b")], statuses: { [parent]: { type: "busy", background: { running: 2, jobs: [{ sessionID: "b", role: "B", title: "B", since: 2 }, { sessionID: "a", role: "A", title: "A", since: 1 }] } } } })
   assert.deepEqual(modern?.jobs.map((job) => job.sessionID), ["a", "b"])
   assert.equal(backgroundFor({ parentID: parent, sessions: [child("a")], statuses: { a: { type: "busy" } }, terminalChildIDs: { a: true } }), undefined)
 })
 
-test("modern jobs omit terminal children while retaining unrelated jobs and count", () => {
+test("modern jobs remain visible despite stale terminal child IDs and completed task parts", () => {
   const result = backgroundFor({
     parentID: parent,
     sessions: [child("done"), child("active")],
@@ -108,21 +108,38 @@ test("modern jobs omit terminal children while retaining unrelated jobs and coun
       },
     },
     parts: [{ type: "tool", tool: "task", state: { status: "completed", metadata: { sessionId: "done" } } } as any],
+    terminalChildIDs: { done: true },
   })
   assert.deepEqual(result, {
-    running: 1,
-    jobs: [{ sessionID: "active", role: "Code", title: "Working", since: 2, status: "busy" }],
+    running: 2,
+    jobs: [
+      { sessionID: "done", role: "QA", title: "Finished", since: 1, status: "busy" },
+      { sessionID: "active", role: "Code", title: "Working", since: 2, status: "busy" },
+    ],
   })
 })
 
-test("modern terminal child IDs do not mutate the parent status", () => {
+test("recovered modern jobs retain server count and navigation fields without a current part", () => {
+  const result = backgroundFor({
+    parentID: parent,
+    sessions: [child("monitor")],
+    statuses: { [parent]: { type: "busy", background: { running: 3, jobs: [{ sessionID: "monitor", role: "Monitor", title: "Recovered", since: 1 }] } } },
+  })
+  assert.deepEqual(result, { running: 3, jobs: [{ sessionID: "monitor", role: "Monitor", title: "Recovered", since: 1, status: "busy" }] })
+  assert.deepEqual(backgroundJobRouteParams(result!.jobs[0], [child("monitor")], "/parent"), { id: "monitor", directory: "/parent" })
+})
+
+test("modern jobs retain all server jobs and exact server count", () => {
   const result = backgroundFor({
     parentID: parent,
     sessions: [],
-    statuses: { [parent]: { type: "busy", background: { running: 1, jobs: [{ sessionID: "done", role: "QA", title: "Finished", since: 1 }] } } },
-    terminalChildIDs: { done: true },
+    statuses: { [parent]: { type: "busy", background: { running: 4, jobs: [
+      { sessionID: "later", role: "Later", title: "Later", since: 2 },
+      { sessionID: "first", role: "First", title: "First", since: 1 },
+    ] } } },
   })
-  assert.deepEqual(result, { running: 0, jobs: [] })
+  assert.equal(result?.running, 4)
+  assert.deepEqual(result?.jobs.map((job) => job.sessionID), ["first", "later"])
 })
 
 test("swarm role derives a useful task title", () => {
