@@ -896,7 +896,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
     const revision = transcriptRevision(session.id)
     return openTranscriptReconciler.run(session.id, async () => {
       try {
-        const response = await client.session.messages(session.id, { limit: pageSize() })
+        const response = await client.session.messagesPage(session.id, transcriptPageParams(pageSize()))
         if (
           seq !== selectSeq ||
           get().currentSession?.id !== session.id ||
@@ -904,7 +904,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
           !shouldApplyTranscriptSnapshot(revision, transcriptRevision(session.id))
         ) return
         bumpTranscriptRevision(session.id)
-        set((state) => mergeReconciledTranscript(state, response))
+        set((state) => mergeReconciledTranscript(state, response.items))
       } catch (error) {
         if (
           seq !== selectSeq ||

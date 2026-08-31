@@ -176,10 +176,14 @@ export function mergeOlderParts(
 export function mergeNewestPage(input: { existing: Message[]; newest: Message[] }): Message[] {
   const existing = input.existing ?? []
   const newest = input.newest ?? []
-  const newestIDs = new Set(newest.map((message) => message.id))
+  // A reconnect page can overlap itself through a proxy/cursor boundary. Keep
+  // the last server representation for each ID, just as live updates do.
+  const newestByID = new Map(newest.map((message) => [message.id, message]))
+  const authoritative = [...newestByID.values()]
+  const newestIDs = new Set(authoritative.map((message) => message.id))
   const settled = existing.filter((message) => !isPendingMessage(message) && !newestIDs.has(message.id))
   const pending = existing.filter((message) => isPendingMessage(message) && !newestIDs.has(message.id))
-  return [...settled, ...newest, ...pending]
+  return [...settled, ...authoritative, ...pending]
 }
 
 /**
