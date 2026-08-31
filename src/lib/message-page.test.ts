@@ -3,11 +3,23 @@ import assert from "node:assert/strict"
 import {
   NEXT_CURSOR_HEADER,
   REFRESH_WINDOW_CAP,
+  REFRESH_PAGE_CAP,
+  TRANSCRIPT_PART_BUDGET,
+  TRANSCRIPT_RENDER_BUDGET,
   isPendingMessage,
+  mergeRefreshWindow,
   mergeOlderPage,
   mergeOlderParts,
+  mergeNewestPage,
   nextCursorFrom,
+  oldestLoadedMessageID,
   refreshWindowSize,
+  refreshPageSampleLatency,
+  prependRefreshPage,
+  shouldRetryWithoutPartBudget,
+  shouldFetchRefreshPage,
+  transcriptPageParams,
+  transcriptPageQuery,
 } from "./message-page.ts"
 import type { Message, Part } from "./sdk.ts"
 
@@ -40,6 +52,43 @@ test("the cursor header is matched case-insensitively", () => {
 
 test("a blank cursor is treated as absent, not as a valid cursor", () => {
   assert.equal(nextCursorFrom(headers({ [NEXT_CURSOR_HEADER]: "   " })), undefined)
+})
+
+test("an RFC Link next cursor is read when the dedicated header is absent", () => {
+  assert.equal(nextCursorFrom(headers({ Link: '</session/s/message?before=opaque%2Fcursor>; rel="next"' })), "opaque/cursor")
+})
+
+test("the dedicated opaque cursor wins over a Link cursor", () => {
+  assert.equal(nextCursorFrom(headers({ "x-next-cursor": "opaque==", Link: '</?before=wrong>; rel=next' })), "opaque==")
+})
+
+test("transcript pages always carry render and part budgets", () => {
+  assert.deepEqual(transcriptPageParams(50, "cursor"), {
+    limit: 50,
+    before: "cursor",
+    renderBudget: TRANSCRIPT_RENDER_BUDGET,
+    partBudget: TRANSCRIPT_PART_BUDGET,
+  })
+})
+
+test("page query serializes cursor and both budget parameters", () => {
+  assert.equal(
+    transcriptPageQuery(transcriptPageParams(50, "opaque+/=")),
+    "limit=50&before=opaque%2B%2F%3D&renderBudget=40000&partBudget=4000",
+  )
+})
+
+test("only the first logical refresh page reports REST latency", () => {
+  assert.equal(refreshPageSampleLatency(0), true)
+  assert.equal(refreshPageSampleLatency(1), false)
+})
+
+test("only unsupported part-budget responses retry without that parameter", () => {
+  assert.equal(shouldRetryWithoutPartBudget(400, 4000), true)
+  assert.equal(shouldRetryWithoutPartBudget(404, 4000), true)
+  assert.equal(shouldRetryWithoutPartBudget(401, 4000), false)
+  assert.equal(shouldRetryWithoutPartBudget(500, 4000), false)
+  assert.equal(shouldRetryWithoutPartBudget(400, undefined), false)
 })
 
 // --- merging older pages ---
@@ -75,6 +124,14 @@ test("pending messages survive a merge and stay last", () => {
 test("pending messages stay last even when the page is empty", () => {
   const merged = mergeOlderPage({ existing: [msg("temp-1"), msg("c")], older: [] })
   assert.deepEqual(merged.map((m) => m.id), ["c", "temp-1"])
+})
+
+test("a newest-page refresh preserves paged history and optimistic messages", () => {
+  const merged = mergeNewestPage({
+    existing: [msg("a"), msg("b"), msg("c"), msg("temp-1")],
+    newest: [msg("c", "assistant"), msg("d", "assistant")],
+  })
+  assert.deepEqual(merged.map((m) => m.id), ["a", "b", "c", "d", "temp-1"])
 })
 
 test("merging tolerates missing inputs", () => {
@@ -119,4 +176,66 @@ test("the refresh window is capped", () => {
 test("a nonsense page size still yields a positive window", () => {
   assert.ok(refreshWindowSize(0, 0) >= 1)
   assert.ok(refreshWindowSize(-5, -5) >= 1)
+})
+
+test("refresh asks for older pages until it covers the loaded oldest message", () => {
+  assert.equal(shouldFetchRefreshPage({ fetched: [msg("c")], oldestLoadedID: "a", nextCursor: "b", pages: 1 }), true)
+  assert.equal(shouldFetchRefreshPage({ fetched: [msg("a"), msg("c")], oldestLoadedID: "a", nextCursor: "b", pages: 2 }), false)
+})
+
+test("refresh stops at cursor exhaustion and its defensive cap", () => {
+  assert.equal(shouldFetchRefreshPage({ fetched: [], oldestLoadedID: "a", pages: 1 }), false)
+  assert.equal(shouldFetchRefreshPage({ fetched: [], oldestLoadedID: "a", nextCursor: "b", pages: REFRESH_PAGE_CAP }), false)
+})
+
+test("refresh replaces a covered window chronologically and removes stale parts", () => {
+  const result = mergeRefreshWindow({
+    existing: [msg("a"), msg("b"), msg("c"), msg("temp-1")],
+    existingParts: { a: [{ id: "old", messageID: "a", type: "text", text: "stale" }], gone: [] },
+    fetched: [msg("a"), msg("b"), msg("d")],
+    fetchedParts: { a: [{ id: "new", messageID: "a", type: "text", text: "fresh" }], b: [] },
+    nextCursor: "older",
+    capped: false,
+  })
+  assert.deepEqual(result.messages.map((message) => message.id), ["a", "b", "d", "temp-1"])
+  assert.deepEqual(Object.keys(result.parts), ["a", "b", "d", "temp-1"])
+  assert.equal(result.parts.a[0].text, "fresh")
+  assert.equal(result.nextCursor, "older")
+})
+
+test("cap retains only the older prefix and its prior cursor", () => {
+  const result = mergeRefreshWindow({
+    existing: [msg("a"), msg("b"), msg("c"), msg("d"), msg("temp-1")],
+    existingParts: { a: [], b: [], c: [{ id: "stale", messageID: "c", type: "text" }] },
+    fetched: [msg("c"), msg("d"), msg("e")],
+    fetchedParts: { c: [], d: [], e: [] },
+    nextCursor: "newer-cursor",
+    previousCursor: "prior-cursor",
+    capped: true,
+  })
+  assert.deepEqual(result.messages.map((message) => message.id), ["a", "b", "c", "d", "e", "temp-1"])
+  assert.equal(result.nextCursor, "prior-cursor")
+})
+
+test("cap with no overlap leaves the transcript and cursor unchanged", () => {
+  const result = mergeRefreshWindow({
+    existing: [msg("a"), msg("b")],
+    existingParts: { a: [], b: [] },
+    fetched: [msg("c"), msg("d")],
+    fetchedParts: { c: [], d: [] },
+    previousCursor: "prior",
+    capped: true,
+  })
+  assert.deepEqual(result.messages.map((message) => message.id), ["a", "b"])
+  assert.equal(result.nextCursor, "prior")
+})
+
+test("refresh accumulates selected pages in chronological order", () => {
+  const newest = [msg("c"), msg("d")]
+  const older = [msg("a"), msg("b")]
+  assert.deepEqual(prependRefreshPage(newest, older).map((message) => message.id), ["a", "b", "c", "d"])
+})
+
+test("the oldest loaded message ignores optimistic sends", () => {
+  assert.equal(oldestLoadedMessageID([msg("temp-1"), msg("a")]), "a")
 })

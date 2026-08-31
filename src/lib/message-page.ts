@@ -27,6 +27,9 @@ import type { Message, Part } from "./sdk"
 
 /** Case-insensitive: RN's Headers lowercases, some proxies do not. */
 export const NEXT_CURSOR_HEADER = "x-next-cursor"
+export const TRANSCRIPT_RENDER_BUDGET = 40_000
+export const TRANSCRIPT_PART_BUDGET = 4_000
+export const REFRESH_PAGE_CAP = 8
 
 /**
  * Optimistic messages live only on the client until the server acknowledges
@@ -48,7 +51,84 @@ export function isPendingMessage(message: Message): boolean {
 export function nextCursorFrom(headers: { get(name: string): string | null }): string | undefined {
   const raw = headers.get(NEXT_CURSOR_HEADER) ?? headers.get("X-Next-Cursor")
   const trimmed = raw?.trim()
-  return trimmed ? trimmed : undefined
+  if (trimmed) return trimmed
+
+  const link = headers.get("link") ?? headers.get("Link")
+  if (!link) return undefined
+  for (const entry of link.split(",")) {
+    const match = entry.match(/<([^>]+)>/)
+    if (!match || !/\brel\s*=\s*(?:"[^"]*\bnext\b[^"]*"|next\b)/i.test(entry)) continue
+    try {
+      const url = new URL(match[1], "https://opencode.invalid")
+      return url.searchParams.get("before") ?? url.searchParams.get("cursor") ?? undefined
+    } catch {
+      continue
+    }
+  }
+  return undefined
+}
+
+export function transcriptPageParams(limit: number, before?: string) {
+  return { limit, before, renderBudget: TRANSCRIPT_RENDER_BUDGET, partBudget: TRANSCRIPT_PART_BUDGET }
+}
+
+export function transcriptPageQuery(params: { limit: number; before?: string; renderBudget?: number; partBudget?: number }): string {
+  const query = new URLSearchParams({ limit: String(params.limit) })
+  if (params.before) query.set("before", params.before)
+  if (params.renderBudget) query.set("renderBudget", String(params.renderBudget))
+  if (params.partBudget) query.set("partBudget", String(params.partBudget))
+  return query.toString()
+}
+
+export function shouldRetryWithoutPartBudget(status: number | undefined, partBudget: number | undefined): boolean {
+  return Boolean(partBudget) && (status === 400 || status === 404)
+}
+
+export function refreshPageSampleLatency(page: number): boolean {
+  return page === 0
+}
+
+export function prependRefreshPage<T>(existing: T[], page: T[]): T[] {
+  return [...page, ...existing]
+}
+
+export function oldestLoadedMessageID(messages: Message[]): string | undefined {
+  return messages.find((message) => !isPendingMessage(message))?.id
+}
+
+export function shouldFetchRefreshPage(input: { fetched: Message[]; oldestLoadedID?: string; nextCursor?: string; pages: number }): boolean {
+  if (!input.oldestLoadedID || !input.nextCursor) return false
+  if (input.pages >= REFRESH_PAGE_CAP) return false
+  return !input.fetched.some((message) => message.id === input.oldestLoadedID)
+}
+
+export function mergeRefreshWindow(input: {
+  existing: Message[]
+  existingParts: Record<string, Part[]>
+  fetched: Message[]
+  fetchedParts: Record<string, Part[]>
+  nextCursor?: string
+  previousCursor?: string
+  capped: boolean
+}): { messages: Message[]; parts: Record<string, Part[]>; nextCursor?: string; hasMore: boolean } {
+  const existing = input.existing ?? []
+  const fetched = (input.fetched ?? []).filter((message, index, all) => all.findIndex((item) => item.id === message.id) === index)
+  const settled = existing.filter((message) => !isPendingMessage(message))
+  const pending = existing.filter(isPendingMessage)
+  const fetchedIDs = new Set(fetched.map((message) => message.id))
+  const overlap = settled.findIndex((message) => fetchedIDs.has(message.id))
+  if (input.capped && overlap < 0) {
+    return { messages: existing, parts: input.existingParts, nextCursor: input.previousCursor, hasMore: Boolean(input.previousCursor) }
+  }
+  const authoritative = !input.capped
+  const prefix = authoritative ? [] : overlap >= 0 ? settled.slice(0, overlap) : settled
+  const messages = [...prefix, ...fetched, ...pending]
+  const parts: Record<string, Part[]> = {}
+  for (const message of prefix) parts[message.id] = input.existingParts[message.id] ?? []
+  for (const message of fetched) parts[message.id] = input.fetchedParts[message.id] ?? []
+  for (const message of pending) parts[message.id] = input.existingParts[message.id] ?? []
+  const nextCursor = authoritative ? input.nextCursor : input.previousCursor
+  return { messages, parts, nextCursor, hasMore: Boolean(nextCursor) }
 }
 
 /**
@@ -87,6 +167,19 @@ export function mergeOlderParts(
   older: Record<string, Part[]>,
 ): Record<string, Part[]> {
   return { ...(older ?? {}), ...(existing ?? {}) }
+}
+
+/**
+ * Merge a fresh newest page without discarding history the user paged into.
+ * The response wins inside its window; optimistic messages remain last.
+ */
+export function mergeNewestPage(input: { existing: Message[]; newest: Message[] }): Message[] {
+  const existing = input.existing ?? []
+  const newest = input.newest ?? []
+  const newestIDs = new Set(newest.map((message) => message.id))
+  const settled = existing.filter((message) => !isPendingMessage(message) && !newestIDs.has(message.id))
+  const pending = existing.filter((message) => isPendingMessage(message) && !newestIDs.has(message.id))
+  return [...settled, ...newest, ...pending]
 }
 
 /**
