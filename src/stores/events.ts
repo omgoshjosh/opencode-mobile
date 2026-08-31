@@ -1,6 +1,14 @@
 import { create } from "zustand"
 import { useConnections } from "./connections"
-import { useSessions, abortedSessions, optimisticSendingRevision, optimisticSendingRevisionSnapshot } from "./sessions"
+import {
+  useSessions,
+  abortedSessions,
+  optimisticSendingRevision,
+  optimisticSendingRevisionSnapshot,
+  cancelPendingStreamParts,
+  flushPendingStreamParts,
+  STREAM_PART_FLUSH_WINDOW_MS,
+} from "./sessions"
 import { canRefreshPending } from "../lib/focus-read"
 import { send as notify } from "../lib/notifications"
 import { sanitizeBody } from "../lib/notify-format"
@@ -13,6 +21,7 @@ import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
+import { canFlushVisiblePartStatus, registerPartStatusFlusher } from "../lib/stream-part-batching"
 import { canApplyFocusedStatusHydration, canApplyResyncIdle, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "../lib/status-hydration"
 import { createReconnectTranscriptCoordinator } from "../lib/reconnect-transcript"
 import AsyncStorage from "@react-native-async-storage/async-storage"
@@ -101,6 +110,65 @@ let controller: AbortController | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let statusLifecycle = 0
 const statusMutationRevisions = new Map<string, number>()
+const pendingPartStatus = new Map<string, { text: string; receivedAt: number }>()
+let partStatusTimer: ReturnType<typeof setTimeout> | null = null
+
+export function flushPendingPartStatus() {
+  if (partStatusTimer) {
+    clearTimeout(partStatusTimer)
+    partStatusTimer = null
+  }
+  if (pendingPartStatus.size === 0) return
+  const updates = new Map(pendingPartStatus)
+  pendingPartStatus.clear()
+  useEvents.setState((state) => {
+    let statusText = state.statusText
+    let sessionStatus = state.sessionStatus
+    let changed = false
+    for (const [sessionID, update] of updates) {
+      const sessions = useSessions.getState()
+      // The session may have been replaced while this window was open. Never
+      // let an old foreground timer paint status into a newly visible turn.
+      if (!canFlushVisiblePartStatus(sessions.currentSession?.id, sessions.activeTranscriptSessionID, sessionID)) continue
+      statusText = { ...statusText, [sessionID]: update.text }
+      changed = true
+      const next = noteTextActivity(sessionStatus[sessionID], update.receivedAt)
+      if (next !== sessionStatus[sessionID]) sessionStatus = { ...sessionStatus, [sessionID]: next! }
+    }
+    return changed ? { statusText, sessionStatus } : state
+  })
+}
+
+registerPartStatusFlusher(flushPendingPartStatus)
+
+function flushPendingStreamWork() {
+  flushPendingPartStatus()
+  flushPendingStreamParts()
+}
+
+function cancelPendingStreamWork() {
+  if (partStatusTimer) clearTimeout(partStatusTimer)
+  partStatusTimer = null
+  pendingPartStatus.clear()
+  cancelPendingStreamParts()
+}
+
+function enqueuePartStatus(part: Part, receivedAt: number) {
+  const sessionID = part.sessionID
+  const sessions = useSessions.getState()
+  // Background farm activity belongs in its preview/tool bookkeeping only;
+  // it must not wake subscribers to foreground status state.
+  if (!sessionID || sessions.currentSession?.id !== sessionID || sessions.activeTranscriptSessionID !== sessionID) return
+  pendingPartStatus.set(sessionID, { text: statusFromPart(part), receivedAt })
+  if (!partStatusTimer) partStatusTimer = setTimeout(flushPendingPartStatus, STREAM_PART_FLUSH_WINDOW_MS)
+}
+
+/** Single receipt path kept exportable so stream batching is deterministic in tests. */
+export function receiveStreamPart(part: Part, receivedAt = Date.now()) {
+  enqueuePartStatus(part, receivedAt)
+  useSessions.getState().handleEvent({ type: "message.part.updated", properties: { part, receivedAt } } as any)
+  if (part.type === "tool" && (part.state?.status === "completed" || part.state?.status === "error")) flushPendingStreamWork()
+}
 
 function changedStatusIDsSince(revisions: Map<string, number>, sendingRevisions: Map<string, number>) {
   const currentSendingRevisions = optimisticSendingRevisionSnapshot()
@@ -306,6 +374,7 @@ export const useEvents = create<EventsState>((set, get) => ({
   questions: {},
 
   connect: () => {
+    flushPendingStreamWork()
     controller?.abort()
     controller = null
     set({ transport: "idle" })
@@ -356,6 +425,7 @@ export const useEvents = create<EventsState>((set, get) => ({
 
       const scheduleReconnect = (reason: unknown) => {
         if (reconnectScheduled || currentController.signal.aborted) return
+        flushPendingStreamWork()
         reconnectScheduled = true
         const state = get()
         const reconnectAttempts = state.reconnectAttempts + 1
@@ -420,6 +490,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               const sessionID = props.sessionID as string
               const status = props.status as SessionStatus
               if (!sessionID) break
+              if (status.type === "idle") flushPendingStreamWork()
               statusMutationRevisions.set(sessionID, (statusMutationRevisions.get(sessionID) ?? 0) + 1)
 
               // Detect busy → idle transition for completion notification
@@ -482,6 +553,7 @@ export const useEvents = create<EventsState>((set, get) => ({
             case "message.updated": {
               const info = props.info as Message | undefined
               if (!info) break
+              flushPendingStreamWork()
               useSessions.getState().handleEvent({ type, properties: { info } } as any)
               break
             }
@@ -489,6 +561,8 @@ export const useEvents = create<EventsState>((set, get) => ({
             case "message.part.updated": {
               const part = props.part as Part | undefined
               if (!part) break
+              const receivedAt = Date.now()
+              receiveStreamPart(part, receivedAt)
 
               if (part.type === "tool" && part.tool === "task") {
                 const metadata = part.state?.metadata as { sessionId?: unknown } | undefined
@@ -503,20 +577,6 @@ export const useEvents = create<EventsState>((set, get) => ({
                 }
               }
 
-              // Update status text from the latest part
-              const sessionID = (part as any).sessionID as string
-              if (sessionID) {
-                set((state) => {
-                  const previous = state.sessionStatus[sessionID]
-                  const next = part.type === "text" ? noteTextActivity(previous, Date.now()) : previous
-                  return {
-                    statusText: { ...state.statusText, [sessionID]: statusFromPart(part) },
-                    sessionStatus: next === previous ? state.sessionStatus : { ...state.sessionStatus, [sessionID]: next! },
-                  }
-                })
-              }
-
-              useSessions.getState().handleEvent({ type, properties: { part } } as any)
               break
             }
 
@@ -543,6 +603,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               const error = props.error as { message?: string } | undefined
               const sessionID = props.sessionID as string
               if (!sessionID) break
+              flushPendingStreamWork()
               // Mark so the eventual busy -> idle transition is not counted
               // as a success for the store review prompt
               erroredSessions.add(sessionID)
@@ -692,6 +753,8 @@ export const useEvents = create<EventsState>((set, get) => ({
   disconnect: () => {
     console.log("[SSE] Disconnecting")
     addBreadcrumb({ category: "sse", message: "disconnected" })
+    flushPendingStreamWork()
+    cancelPendingStreamWork()
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
       reconnectTimer = null
