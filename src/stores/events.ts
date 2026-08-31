@@ -12,6 +12,7 @@ import {
 import { canRefreshPending } from "../lib/focus-read"
 import { send as notify } from "../lib/notifications"
 import { sanitizeBody } from "../lib/notify-format"
+import { notifySessionError } from "../lib/session-error-notification"
 import { statusFromPart } from "../lib/status-labels"
 import { addBreadcrumb } from "../lib/sentry"
 import { AnalyticsEvent, track } from "../lib/analytics"
@@ -622,12 +623,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               ) {
                 latestSessions.refreshMessages()
               }
-              notify({
-                category: "errors",
-                title: "Session error",
-                body: sanitizeBody(error?.message, "Something went wrong"),
-                sessionId: sessionID,
-              })
+              notifySessionError(notify, sessionID, error?.message)
               break
             }
 
