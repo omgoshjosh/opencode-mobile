@@ -128,7 +128,7 @@ test("a late reconnect page cannot overwrite a newer active transcript", async (
 })
 
 test("busy recovery and its idle event do not duplicate the open transcript request", async () => {
-  const requests: Array<{ limit: number }> = []
+  const requests: Array<{ source: "messages" | "messagesPage"; limit: number }> = []
   const client = {
     global: {
       events: liveStream(
@@ -139,9 +139,13 @@ test("busy recovery and its idle event do not duplicate the open transcript requ
     session: {
       status: async () => ({}),
       messages: async (_sessionID: string, options: { limit: number }) => {
-        requests.push(options)
-        if (options.limit === 1) return [{ info: { ...message("done"), time: { created: 1, completed: 2 } }, parts: [] }]
+        requests.push({ source: "messages", ...options })
         return page("offline")
+      },
+      messagesPage: async (_sessionID: string, options: { limit: number }) => {
+        requests.push({ source: "messagesPage", ...options })
+        if (options.limit === 1) return { items: [{ info: { ...message("done"), time: { created: 1, completed: 2 } }, parts: [] }], nextCursor: undefined }
+        return { items: page("offline"), nextCursor: undefined }
       },
     },
   }
@@ -152,8 +156,8 @@ test("busy recovery and its idle event do not duplicate the open transcript requ
   useEvents.getState().connect()
   await settle()
 
-  assert.equal(requests.filter((request) => request.limit === 2).length, 1)
-  assert.equal(requests.filter((request) => request.limit === 1).length, 1)
+  assert.equal(requests.filter((request) => request.source === "messages" && request.limit === 2).length, 1)
+  assert.equal(requests.filter((request) => request.source === "messagesPage" && request.limit === 1).length, 1)
   assert.equal(useEvents.getState().sessionStatus.s1?.type, "idle")
 })
 
@@ -178,7 +182,7 @@ test("older pagination remains cursor-bounded after reconnect setup", async () =
 
   await useSessions.getState().loadOlderMessages()
 
-  assert.deepEqual(requests, [{ sessionID: "s1", options: { limit: 2, before: "older" } }])
+  assert.deepEqual(requests, [{ sessionID: "s1", options: { limit: 2, before: "older", renderBudget: 40000, partBudget: 4000 } }])
   const state = useSessions.getState()
   assert.deepEqual(state.messages.map((item) => item.id), ["older", "new", "temp-local"])
   assert.equal(state.nextCursor, "oldest")

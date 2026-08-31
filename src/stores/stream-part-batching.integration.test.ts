@@ -170,7 +170,7 @@ test("SSE dispatcher flushes queued content before session.error cleanup", async
   cancelPendingStreamParts()
   useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1", parts: {}, previews: {}, runningTools: {}, pendingWakes: {} })
   useEvents.setState({ sessionStatus: { s1: { type: "busy" } }, statusText: {} })
-  const client: any = { session: { messages: async () => [] }, global: { events: async function* () {
+  const client: any = { session: { status: async () => ({}), messages: async () => [], messagesPage: async () => ({ items: [{ info: { id: "m", sessionID: "s1", role: "assistant", time: { created: 1 } }, parts: [{ id: "error-text", sessionID: "s1", messageID: "m", type: "text", text: "error final" }] }], nextCursor: undefined }) }, global: { events: async function* () {
     yield { type: "message.part.updated", properties: { part: { id: "error-text", sessionID: "s1", messageID: "m", type: "text", text: "error final" } } }
     yield { type: "session.error", properties: { sessionID: "s1", error: { message: "boom" } } }
     await new Promise(() => {})
