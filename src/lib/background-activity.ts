@@ -25,7 +25,12 @@ function text(value: unknown): string | undefined {
 }
 
 function taskFor(parts: Part[], sessionID: string): Part | undefined {
-  return parts.find((part) => text(record(part.state?.metadata)?.sessionId) === sessionID)
+  return parts.find((part) => part.type === "tool" && part.tool === "task" && text(record(part.state?.metadata)?.sessionId) === sessionID)
+}
+
+function taskIsTerminal(parts: Part[], sessionID: string): boolean {
+  const task = taskFor(parts, sessionID)
+  return task?.state?.status === "completed" || task?.state?.status === "error"
 }
 
 function taskTitle(part: Part): string {
@@ -57,8 +62,12 @@ export function backgroundFor({
 }): { running: number; jobs: BackgroundJob[] } | undefined {
   const modern = statuses[parentID]?.background
   if (modern) {
-    const jobs: BackgroundJob[] = modern.jobs.map((job) => ({ ...job, status: "busy" as const }))
-    return { running: modern.running, jobs: jobs.sort(compareJobs) }
+    const jobs: BackgroundJob[] = modern.jobs
+      .filter((job) => !terminalChildIDs[job.sessionID] && !taskIsTerminal(parts, job.sessionID))
+      .map((job) => ({ ...job, status: "busy" as const }))
+    // The aggregate can include jobs not listed in this response. Remove only
+    // contradicted listed jobs, leaving unrelated work and parent status alone.
+    return { running: Math.max(0, modern.running - (modern.jobs.length - jobs.length)), jobs: jobs.sort(compareJobs) }
   }
 
   const jobs = sessions.flatMap((session) => {
@@ -66,7 +75,7 @@ export function backgroundFor({
     const task = taskFor(parts, session.id)
     // A parent task completion/error closes its child immediately, even when
     // the child's busy event arrived late or its idle event was missed.
-    if (task && (task.state?.status === "completed" || task.state?.status === "error")) return []
+    if (taskIsTerminal(parts, session.id)) return []
     const input = record(task?.state?.input)
     return [{
       sessionID: session.id,

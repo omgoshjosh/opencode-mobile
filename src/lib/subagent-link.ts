@@ -77,6 +77,17 @@ export function subagentLinkFrom(part: Part | null | undefined): SubagentLink | 
 }
 
 /**
+ * A completed task can have a child session even when its final report never
+ * arrived. This deliberately considers only the terminal state and report
+ * value; child metadata merely establishes that there is somewhere safe to
+ * send the user for diagnostics.
+ */
+export function isCompletedSubagentReportMissing(part: Part | null | undefined): boolean {
+  if (!subagentLinkFrom(part) || part?.state?.status !== "completed") return false
+  return typeof part.state.output !== "string" || part.state.output.trim().length === 0
+}
+
+/**
  * Short badge text for a subagent card.
  *
  * Swarm role wins over subagent type: when a task is dispatched to a named
