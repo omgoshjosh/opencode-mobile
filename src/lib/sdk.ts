@@ -11,7 +11,7 @@ import { SSEParser } from "./sse"
 import { apiErrorFor, ApiError } from "./api-error"
 import { loadSessionList } from "./session-list"
 import { LIVENESS_TIMEOUT_MS } from "./sse-liveness"
-import { nextCursorFrom } from "./message-page"
+import { createMessageTransport } from "./message-transport"
 import { requestSignal } from "./request-signal"
 import type { FileRoot } from "./file-roots"
 import type { RoleInput as SwarmRoleInput, Swarm as SwarmInfo } from "./swarm-crud"
@@ -141,7 +141,7 @@ export interface Part {
     // Tool-specific. For `task` this carries { sessionId, parentSessionId,
     // model, runID } — the link to the subagent's own session. See
     // src/lib/subagent-link.ts.
-    metadata?: unknown
+    metadata?: Record<string, unknown>
   }
   // Timing
   time?: { start?: number; end?: number }
@@ -281,10 +281,11 @@ async function requestWithHeaders<T>(
   config: ClientConfig,
   path: string,
   options: RequestInit = {},
+  sampleLatency = true,
 ): Promise<{ body: T; headers: Headers }> {
   const url = `${config.baseUrl}${path}`
   const headers = { ...createHeaders(config), ...options.headers }
-  const response = await fetchWithTimeout(url, { ...options, headers })
+  const response = await fetchWithTimeout(url, { ...options, headers }, undefined, sampleLatency)
 
   if (!response.ok) {
     const error = await response.text()
@@ -306,17 +307,22 @@ export function setLatencyReporter(fn: ((ms: number) => void) | null) {
   latencyReporter = fn
 }
 
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+  sampleLatency = true,
+): Promise<Response> {
   const request = requestSignal(options.signal ?? undefined, timeoutMs)
 
   const startedAt = Date.now()
   try {
     const response = await fetch(url, { ...options, signal: request.signal })
-    latencyReporter?.(Date.now() - startedAt)
+    if (sampleLatency) latencyReporter?.(Date.now() - startedAt)
     return response
   } catch (error) {
     if (request.timedOut()) {
-      latencyReporter?.(Date.now() - startedAt)
+      if (sampleLatency) latencyReporter?.(Date.now() - startedAt)
       throw new Error(`Request timed out after ${timeoutMs}ms`)
     }
     throw error
@@ -353,6 +359,9 @@ export function createClient(config: ClientConfig) {
   // reconstructs a clean URL, reports "works now"). A bare URL with no
   // trailing slash is untouched.
   config = { ...config, baseUrl: config.baseUrl.replace(/\/+$/, "") }
+  const messageTransport = createMessageTransport(<T>(path: string, options?: RequestInit, sampleLatency?: boolean) =>
+    requestWithHeaders<T>(config, path, options, sampleLatency),
+  )
   return {
     global: {
       // `timeoutMs` overrides the default REQUEST_TIMEOUT_MS — used by the
@@ -531,6 +540,8 @@ export function createClient(config: ClientConfig) {
       cancel: async (sessionID: string, messageID: string): Promise<MessageCancelOutcome> =>
         messageCancelOutcome(await request<unknown>(config, `/session/${sessionID}/message/${messageID}/cancel`, { method: "POST" })),
 
+      message: messageTransport.message,
+
       /**
        * One page of a transcript, newest-first from `before` (or from the end
        * when `before` is omitted).
@@ -543,21 +554,7 @@ export function createClient(config: ClientConfig) {
        * The server rejects `before` without `limit` (400), so `limit` is
        * required here rather than optional.
        */
-      messagesPage: async (
-        sessionID: string,
-        params: { limit: number; before?: string },
-        signal?: AbortSignal,
-      ): Promise<{ items: MessageWithParts[]; nextCursor?: string }> => {
-        const query = new URLSearchParams()
-        query.set("limit", String(params.limit))
-        if (params.before) query.set("before", params.before)
-        const { body, headers } = await requestWithHeaders<MessageWithParts[]>(
-          config,
-          `/session/${sessionID}/message?${query.toString()}`,
-          { signal },
-        )
-        return { items: body, nextCursor: nextCursorFrom(headers) }
-      },
+      messagesPage: messageTransport.messagesPage,
 
       // Sends a message and returns the response
       // Fire-and-forget async prompt - SSE events drive all real-time updates
