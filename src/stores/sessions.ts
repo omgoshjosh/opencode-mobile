@@ -138,6 +138,8 @@ interface SessionsState {
 
   // Actions
   loadSessions: (options?: { rootsOnly?: boolean }) => Promise<void>
+  reconcileSessions: (lifecycle: number) => Promise<string[]>
+  removeSession: (sessionID: string) => void
   loadLastViewed: () => Promise<void>
   selectSession: (sessionID: string, directory?: string, signal?: AbortSignal) => Promise<boolean>
   loadOlderMessages: () => Promise<void>
@@ -189,6 +191,9 @@ export function optimisticSendingRevisionSnapshot(): Map<string, number> {
 // pull-to-refresh (or filter flip) issued mid-flight must not have an older
 // call's phase-2 result land on top of a newer call's rows.
 let listLoadSeq = 0
+let sessionReconcileLifecycle = 0
+const sessionMembershipRevisions = new Map<string, number>()
+const deletedSessionIDs = new Set<string>()
 
 // Monotonic token guarding selectSession against out-of-order resolution: a
 // slow fetch for a session the user has already navigated away from must not
@@ -419,7 +424,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
         try {
           const roots = await client.session.list({ roots: true, includeChildren: false })
           if (seq === listLoadSeq && roots.length > 0) {
-            set({ sessions: roots, isLoading: false, listSource: "network", listAsOf: Date.now(), listLoadFailed: false })
+            set({ sessions: roots.filter((session) => !deletedSessionIDs.has(session.id)), isLoading: false, listSource: "network", listAsOf: Date.now(), listLoadFailed: false })
           }
         } catch {
           // Phase 1 is opportunistic; phase 2 below is the load of record and
@@ -429,8 +434,9 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
       const sessions = await client.session.list({ roots: true, includeChildren: !options?.rootsOnly })
       if (seq !== listLoadSeq) return
-      set({ sessions, isLoading: false, listSource: "network", listAsOf: Date.now(), listLoadFailed: false })
-      persistSessionsSnapshot(sessions)
+      const liveSessions = sessions.filter((session) => !deletedSessionIDs.has(session.id))
+      set({ sessions: liveSessions, isLoading: false, listSource: "network", listAsOf: Date.now(), listLoadFailed: false })
+      persistSessionsSnapshot(liveSessions)
     } catch (error) {
       if (seq !== listLoadSeq) return
       // Keep whatever rows are on screen (previous load or disk snapshot) —
@@ -438,6 +444,61 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // · Retry" banner rather than silently presenting stale data as fresh.
       set({ error: "Failed to load sessions", isLoading: false, listLoadFailed: true })
     }
+  },
+
+  reconcileSessions: async (lifecycle) => {
+    sessionReconcileLifecycle = Math.max(sessionReconcileLifecycle, lifecycle)
+    const client = useConnections.getState().clientForDirectory(undefined) || useConnections.getState().client
+    if (!client) return []
+    const revisions = new Map(sessionMembershipRevisions)
+    try {
+      const snapshot = await client.session.listSnapshot()
+      if (!snapshot.complete || lifecycle !== sessionReconcileLifecycle) return []
+      const remoteIDs = new Set(snapshot.sessions.map((session) => session.id))
+      const absent = get().sessions.filter((session) => {
+        const currentID = get().currentSession?.id
+        return !remoteIDs.has(session.id) && session.id !== currentID && revisions.get(session.id) === sessionMembershipRevisions.get(session.id)
+      })
+      for (const session of absent) get().removeSession(session.id)
+      return absent.map((session) => session.id)
+    } catch {
+      // Reconciliation is opportunistic. A failed request must retain rows.
+      return []
+    }
+  },
+
+  removeSession: (sessionID) => {
+    deletedSessionIDs.add(sessionID)
+    sessionMembershipRevisions.set(sessionID, (sessionMembershipRevisions.get(sessionID) ?? 0) + 1)
+    bumpTranscriptRevision(sessionID)
+    if (get().currentSession?.id === sessionID || selectingSessionID === sessionID) selectSeq += 1
+    transcriptRevisions.delete(sessionID)
+    pendingTranscriptGenerations.delete(sessionID)
+    for (const [key, pending] of pendingParts) {
+      if (pending.part.sessionID === sessionID) pendingParts.delete(key)
+    }
+    set((state) => {
+      const current = state.currentSession?.id === sessionID
+      const lastViewed = Object.fromEntries(Object.entries(state.lastViewed).filter(([id]) => id !== sessionID))
+      const next = {
+        sessions: state.sessions.filter((session) => session.id !== sessionID),
+        currentSession: current ? null : state.currentSession,
+        activeTranscriptSessionID: current ? null : state.activeTranscriptSessionID,
+        messages: current ? [] : state.messages,
+        parts: current ? {} : state.parts,
+        sending: Object.fromEntries(Object.entries(state.sending).filter(([id]) => id !== sessionID)),
+        failedMessageIDs: current ? {} : state.failedMessageIDs,
+        transcriptCache: dropTranscript(state.transcriptCache, sessionID),
+        previews: dropPreview(state.previews, sessionID),
+        runningTools: clearSessionTools(state.runningTools, sessionID),
+        pendingWakes: Object.fromEntries(Object.entries(state.pendingWakes).filter(([id]) => id !== sessionID)),
+        lastViewed,
+      }
+      persistSessionsSnapshot(next.sessions)
+      AsyncStorage.setItem(LAST_VIEWED_KEY, JSON.stringify(lastViewed)).catch(() => {})
+      AsyncStorage.setItem(PREVIEWS_KEY, JSON.stringify(next.previews)).catch(() => {})
+      return next
+    })
   },
 
   selectSession: async (sessionID, directory, signal) => {
@@ -685,16 +746,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
     try {
       await client.session.delete(sessionID)
-      set((state) => ({
-        sessions: state.sessions.filter((s) => s.id !== sessionID),
-        currentSession: state.currentSession?.id === sessionID ? null : state.currentSession,
-        messages: state.currentSession?.id === sessionID ? [] : state.messages,
-        parts: state.currentSession?.id === sessionID ? {} : state.parts,
-        // Otherwise a deleted session's transcript stays warm and would be
-        // rendered from cache if anything navigated back to its id.
-        transcriptCache: dropTranscript(state.transcriptCache, sessionID),
-        previews: dropPreview(state.previews, sessionID),
-      }))
+      get().removeSession(sessionID)
     } catch (error) {
       set({ error: "Failed to delete session" })
     }
@@ -975,6 +1027,21 @@ export const useSessions = create<SessionsState>((set, get) => ({
       return
     }
 
+    if (event.type === "session.deleted") {
+      const sessionID = (props.sessionID || props.info?.id) as string | undefined
+      if (sessionID) get().removeSession(sessionID)
+      return
+    }
+
+    if (event.type === "session.created") {
+      const session = (props.info || props) as Session | undefined
+      if (!session?.id) return
+      deletedSessionIDs.delete(session.id)
+      sessionMembershipRevisions.set(session.id, (sessionMembershipRevisions.get(session.id) ?? 0) + 1)
+      set((state) => (state.sessions.some((item) => item.id === session.id) ? {} : { sessions: [session, ...state.sessions] }))
+      return
+    }
+
     const { currentSession } = get()
     if (!currentSession) return
 
@@ -1018,6 +1085,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
       case "session.updated": {
         const session = (props.info || props) as Session | undefined
         if (!session?.id) return
+        if (deletedSessionIDs.has(session.id)) return
+        sessionMembershipRevisions.set(session.id, (sessionMembershipRevisions.get(session.id) ?? 0) + 1)
 
         set((state) => ({
           sessions: state.sessions.map((s) => (s.id === session.id ? session : s)),

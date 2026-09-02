@@ -9,7 +9,7 @@ import * as Application from "expo-application"
 import { Platform } from "react-native"
 import { SSEParser } from "./sse"
 import { apiErrorFor, ApiError } from "./api-error"
-import { loadSessionList } from "./session-list"
+import { loadSessionList, loadSessionSnapshot } from "./session-list"
 import { LIVENESS_TIMEOUT_MS } from "./sse-liveness"
 import { createMessageTransport } from "./message-transport"
 import { requestSignal } from "./request-signal"
@@ -495,6 +495,26 @@ export function createClient(config: ClientConfig) {
           },
           params,
         ),
+
+        // Unlike list(), this exposes whether the global cursor walk was
+        // exhaustive. It is used only by reconnect cleanup, never by filtered UI.
+        listSnapshot: () =>
+          loadSessionSnapshot(
+            {
+              getExperimental: async (query) => {
+                const response = await fetchWithTimeout(`${config.baseUrl}/experimental/session${query}`, { headers: createHeaders(config) })
+                if (response.status === 404) return null
+                if (!response.ok) {
+                  const body = await response.text()
+                  throw apiErrorFor(response.status, `API Error: ${response.status} - ${body}`)
+                }
+                const value = response.headers.get("x-next-cursor")
+                const nextCursor = value != null ? Number(value) : undefined
+                return { sessions: await response.json(), nextCursor: Number.isFinite(nextCursor as number) ? nextCursor : undefined }
+              },
+              getLegacy: (query) => request<Session[]>(config, `/session${query}`),
+            },
+          ),
 
        get: (sessionID: string, signal?: AbortSignal) => request<Session>(config, `/session/${sessionID}`, { signal }),
 

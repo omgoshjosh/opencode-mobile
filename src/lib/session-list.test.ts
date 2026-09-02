@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { loadSessionList, normalizeSessions, legacySessionQuery, type SessionListTransport } from "./session-list.ts"
+import { loadSessionList, loadSessionSnapshot, normalizeSessions, legacySessionQuery, type SessionListTransport } from "./session-list.ts"
 import type { Session } from "./sdk.ts"
 
 // Minimal Session factory — only the fields the list logic reads.
@@ -216,6 +216,23 @@ test("loadSessionList: a stuck cursor cannot loop forever", async () => {
   }
   await loadSessionList(t, {})
   assert.ok(count <= 3, `stuck cursor stopped after ${count} calls`)
+})
+
+test("loadSessionSnapshot: only an exhausted global cursor is complete", async () => {
+  const complete = await loadSessionSnapshot({
+    getExperimental: async (query) => query.includes("cursor") ? { sessions: [session({ id: "old" })] } : { sessions: [session({ id: "new" })], nextCursor: 1 },
+    getLegacy: async () => [],
+  })
+  assert.equal(complete.complete, true)
+
+  const repeated = await loadSessionSnapshot({
+    getExperimental: async () => ({ sessions: [], nextCursor: 1 }),
+    getLegacy: async () => [],
+  })
+  assert.equal(repeated.complete, false)
+
+  const legacy = await loadSessionSnapshot({ getExperimental: async () => null, getLegacy: async () => [session({ id: "legacy" })] })
+  assert.equal(legacy.complete, false)
 })
 
 test("roots-only views narrow SERVER-side; child-inclusive views do not", async () => {
