@@ -200,6 +200,25 @@ function clearIdleSessions(sessionIDs: string[]) {
   )
 }
 
+export function clearDeletedSessionEventState(sessionIDs: string[]) {
+  if (sessionIDs.length === 0) return
+  const deleted = new Set(sessionIDs)
+  for (const sessionID of deleted) {
+    erroredSessions.delete(sessionID)
+    abortedSessions.delete(sessionID)
+    statusMutationRevisions.delete(sessionID)
+    pendingPartStatus.delete(sessionID)
+  }
+  useEvents.setState((state) => ({
+    sessionStatus: Object.fromEntries(Object.entries(state.sessionStatus).filter(([id]) => !deleted.has(id))),
+    statusText: Object.fromEntries(Object.entries(state.statusText).filter(([id]) => !deleted.has(id))),
+    terminalChildIDs: Object.fromEntries(Object.entries(state.terminalChildIDs).filter(([id]) => !deleted.has(id))),
+    permissions: Object.fromEntries(Object.entries(state.permissions).filter(([id]) => !deleted.has(id))),
+    questions: Object.fromEntries(Object.entries(state.questions).filter(([id]) => !deleted.has(id))),
+  }))
+  persistStatusCache(useEvents.getState().sessionStatus)
+}
+
 async function hydrateStatus(client: Client, lifecycle: number, signal: AbortSignal) {
   const revisions = new Map(statusMutationRevisions)
   const sendingRevisions = optimisticSendingRevisionSnapshot()
@@ -482,7 +501,7 @@ export const useEvents = create<EventsState>((set, get) => ({
             void hydrateStatus(client, lifecycle, currentController.signal)
             // One complete global snapshot per demonstrated-live lifecycle
             // removes sessions deleted while SSE was down.
-            void useSessions.getState().reconcileSessions(lifecycle)
+            void useSessions.getState().reconcileSessions(lifecycle).then(clearDeletedSessionEventState)
           }
 
           const payload = (event as any).payload || event
@@ -602,16 +621,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               const sessionID = (props.sessionID || props.info?.id) as string | undefined
               if (!sessionID) break
               useSessions.getState().handleEvent({ type, properties: { sessionID } } as any)
-              erroredSessions.delete(sessionID)
-              abortedSessions.delete(sessionID)
-              set((state) => ({
-                sessionStatus: Object.fromEntries(Object.entries(state.sessionStatus).filter(([id]) => id !== sessionID)),
-                statusText: Object.fromEntries(Object.entries(state.statusText).filter(([id]) => id !== sessionID)),
-                terminalChildIDs: Object.fromEntries(Object.entries(state.terminalChildIDs).filter(([id]) => id !== sessionID)),
-                permissions: Object.fromEntries(Object.entries(state.permissions).filter(([id]) => id !== sessionID)),
-                questions: Object.fromEntries(Object.entries(state.questions).filter(([id]) => id !== sessionID)),
-              }))
-              persistStatusCache(get().sessionStatus)
+              clearDeletedSessionEventState([sessionID])
               break
             }
 

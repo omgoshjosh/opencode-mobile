@@ -138,7 +138,7 @@ interface SessionsState {
 
   // Actions
   loadSessions: (options?: { rootsOnly?: boolean }) => Promise<void>
-  reconcileSessions: (lifecycle: number) => Promise<void>
+  reconcileSessions: (lifecycle: number) => Promise<string[]>
   removeSession: (sessionID: string) => void
   loadLastViewed: () => Promise<void>
   selectSession: (sessionID: string, directory?: string, signal?: AbortSignal) => Promise<boolean>
@@ -449,25 +449,21 @@ export const useSessions = create<SessionsState>((set, get) => ({
   reconcileSessions: async (lifecycle) => {
     sessionReconcileLifecycle = Math.max(sessionReconcileLifecycle, lifecycle)
     const client = useConnections.getState().clientForDirectory(undefined) || useConnections.getState().client
-    if (!client) return
+    if (!client) return []
     const revisions = new Map(sessionMembershipRevisions)
     try {
       const snapshot = await client.session.listSnapshot()
-      if (!snapshot.complete || lifecycle !== sessionReconcileLifecycle) return
+      if (!snapshot.complete || lifecycle !== sessionReconcileLifecycle) return []
       const remoteIDs = new Set(snapshot.sessions.map((session) => session.id))
-      set((state) => {
-        const currentID = state.currentSession?.id
-        const sessions = state.sessions.filter((session) =>
-          remoteIDs.has(session.id) ||
-          session.id === currentID ||
-          revisions.get(session.id) !== sessionMembershipRevisions.get(session.id),
-        )
-        if (sessions.length === state.sessions.length) return {}
-        persistSessionsSnapshot(sessions)
-        return { sessions }
+      const absent = get().sessions.filter((session) => {
+        const currentID = get().currentSession?.id
+        return !remoteIDs.has(session.id) && session.id !== currentID && revisions.get(session.id) === sessionMembershipRevisions.get(session.id)
       })
+      for (const session of absent) get().removeSession(session.id)
+      return absent.map((session) => session.id)
     } catch {
       // Reconciliation is opportunistic. A failed request must retain rows.
+      return []
     }
   },
 
@@ -475,7 +471,12 @@ export const useSessions = create<SessionsState>((set, get) => ({
     deletedSessionIDs.add(sessionID)
     sessionMembershipRevisions.set(sessionID, (sessionMembershipRevisions.get(sessionID) ?? 0) + 1)
     bumpTranscriptRevision(sessionID)
-    if (get().currentSession?.id === sessionID) selectSeq += 1
+    if (get().currentSession?.id === sessionID || selectingSessionID === sessionID) selectSeq += 1
+    transcriptRevisions.delete(sessionID)
+    pendingTranscriptGenerations.delete(sessionID)
+    for (const [key, pending] of pendingParts) {
+      if (pending.part.sessionID === sessionID) pendingParts.delete(key)
+    }
     set((state) => {
       const current = state.currentSession?.id === sessionID
       const lastViewed = Object.fromEntries(Object.entries(state.lastViewed).filter(([id]) => id !== sessionID))

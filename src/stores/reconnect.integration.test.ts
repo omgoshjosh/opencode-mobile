@@ -188,6 +188,35 @@ test("a complete reconnect snapshot removes sessions deleted while SSE was down"
   assert.deepEqual(useSessions.getState().sessions.map((item) => item.id), ["kept"])
 })
 
+test("reconnect pruning clears session and event auxiliary state", async () => {
+  const client = {
+    global: { events: liveStream({ payload: { type: "connected", properties: {} } }) },
+    session: {
+      status: async () => ({}),
+      listSnapshot: async () => ({ sessions: [], complete: true }),
+      messagesPage: async () => ({ items: [], nextCursor: undefined }),
+    },
+  }
+  useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
+  useSessions.setState({
+    sessions: [session("ghost")],
+    lastViewed: { ghost: 1 },
+    sending: { ghost: true },
+    pendingWakes: { ghost: {} as never },
+    transcriptCache: { ghost: { messages: [], parts: {}, nextCursor: undefined, cachedAt: 1 } },
+  })
+  useEvents.setState({ sessionStatus: { ghost: { type: "busy" } }, statusText: { ghost: "working" }, permissions: { ghost: [] }, questions: { ghost: [] } })
+
+  useEvents.getState().connect()
+  await waitForStore(() => useSessions.getState().sessions.length === 0)
+  await waitForEvents(() => !useEvents.getState().sessionStatus.ghost)
+  assert.equal(useSessions.getState().lastViewed.ghost, undefined)
+  assert.equal(useSessions.getState().sending.ghost, undefined)
+  assert.equal(useSessions.getState().transcriptCache.ghost, undefined)
+  assert.equal(useEvents.getState().statusText.ghost, undefined)
+  assert.equal(useEvents.getState().permissions.ghost, undefined)
+})
+
 test("incomplete reconnect snapshots fail closed", async () => {
   for (const complete of [false, false]) {
     useSessions.setState({ sessions: [session("ghost")] })
@@ -244,4 +273,21 @@ test("direct session.deleted clears the session and blocks late selection", asyn
   const state = useSessions.getState()
   assert.equal(state.currentSession, null)
   assert.deepEqual(state.sessions, [])
+})
+
+test("deleting a non-current session rejects its late selection", async () => {
+  const request = deferred<Session>()
+  const client = {
+    session: {
+      get: async () => request.promise,
+      messagesPage: async () => ({ items: [], nextCursor: undefined }),
+    },
+  }
+  useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
+  useSessions.setState({ sessions: [session("current"), session("gone")], currentSession: session("current"), activeTranscriptSessionID: "current" })
+  const select = useSessions.getState().selectSession("gone")
+  useSessions.getState().handleEvent({ type: "session.deleted", properties: { sessionID: "gone" } } as never)
+  request.resolve(session("gone"))
+  assert.equal(await select, false)
+  assert.equal(useSessions.getState().currentSession?.id, "current")
 })
