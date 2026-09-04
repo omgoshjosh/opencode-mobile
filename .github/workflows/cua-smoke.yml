@@ -121,7 +121,18 @@ jobs:
       - name: Install Python deps
         run: pip install openai
 
+      - name: Check CUA credentials
+        id: cua_credentials
+        run: |
+          if [ -n "${AZURE_OPENAI_API_KEY:-}" ] && [ -n "${AZURE_OPENAI_ENDPOINT:-}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::skipped: no Azure credentials on this fork"
+          fi
+
       - name: Configure opencode Azure provider
+        if: ${{ steps.cua_credentials.outputs.available == 'true' }}
         env:
           AZURE_OPENAI_MODEL: "gpt-5.4"
         run: |
@@ -158,7 +169,7 @@ jobs:
           echo "opencode.json written:"; cat "$HOME/.config/opencode/opencode.json"
 
       - name: Start opencode server on runner host
-        if: ${{ inputs.opencode_url == '' }}
+        if: ${{ steps.cua_credentials.outputs.available == 'true' && inputs.opencode_url == '' }}
         run: |
           set -x
           # Bind all interfaces so the emulator can reach it via 10.0.2.2.
@@ -197,7 +208,7 @@ jobs:
 
       - name: Probe opencode model capability (can it reply?)
         id: probe
-        if: ${{ inputs.opencode_url == '' }}
+        if: ${{ steps.cua_credentials.outputs.available == 'true' && inputs.opencode_url == '' }}
         env:
           AZURE_OPENAI_MODEL: "gpt-5.4"
         run: |
@@ -261,6 +272,7 @@ jobs:
           echo "opencode model-capable in CI: $CAPABLE"
 
       - name: Write CUA runner script
+        if: ${{ steps.cua_credentials.outputs.available == 'true' }}
         run: |
           cat > /tmp/cua-runner.sh << 'RUNNEREOF'
           #!/bin/sh
@@ -277,6 +289,7 @@ jobs:
           chmod +x /tmp/cua-runner.sh
 
       - name: Run CUA smoke test with emulator
+        if: ${{ steps.cua_credentials.outputs.available == 'true' }}
         uses: reactivecircus/android-emulator-runner@v2
         env:
           OPENCODE_URL: ${{ env.OPENCODE_URL }}
