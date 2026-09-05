@@ -1,5 +1,6 @@
 import type { Message, MessageWithParts, Part } from "./sdk.ts"
 import { mergeNewestPage } from "./message-page.ts"
+import { isHiddenSyntheticUserMessage } from "./transcript-visibility.ts"
 
 type Transcript = {
   messages: Message[]
@@ -10,6 +11,7 @@ function parseMessages(response: MessageWithParts[]): Transcript {
   const messages: Message[] = []
   const parts: Record<string, Part[]> = {}
   for (const item of response || []) {
+    if (isHiddenSyntheticUserMessage(item.info, item.parts)) continue
     messages.push(item.info)
     parts[item.info.id] = item.parts || []
   }
@@ -18,15 +20,19 @@ function parseMessages(response: MessageWithParts[]): Transcript {
 
 /** Apply a bounded newest-page snapshot without resetting pagination state. */
 export function mergeReconciledTranscript(state: Transcript, response: MessageWithParts[]): Transcript {
+  const hidden = new Set(
+    response.filter((item) => isHiddenSyntheticUserMessage(item.info, item.parts)).map((item) => item.info.id),
+  )
   const { messages, parts } = parseMessages(response)
   const mergedParts: Record<string, Part[]> = { ...state.parts }
+  for (const messageID of hidden) delete mergedParts[messageID]
   for (const [messageID, incoming] of Object.entries(parts)) {
     // The page is authoritative for settled messages. Deduping by part ID also
     // tolerates an overlap at the page boundary without rendering a part twice.
     mergedParts[messageID] = [...new Map(incoming.map((part) => [part.id, part])).values()]
   }
   return {
-    messages: mergeNewestPage({ existing: state.messages, newest: messages }),
+    messages: mergeNewestPage({ existing: state.messages.filter((message) => !hidden.has(message.id)), newest: messages }),
     parts: mergedParts,
   }
 }
