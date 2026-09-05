@@ -141,6 +141,18 @@ test("a snapshot replaces a transient synthetic user envelope without duplicates
   assert.deepEqual(merged.parts.answer.map((part) => part.id), ["p-answer"])
 })
 
+test("a reconnect snapshot keeps a human message that carries a synthetic briefing", () => {
+  const human = { ...message("human"), role: "user" as const }
+  const parts = [
+    { id: "p-human", messageID: "human", type: "text" as const, text: "Cool. How are computer resources doing?" },
+    { id: "p-briefing", messageID: "human", type: "text" as const, text: "<swarm-briefing>rules</swarm-briefing>", synthetic: true },
+  ]
+  const merged = mergeReconciledTranscript({ messages: [human], parts: { human: parts } }, [{ info: human, parts }])
+
+  assert.deepEqual(merged.messages.map((item) => item.id), ["human"])
+  assert.deepEqual(merged.parts.human.map((part) => part.id), ["p-human", "p-briefing"])
+})
+
 test("older-page API call keeps its cursor and merges beneath a reconnect page", async () => {
   const calls: Array<{ limit: number; before?: string }> = []
   const client = { session: { messagesPage: async (_sessionID: string, options: { limit: number; before?: string }) => {
