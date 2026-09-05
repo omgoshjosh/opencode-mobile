@@ -39,6 +39,11 @@ export interface AttentionInput {
   updatedAt?: number
   /** When this client last opened the session; undefined if never. */
   lastViewedAt?: number
+  /**
+   * When a reader explicitly sent this session back to the unread queue
+   * (server-owned; see src/lib/session-read-state.ts). Undefined = not marked.
+   */
+  markedUnreadAt?: number
 }
 
 /**
@@ -56,6 +61,14 @@ export function attentionFor(input: AttentionInput): Attention {
 
   if (input.status === "retry") return "retry"
   if (input.status === "busy") return "busy"
+
+  // An explicit mark is a stronger statement than the activity heuristic below
+  // — the reader has already opened this session (which is what stamps
+  // lastViewedAt) and asked for it back anyway. It sits *below* busy and
+  // needs-attention on purpose: a marked session that is now blocked on a
+  // permission still needs the user more urgently than one that is merely
+  // waiting to be re-read.
+  if (input.markedUnreadAt !== undefined) return "complete"
 
   // Never opened counts as unseen only if it has actually produced something;
   // a freshly created session with no activity is idle, not "complete".

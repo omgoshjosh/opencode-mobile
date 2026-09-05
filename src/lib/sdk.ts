@@ -222,6 +222,41 @@ export interface SkillInfo {
   content: string
 }
 
+// Server-owned per-session read/review state. `timeUpdated` is the revision a
+// client echoes back as `expectedRevision` so the daemon can drop writes from a
+// client that has not observed the newest mark. See src/lib/session-read-state.ts.
+export interface SessionState {
+  sessionID: string
+  seenAt?: number
+  reviewedAt?: number
+  markedUnreadAt?: number
+  reviewedFiles: string[]
+  timeUpdated: number
+}
+
+// The same state as it appears in a list hydration page. Note `revision` here
+// is the field `SessionState` calls `timeUpdated` — the server derives this
+// shape for card rendering and renames it.
+export interface SessionUiState {
+  sessionID: string
+  seenAt?: number
+  reviewedAt?: number
+  markedUnreadAt?: number
+  revision: number
+  reviewedFiles: string[]
+  displayStatus: "idle" | "in_progress" | "input_needed" | "needs_review"
+  updated: boolean
+}
+
+export interface SessionStateUpdate {
+  markedUnread?: boolean
+  seenAt?: number
+  reviewedAt?: number
+  expectedRevision?: number
+  reviewedFiles?: string[]
+  expectedReviewedFiles?: string[]
+}
+
 // Re-exported so callers get the swarm types from the client module they
 // already import, while the definitions stay with the pure edit logic.
 export type { RoleInput as SwarmRoleInput, Role as SwarmRole, Swarm as SwarmInfo } from "./swarm-crud"
@@ -756,6 +791,44 @@ export function createClient(config: ClientConfig) {
         }),
       delete: (swarmID: string) =>
         request<boolean>(config, `${OPENCODEX_ROOT}/swarm/${swarmID}`, { method: "DELETE" }),
+    },
+
+    // Server-owned read state. Both calls answer `null` on 404 rather than
+    // throwing: this shipped after the rest of the OpencodeX surface, so a 404
+    // is capability detection (old daemon, or a session the daemon has never
+    // written state for), not a failure the user should see.
+    sessionState: {
+      update: async (sessionID: string, input: SessionStateUpdate): Promise<SessionState | null> => {
+        try {
+          return await request<SessionState>(config, `${OPENCODEX_ROOT}/session-state/${sessionID}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+          })
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 404) return null
+          throw err
+        }
+      },
+
+      // Read state does NOT ride /session/tree or /session/:id — the card-state
+      // route is the only place a list can hydrate it from.
+      hydrate: async (directory: string, cursor?: string): Promise<{
+        sessionUiState: Record<string, SessionUiState>
+        next?: string
+      } | null> => {
+        const params = new URLSearchParams({ directory })
+        if (cursor) params.set("cursor", cursor)
+        try {
+          return await request<{ sessionUiState: Record<string, SessionUiState>; next?: string }>(
+            config,
+            `${OPENCODEX_ROOT}/state/session-card?${params.toString()}`,
+          )
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 404) return null
+          throw err
+        }
+      },
     },
 
     provider: {

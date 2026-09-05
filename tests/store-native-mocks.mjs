@@ -8,11 +8,17 @@ const memoryStore = {
   clear: async () => void storage.clear(),
 }
 
+// Recorded rather than discarded: "did the user actually get told this
+// failed?" is behaviour a store test should be able to assert, and a silent
+// no-op would let a swallowed error pass as success.
+const alerts = []
+
 mock.module("react-native", {
   namedExports: {
     Platform: { OS: "ios", select: (values) => values.ios ?? values.default },
     Appearance: { setColorScheme: () => {} },
     AppState: { currentState: "active" },
+    Alert: { alert: (title, message) => void alerts.push({ title, message }) },
   },
 })
 mock.module("@react-native-async-storage/async-storage", { defaultExport: memoryStore })
@@ -47,4 +53,10 @@ mock.module("posthog-react-native", {
 
 export function clearNativeMockStorage() {
   storage.clear()
+  alerts.length = 0
+}
+
+/** Alerts raised since the last clearNativeMockStorage(). */
+export function nativeMockAlerts() {
+  return alerts
 }
