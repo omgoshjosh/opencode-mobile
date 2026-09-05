@@ -492,5 +492,8 @@
     "action": "Get it",
     "dismiss": "Not now",
     "upToDate": "Up to date"
+  },
+  "sessionHub": {
+    "markUnread": "Mark as unread"
   }
 }

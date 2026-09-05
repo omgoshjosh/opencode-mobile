@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from "react-native"
 import { Stack, router, useLocalSearchParams } from "expo-router"
 import { Ionicons } from "@expo/vector-icons"
@@ -27,6 +28,19 @@ export default function SessionHubScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const isDark = useColorScheme() === "dark"
   const insets = useSafeAreaInsets()
+
+  const { t } = useTranslation()
+  const readStateSupported = useSessions((s) => s.readStateSupported)
+
+  // Marking from here has to LEAVE the session, not just pop back to it: the
+  // detail screen re-runs selectSession on focus, which is what clears the
+  // mark. Popping once would undo the tap the user just made. dismissTo
+  // unwinds hub + detail together, back to the list where the mark is visible.
+  const markUnreadAndLeave = useCallback(() => {
+    if (!id) return
+    void useSessions.getState().markUnread(id)
+    router.dismissTo("/(tabs)")
+  }, [id])
 
   const currentSession = useSessions((s) => s.currentSession)
   const messages = useSessions((s) => s.messages)
@@ -155,6 +169,20 @@ export default function SessionHubScreen() {
                   isDark={isDark}
                 />
               </View>
+            )}
+
+            {readStateSupported && (
+              <TouchableOpacity
+                style={[s.waitRow, isDark && s.cardDark]}
+                onPress={markUnreadAndLeave}
+                testID="hub-mark-unread"
+                accessibilityRole="button"
+              >
+                <Ionicons name="mail-unread-outline" size={16} color="#8b5cf6" />
+                <View style={s.childText}>
+                  <Text style={[s.childTitle, isDark && s.light]}>{t("sessionHub.markUnread")}</Text>
+                </View>
+              </TouchableOpacity>
             )}
 
             {stats.models.length > 0 && (

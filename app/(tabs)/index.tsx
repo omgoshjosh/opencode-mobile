@@ -73,6 +73,7 @@ import {
   isAttentionWorthShowing,
   type Attention,
 } from "../../src/lib/session-attention"
+import { unreadActionFor, unreadActionLabelKey } from "../../src/lib/session-unread-action"
 import { rowSubtitle, triageDot } from "../../src/lib/session-triage"
 import { runningWorkerCount, workersRunningLabel } from "../../src/lib/background-activity"
 import { SESSION_SORTS, parseSessionSort, sortSessions, type SessionSort } from "../../src/lib/session-sort"
@@ -133,6 +134,26 @@ function useRunningWorkers(sessionID: string): number {
   return useEvents((s) => runningWorkerCount({ parentID: sessionID, statuses: s.sessionStatus, sessions }))
 }
 
+/**
+ * The unread toggle, as a spreadable zero-or-one-item menu fragment.
+ *
+ * Shared because both row variants must offer exactly the same action in the
+ * same position — first, above Rename, since it is the one you reach for while
+ * skimming. The decision itself is pure and tested in
+ * src/lib/session-unread-action.ts.
+ */
+function unreadMenuItem(
+  t: (key: string) => string,
+  session: Session,
+  marked: boolean,
+  supported: boolean,
+  onToggleUnread: (session: Session, marked: boolean) => void,
+) {
+  const action = unreadActionFor({ marked, supported })
+  if (!action) return []
+  return [{ text: t(unreadActionLabelKey(action)), onPress: () => onToggleUnread(session, marked) }]
+}
+
 const SessionItem = memo(function SessionItem({
   session,
   isDark,
@@ -142,6 +163,7 @@ const SessionItem = memo(function SessionItem({
   onToggleWorkers,
   onRename,
   onDelete,
+  onToggleUnread,
 }: {
   session: Session
   isDark: boolean
@@ -153,8 +175,11 @@ const SessionItem = memo(function SessionItem({
   onToggleWorkers: (session: Session) => void
   onRename: (session: Session) => void
   onDelete: (session: Session) => void
+  onToggleUnread: (session: Session, marked: boolean) => void
 }) {
   const { t } = useTranslation()
+  const markedUnreadAt = useSessions((s) => s.readState[session.id]?.markedUnreadAt)
+  const readStateSupported = useSessions((s) => s.readStateSupported)
 
   const onPress = () => {
     router.push({
@@ -166,6 +191,7 @@ const SessionItem = memo(function SessionItem({
   const onLongPress = () => {
     Alert.alert(session.title || t("sessionsList.untitledSession"), undefined, [
       { text: t("common.cancel"), style: "cancel" },
+      ...unreadMenuItem(t, session, markedUnreadAt !== undefined, readStateSupported, onToggleUnread),
       { text: t("sessionsList.actions.rename"), onPress: () => onRename(session) },
       { text: t("common.delete"), style: "destructive", onPress: () => onDelete(session) },
     ])
@@ -207,6 +233,7 @@ const SessionItem = memo(function SessionItem({
     pendingQuestions,
     updatedAt: session.time.updated,
     lastViewedAt,
+    markedUnreadAt,
   })
 
   return (
@@ -324,6 +351,7 @@ const SessionRowV2 = memo(function SessionRowV2({
   onToggleWorkers,
   onRename,
   onDelete,
+  onToggleUnread,
 }: {
   session: Session
   isDark: boolean
@@ -334,10 +362,13 @@ const SessionRowV2 = memo(function SessionRowV2({
   onToggleWorkers: (session: Session) => void
   onRename: (session: Session) => void
   onDelete: (session: Session) => void
+  onToggleUnread: (session: Session, marked: boolean) => void
 }) {
   const { t } = useTranslation()
   const providers = useCatalog((c) => c.providers)
   const preview = useSessions((s) => s.previews[session.id]?.text)
+  const markedUnreadAt = useSessions((s) => s.readState[session.id]?.markedUnreadAt)
+  const readStateSupported = useSessions((s) => s.readStateSupported)
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
   const workersRunning = useRunningWorkers(session.id)
   const busyMeta = useEvents((s) => {
@@ -358,6 +389,7 @@ const SessionRowV2 = memo(function SessionRowV2({
     pendingQuestions,
     updatedAt: session.time.updated,
     lastViewedAt,
+    markedUnreadAt,
   })
   const dot = triageDot(attention, workersRunning)
 
@@ -370,6 +402,17 @@ const SessionRowV2 = memo(function SessionRowV2({
   const draft = useDrafts((d) => d.drafts[session.id]?.text)
   const subtitle = draft ? `✏️ ${draft}` : rowSubtitle(swarmLabel, preview)
 
+  // Hoisted rather than inlined on the prop, matching SessionItem: the menu
+  // now reads store state, and building it inside the JSX buried that.
+  const onLongPress = () => {
+    Alert.alert(session.title || t("sessionsList.untitledSession"), undefined, [
+      { text: t("common.cancel"), style: "cancel" },
+      ...unreadMenuItem(t, session, markedUnreadAt !== undefined, readStateSupported, onToggleUnread),
+      { text: t("sessionsList.actions.rename"), onPress: () => onRename(session) },
+      { text: t("common.delete"), style: "destructive", onPress: () => onDelete(session) },
+    ])
+  }
+
   return (
     <View
       style={[styles.rowV2, depth > 0 && styles.workerItem, isDark && styles.rowV2Dark]}
@@ -381,13 +424,7 @@ const SessionRowV2 = memo(function SessionRowV2({
             params: { id: session.id, ...(session.directory ? { directory: session.directory } : {}) },
           })
         }
-        onLongPress={() =>
-          Alert.alert(session.title || t("sessionsList.untitledSession"), undefined, [
-            { text: t("common.cancel"), style: "cancel" },
-            { text: t("sessionsList.actions.rename"), onPress: () => onRename(session) },
-            { text: t("common.delete"), style: "destructive", onPress: () => onDelete(session) },
-          ])
-        }
+        onLongPress={onLongPress}
         accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunningLabel(workersRunning)}` : ""}`}
         testID={`session-item-${session.id}`}
       >
@@ -908,6 +945,15 @@ export default function SessionsScreen() {
   const handleRename = useCallback((session: Session) => {
     setRenameText(session.title || "")
     setRenaming(session)
+  }, [])
+
+  // Both directions go through the store, which owns the optimistic update,
+  // the revision echo and the revert. Clearing is fire-and-forget by contract;
+  // marking reports its own failure.
+  const handleToggleUnread = useCallback((session: Session, marked: boolean) => {
+    const store = useSessions.getState()
+    if (marked) store.markRead(session.id)
+    else void store.markUnread(session.id)
   }, [])
 
   const submitRename = useCallback(async () => {
@@ -1460,9 +1506,9 @@ export default function SessionsScreen() {
           row.type === "header" ? (
             <GroupHeader row={row} isDark={isDark} onToggle={() => toggleGroup(row.directory)} />
           ) : listV2 ? (
-            <SessionRowV2 session={row.session} depth={row.depth} expanded={expandedRoots.has(row.session.id)} onToggleWorkers={toggleWorkers} isDark={isDark} now={nowTick} onRename={handleRename} onDelete={handleDelete} />
+            <SessionRowV2 session={row.session} depth={row.depth} expanded={expandedRoots.has(row.session.id)} onToggleWorkers={toggleWorkers} isDark={isDark} now={nowTick} onRename={handleRename} onDelete={handleDelete} onToggleUnread={handleToggleUnread} />
           ) : (
-            <SessionItem session={row.session} depth={row.depth} expanded={expandedRoots.has(row.session.id)} onToggleWorkers={toggleWorkers} isDark={isDark} now={nowTick} onRename={handleRename} onDelete={handleDelete} />
+            <SessionItem session={row.session} depth={row.depth} expanded={expandedRoots.has(row.session.id)} onToggleWorkers={toggleWorkers} isDark={isDark} now={nowTick} onRename={handleRename} onDelete={handleDelete} onToggleUnread={handleToggleUnread} />
           )
         }
         refreshControl={
