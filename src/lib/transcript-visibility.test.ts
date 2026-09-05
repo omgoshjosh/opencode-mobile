@@ -46,6 +46,47 @@ test("only complete documented assistant-audience user envelopes are hidden", ()
   assert.equal(isHiddenSyntheticUserMessage({ role: "assistant" }, [{ type: "text", text: "<task>report</task>" }]), false)
 })
 
+test("a human message survives an attached synthetic briefing part", () => {
+  // Exact production shape: swarm sessions append a ~5 KB synthetic briefing
+  // to the human's own text. Hiding on ANY synthetic part erased the message.
+  const message = { role: "user" }
+  const human = { type: "text", text: "Cool. How are computer resources doing?" }
+  const briefing = {
+    type: "text",
+    text: `<swarm-briefing swarm="platform">${"x".repeat(5000)}</swarm-briefing>`,
+    synthetic: true,
+  }
+  assert.equal(isHiddenSyntheticUserMessage(message, [human, briefing]), false)
+  assert.deepEqual(visibleTranscriptEntry(message, [human, briefing]), { message, parts: [human] })
+})
+
+test("a user message with only assistant-audience text stays hidden", () => {
+  const parts = [
+    { type: "text", text: "<swarm-briefing>rules</swarm-briefing>", synthetic: true },
+    { type: "text", text: "<task>report</task>", synthetic: true },
+  ]
+  assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, parts), true)
+  assert.equal(visibleTranscriptEntry({ role: "user" }, parts), undefined)
+})
+
+test("genuine human text alongside compaction bookkeeping stays visible", () => {
+  const message = { role: "user" }
+  const human = { type: "text", text: "Keep going", synthetic: false }
+  const continued = { type: "text", text: "resumed", metadata: { compaction_continue: true } }
+  assert.equal(isHiddenSyntheticUserMessage(message, [human, continued]), false)
+  assert.deepEqual(visibleTranscriptEntry(message, [human, continued])?.parts, [human])
+})
+
+test("a synthetic-only user message with an image still renders", () => {
+  const message = { role: "user" }
+  const parts = [
+    { type: "text", text: "<swarm-briefing>rules</swarm-briefing>", synthetic: true },
+    { type: "file", mime: "image/png" },
+  ]
+  assert.equal(isHiddenSyntheticUserMessage(message, parts), false)
+  assert.deepEqual(visibleTranscriptEntry(message, parts)?.parts, [{ type: "file", mime: "image/png" }])
+})
+
 test("compaction continuation hides only without explicit genuine provenance", () => {
   assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, [{ type: "text", metadata: { compaction_continue: true } }]), true)
   assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, [{ type: "text", synthetic: false, metadata: { compaction_continue: true } }]), false)

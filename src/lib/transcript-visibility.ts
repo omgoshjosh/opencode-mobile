@@ -18,17 +18,32 @@ interface PartLike {
 
 const SYNTHETIC_USER_ENVELOPE = /^\s*<(?:task(?:\s[^>]*)?|swarm-briefing(?:\s[^>]*)?|system-reminder(?:\s[^>]*)?)>[\s\S]*<\/(?:task|swarm-briefing|system-reminder)>\s*$/
 
-/** Internal task reports are user-role messages addressed to an assistant. */
+function isBookkeepingText(part: PartLike): boolean {
+  return Boolean(
+    part.synthetic || part.ignored || (part.synthetic === undefined && part.metadata?.compaction_continue === true),
+  )
+}
+
+function isHiddenUserText(part: PartLike): boolean {
+  return isBookkeepingText(part) || SYNTHETIC_USER_ENVELOPE.test(part.text ?? "")
+}
+
+/**
+ * Internal task reports are user-role messages addressed to an assistant.
+ *
+ * A user message is hidden only when it carries NO reader-visible content:
+ * every text part is assistant-audience (synthetic/ignored/compaction
+ * bookkeeping/envelope) and nothing else renders. Swarm sessions attach a
+ * synthetic briefing part alongside the human's own text — hiding on ANY such
+ * part erased the human's message from the transcript entirely.
+ */
 export function isHiddenSyntheticUserMessage(message: MessageLike, parts: PartLike[] | null | undefined): boolean {
   if (message.role !== "user") return false
-  return (parts ?? []).some(
-    (part) => part.type === "text" && (
-      part.synthetic ||
-      part.ignored ||
-      (part.synthetic === undefined && part.metadata?.compaction_continue === true) ||
-      SYNTHETIC_USER_ENVELOPE.test(part.text ?? "")
-    ),
-  )
+  const all = parts ?? []
+  const textParts = all.filter((part) => part.type === "text")
+  if (textParts.length === 0) return false
+  if (!textParts.every(isHiddenUserText)) return false
+  return visibleTranscriptParts(all.filter((part) => part.type !== "text")).length === 0
 }
 
 export function visibleTranscriptEntry<M extends MessageLike & { time?: { completed?: number } }, P extends PartLike>(
@@ -48,7 +63,9 @@ export function visibleTranscriptEntry<M extends MessageLike & { time?: { comple
 // cards while their reader-visible parts are still absent or never arrive.
 export function visibleTranscriptParts<P extends PartLike>(parts: P[] | null | undefined): P[] {
   return (parts ?? []).filter((part) => {
-    if (part.type === "text") return !part.synthetic && !part.ignored && Boolean(part.text?.trim())
+    // Bookkeeping text (synthetic/ignored/compaction continuation) never
+    // renders — including when it rides along with the human's own text.
+    if (part.type === "text") return !isBookkeepingText(part) && Boolean(part.text?.trim())
     if (part.type === "reasoning") return Boolean(part.text?.trim())
     if (part.type === "tool") return true
     return part.type === "file" && Boolean(part.mime?.startsWith("image/"))
@@ -113,7 +130,7 @@ export function messageNoticeText(
   if (!isFinalizedMessage(message)) return undefined
   if (visibleTranscriptParts(parts).length > 0) return undefined
   const structural = (parts ?? []).some(
-    (part) => part.type === "text" && (part.synthetic || part.ignored) && Boolean(part.text?.trim()),
+    (part) => part.type === "text" && isBookkeepingText(part) && Boolean(part.text?.trim()),
   )
   if (structural) return undefined
   return MISSING_RESPONSE_NOTICE
