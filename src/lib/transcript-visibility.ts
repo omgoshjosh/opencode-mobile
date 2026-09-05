@@ -13,12 +13,29 @@ interface PartLike {
   mime?: string
   synthetic?: boolean
   ignored?: boolean
+  metadata?: Record<string, unknown>
+}
+
+const SYNTHETIC_USER_ENVELOPE = /^\s*<(?:task(?:\s[^>]*)?|swarm-briefing(?:\s[^>]*)?|system-reminder(?:\s[^>]*)?)>[\s\S]*<\/(?:task|swarm-briefing|system-reminder)>\s*$/
+
+/** Internal task reports are user-role messages addressed to an assistant. */
+export function isHiddenSyntheticUserMessage(message: MessageLike, parts: PartLike[] | null | undefined): boolean {
+  if (message.role !== "user") return false
+  return (parts ?? []).some(
+    (part) => part.type === "text" && (
+      part.synthetic ||
+      part.ignored ||
+      (part.synthetic === undefined && part.metadata?.compaction_continue === true) ||
+      SYNTHETIC_USER_ENVELOPE.test(part.text ?? "")
+    ),
+  )
 }
 
 export function visibleTranscriptEntry<M extends MessageLike & { time?: { completed?: number } }, P extends PartLike>(
   message: M,
   parts: P[] | null | undefined,
 ): { message: M; parts: P[] } | undefined {
+  if (isHiddenSyntheticUserMessage(message, parts)) return undefined
   const visible = visibleTranscriptParts(parts)
   // Kept when there is content OR any notice to show (explicit error, or
   // the synthesized missing-response notice for finalized-empty messages).
