@@ -25,3 +25,7 @@ export function statusFromPart(part: Part): string {
   if (part.type === "text") return "Writing..."
   return "Working..."
 }
+
+export function retryStatusLabel(status: { attempt: number; message: string; next: number }): string {
+  return `Retrying (attempt ${status.attempt}): ${status.message}, next at ${new Date(status.next).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+}

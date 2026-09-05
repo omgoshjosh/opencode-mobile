@@ -13,7 +13,7 @@ import { canRefreshPending } from "../lib/focus-read"
 import { send as notify } from "../lib/notifications"
 import { sanitizeBody } from "../lib/notify-format"
 import { notifySessionError } from "../lib/session-error-notification"
-import { statusFromPart } from "../lib/status-labels"
+import { retryStatusLabel, statusFromPart } from "../lib/status-labels"
 import { addBreadcrumb } from "../lib/sentry"
 import { AnalyticsEvent, track } from "../lib/analytics"
 import { recordSuccessfulSession } from "../lib/store-review"
@@ -527,6 +527,9 @@ export const useEvents = create<EventsState>((set, get) => ({
               }
               const next = nextSessionStatus(previous, mergeStatusEvent(previous, status), Date.now())
               set((state) => ({ sessionStatus: { ...state.sessionStatus, [sessionID]: next } }))
+              if (status.type === "retry" && previous?.type !== "retry") {
+                notify({ category: "errors", title: "Retrying", body: retryStatusLabel(status), sessionId: sessionID })
+              }
               // Eager, on every transition: the sessions list must be able to
               // render last-known truth at next cold start.
               persistStatusCache(get().sessionStatus)

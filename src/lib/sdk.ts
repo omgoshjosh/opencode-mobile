@@ -204,7 +204,7 @@ export type BackgroundStatus = { running: number; jobs: Array<{ sessionID: strin
 export type SessionStatus =
   | { type: "idle"; background?: BackgroundStatus }
   | { type: "busy"; since?: number; lastActivityAt?: number; runningTool?: { title?: string; startedAt?: number }; background?: BackgroundStatus }
-  | { type: "retry"; attempt: number; message: string; background?: BackgroundStatus }
+  | { type: "retry"; attempt: number; message: string; next: number; background?: BackgroundStatus }
 
 export interface HealthResponse {
   healthy: boolean
