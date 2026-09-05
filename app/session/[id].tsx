@@ -37,7 +37,7 @@ import {
   type SlashCommand,
   type Attachment,
 } from "../../src/components/chat"
-import { backgroundFor, backgroundJobRouteParams } from "../../src/lib/background-activity"
+import { backgroundFor, backgroundJobRouteParams, runningWorkerCount, workersRunningLabel } from "../../src/lib/background-activity"
 import { extractCopyText, hasCopyableText } from "../../src/lib/message-copy-text"
 import {
   resolveSessionAgent,
@@ -1084,10 +1084,14 @@ export default function SessionScreen() {
   }, [model, providers])
   const routeOwnsSession = currentSession?.id === id
   const activityParentID = routeOwnsSession ? currentSession?.parentID ?? currentSession?.id : undefined
-  const background = useMemo(
-    () => activityParentID ? backgroundFor({ parentID: activityParentID, statuses, sessions, parts: Object.values(parts).flat(), terminalChildIDs }) : undefined,
+  const activityInput = useMemo(
+    () => activityParentID ? { parentID: activityParentID, statuses, sessions, parts: Object.values(parts).flat(), terminalChildIDs } : undefined,
     [activityParentID, statuses, sessions, parts, terminalChildIDs],
   )
+  const background = useMemo(() => activityInput ? backgroundFor(activityInput) : undefined, [activityInput])
+  // The same count the list row shows, from the same selector — the chip and
+  // the row it was opened from can no longer disagree.
+  const workersRunning = useMemo(() => activityInput ? runningWorkerCount(activityInput) : 0, [activityInput])
   const siblings = useMemo(() => (background?.jobs ?? []).flatMap((job) => {
     const session = sessions.find((item) => item.id === job.sessionID)
     return session ? [session] : []
@@ -1118,11 +1122,6 @@ export default function SessionScreen() {
           ),
            headerRight: () => (
             <View style={s.headerRight}>
-              {routeOwnsSession && !currentSession?.parentID && background && background.running > 0 && (
-                <TouchableOpacity style={[s.workingChip, isDark && s.workingChipDark]} onPress={() => jobsSheetRef.current?.expand()} hitSlop={8} accessibilityRole="button" accessibilityLabel={`${background.running} working`} testID="background-jobs-chip">
-                  <Text style={[s.workingChipText, isDark && s.workingChipTextDark]}>{background.running} working</Text>
-                </TouchableOpacity>
-              )}
               {routeOwnsSession && siblingIndex > 0 && <TouchableOpacity onPress={() => moveSibling(-1)} accessibilityLabel="Previous working sibling" style={s.siblingButton}><Ionicons name="chevron-back" size={20} color={isDark ? "#ddd" : "#555"} /></TouchableOpacity>}
               {routeOwnsSession && siblingIndex >= 0 && siblingIndex < siblings.length - 1 && <TouchableOpacity onPress={() => moveSibling(1)} accessibilityLabel="Next working sibling" style={s.siblingButton}><Ionicons name="chevron-forward" size={20} color={isDark ? "#ddd" : "#555"} /></TouchableOpacity>}
               {shortDir && (
@@ -1377,6 +1376,33 @@ export default function SessionScreen() {
               {modelLabel}
             </Text>
           </TouchableOpacity>
+
+          {/* Workers belong with agent and model — this is the third fact about
+              who is working on the session. In the header it was a 12pt badge
+              competing with the title for the notch. One worker has nothing to
+              choose between, so it opens that session directly. */}
+          {routeOwnsSession && !currentSession?.parentID && workersRunning > 0 && (
+            <TouchableOpacity
+              style={[s.workingChip, isDark && s.workingChipDark]}
+              onPress={() => {
+                const job = background?.jobs[0]
+                if (workersRunning === 1 && job) {
+                  router.push({
+                    pathname: "/session/[id]",
+                    params: backgroundJobRouteParams(job, sessions, currentSession?.directory),
+                  })
+                  return
+                }
+                jobsSheetRef.current?.expand()
+              }}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={`${workersRunningLabel(workersRunning)} ›`}
+              testID="background-jobs-chip"
+            >
+              <Text style={[s.workingChipText, isDark && s.workingChipTextDark]}>{`${workersRunningLabel(workersRunning)} ›`}</Text>
+            </TouchableOpacity>
+          )}
 
           {currentModelVariants && Object.keys(currentModelVariants).length > 0 && (
             <TouchableOpacity
