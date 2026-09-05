@@ -41,6 +41,14 @@ export interface SessionListPage {
   nextCursor?: number
 }
 
+export interface SessionListSnapshot {
+  sessions: Session[]
+  // A snapshot is safe for destructive reconciliation only after every global
+  // cursor was consumed. Legacy, disappearing routes, repeated cursors, and
+  // the page ceiling are deliberately fail-closed.
+  complete: boolean
+}
+
 export interface SessionListTransport {
   // GET /experimental/session for ONE page (query carries limit + cursor).
   // Resolves null when the route is absent (HTTP 404 on older servers) so we
@@ -123,11 +131,18 @@ export async function loadSessionList(
   transport: SessionListTransport,
   params?: SessionListParams,
 ): Promise<Session[]> {
+  return (await loadSessionSnapshot(transport, params)).sessions
+}
+
+export async function loadSessionSnapshot(
+  transport: SessionListTransport,
+  params?: SessionListParams,
+): Promise<SessionListSnapshot> {
   // Children are only needed when the caller shows them (Swarm-root
   // grouping); a roots-only view filters server-side and skips the pages.
   const rootsOnly = Boolean(params?.roots && !params.includeChildren)
   const first = await transport.getExperimental(experimentalPageQuery(undefined, rootsOnly))
-  if (first === null) return transport.getLegacy(legacySessionQuery(params))
+  if (first === null) return { sessions: await transport.getLegacy(legacySessionQuery(params)), complete: false }
 
   const seen = new Set<string>()
   const all: Session[] = []
@@ -142,13 +157,21 @@ export async function loadSessionList(
   }
   push(first.sessions)
   let cursor = first.nextCursor
+  const cursors = new Set<number>()
+  let complete = cursor == null
   for (let pageIndex = 1; cursor != null && pageIndex < MAX_GLOBAL_PAGES; pageIndex++) {
+    if (cursors.has(cursor)) break
+    cursors.add(cursor)
     const page = await transport.getExperimental(experimentalPageQuery(cursor, rootsOnly))
     if (page === null) break // route vanished mid-loop: keep what we have
     push(page.sessions)
     // A cursor that does not advance would loop forever; treat as final.
-    if (page.nextCursor == null || page.nextCursor === cursor) break
+    if (page.nextCursor == null) {
+      complete = true
+      break
+    }
+    if (cursors.has(page.nextCursor)) break
     cursor = page.nextCursor
   }
-  return normalizeSessions(all, params)
+  return { sessions: normalizeSessions(all, params), complete }
 }
