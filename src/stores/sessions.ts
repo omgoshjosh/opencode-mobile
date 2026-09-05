@@ -21,6 +21,18 @@ import {
 import { canRenderFromCache, dropTranscript, getTranscript, putTranscript, type TranscriptCache } from "../lib/transcript-cache"
 import { dropPreview, parsePreviewMap, previewFromParts, previewText, putPreview, type PreviewMap } from "../lib/session-preview"
 import { markViewed, parseLastViewed, type LastViewedMap } from "../lib/session-attention"
+import {
+  applyServerState,
+  dropReadState,
+  isMarkedUnread,
+  optimisticMarkRead,
+  optimisticMarkUnread,
+  parseReadState,
+  revisionFor,
+  serializeReadState,
+  type ReadStateMap,
+  type ServerSessionState,
+} from "../lib/session-read-state"
 import { serializeSnapshot, parseSnapshot } from "../lib/list-freshness"
 import { trackToolPart, clearSessionTools, type RunningToolMap } from "../lib/running-tools"
 import { trackWakePart, type PendingWakeMap } from "../lib/pending-wakes"
@@ -33,6 +45,8 @@ import { isHiddenSyntheticUserMessage } from "../lib/transcript-visibility"
 import { warmSessionFor } from "../lib/warm-session"
 import { flushPendingPartStatusForTranscriptBoundary, streamPartKey } from "../lib/stream-part-batching"
 import AsyncStorage from "@react-native-async-storage/async-storage"
+import { Alert } from "react-native"
+import i18n from "../lib/i18n/config"
 
 // Helper to convert API response to our internal format
 function parseMessages(response: MessageWithParts[]): { messages: Message[]; parts: Record<string, Part[]> } {
@@ -51,6 +65,11 @@ function parseMessages(response: MessageWithParts[]): { messages: Message[]; par
 // Holds only session ids and timestamps -- no message text, titles or tool
 // output. See the allowlist in src/lib/persisted-keys.test.ts.
 const LAST_VIEWED_KEY = "session_last_viewed"
+
+// Cache of the server's unread marks — ids, timestamps and revisions only.
+// Purely so a cold start paints marks before hydration returns; the server
+// overwrites it on every event. Same allowlist as above.
+const READ_STATE_KEY = "session_read_state"
 
 // Last-known preview lines, persisted eagerly for cold-start rendering.
 // Bounded by MAX_TRACKED_PREVIEWS via putPreview, so the write stays small.
@@ -82,6 +101,12 @@ const SESSIONS_SNAPSHOT_KEY = "sessions_snapshot"
 
 function persistSessionsSnapshot(sessions: Session[]) {
   AsyncStorage.setItem(SESSIONS_SNAPSHOT_KEY, serializeSnapshot(sessions, Date.now())).catch(() => {})
+}
+
+// Unbatched, unlike previews: marks change on a tap or an SSE event, not per
+// streamed token, so there is no write storm to coalesce.
+function persistReadState(readState: ReadStateMap) {
+  AsyncStorage.setItem(READ_STATE_KEY, serializeReadState(readState)).catch(() => {})
 }
 
 /** putPreview + scheduled persist in one step, for use inside set() updaters. */
@@ -129,6 +154,14 @@ interface SessionsState {
   // into "updated since you looked", which is what separates a finished run
   // you still need to read from one you're done with.
   lastViewed: LastViewedMap
+  // Server-owned "leave this unread" marks, mirrored locally so a row can
+  // render before hydration lands. The server is authoritative — this is a
+  // cache plus an optimistic overlay, never the source of truth.
+  readState: ReadStateMap
+  // False once a connection has answered 404 for the read-state route: the
+  // daemon predates it. Drives hiding the menu item rather than offering an
+  // action that can only fail.
+  readStateSupported: boolean
   error: string | null
   // Where the rows in `sessions` came from and when — the inputs to the
   // list's staleness banner (src/lib/list-freshness.ts). The UI must be able
@@ -144,6 +177,12 @@ interface SessionsState {
   reconcileSessions: (lifecycle: number) => Promise<string[]>
   removeSession: (sessionID: string) => void
   loadLastViewed: () => Promise<void>
+  /** Send a session back to the unread queue. Reverts and alerts on failure. */
+  markUnread: (sessionID: string) => Promise<void>
+  /** Clear the mark. Fire-and-forget: never throws, never blocks opening. */
+  markRead: (sessionID: string) => void
+  /** Fold a server state in — from a PATCH echo, SSE, or hydration. */
+  applyServerReadState: (state: ServerSessionState) => void
   selectSession: (sessionID: string, directory?: string, signal?: AbortSignal) => Promise<boolean>
   loadOlderMessages: () => Promise<void>
   createSession: (title?: string) => Promise<Session | null>
@@ -315,6 +354,59 @@ export function enqueueStreamPart(part: Part, receivedAt = Date.now()) {
   if (!streamPartTimer) streamPartTimer = setTimeout(flushStreamPartUpdates, STREAM_PART_FLUSH_WINDOW_MS)
 }
 
+// Connections whose read state has already been hydrated. Hydration is a
+// per-connection capability probe plus a bulk read; repeating it on every
+// pull-to-refresh would cost a request per directory for data SSE already
+// keeps current.
+const hydratedReadStateConnections = new Set<string>()
+
+/**
+ * Best-effort bulk read of the unread marks for the loaded roots.
+ *
+ * One request per distinct directory, because the card-state route is scoped to
+ * a project. Entirely optional: a 404 means an old daemon (and disables the
+ * feature for this connection), and any other failure just leaves the cached
+ * marks in place until SSE or the next connection corrects them.
+ */
+async function hydrateReadState(connectionID: string | undefined, sessions: Session[]) {
+  const key = connectionID ?? "default"
+  if (hydratedReadStateConnections.has(key)) return
+  hydratedReadStateConnections.add(key)
+
+  const store = useSessions.getState()
+  const directories = [...new Set(sessions.map((session) => session.directory).filter((d): d is string => Boolean(d)))]
+
+  for (const directory of directories) {
+    if (!useSessions.getState().readStateSupported) return
+    const client = clientFor(directory)
+    if (!client) continue
+    try {
+      const page = await client.sessionState.hydrate(directory)
+      if (!page) {
+        useSessions.setState({ readStateSupported: false })
+        return
+      }
+      for (const state of Object.values(page.sessionUiState ?? {})) {
+        // The card route names the revision `revision`; the update route and
+        // the SSE event both call the same number `timeUpdated`.
+        store.applyServerReadState({
+          sessionID: state.sessionID,
+          markedUnreadAt: state.markedUnreadAt,
+          timeUpdated: state.revision,
+        })
+      }
+    } catch {
+      // Opportunistic. Cached marks stand.
+    }
+  }
+}
+
+// Reset when the active connection changes so a reconnect re-probes rather
+// than trusting a capability answer from a different server.
+export function resetReadStateHydration() {
+  hydratedReadStateConnections.clear()
+}
+
 // Get the right client for a session's directory
 function clientFor(directory?: string): Client | null {
   const connState = useConnections.getState()
@@ -338,6 +430,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
   transcriptCache: {},
   previews: {},
   lastViewed: {},
+  readState: {},
+  readStateSupported: true,
   runningTools: {},
   pendingWakes: {},
   error: null,
@@ -359,6 +453,18 @@ export const useSessions = create<SessionsState>((set, get) => ({
   loadLastViewed: async () => {
     try {
       set({ lastViewed: parseLastViewed(await AsyncStorage.getItem(LAST_VIEWED_KEY)) })
+    } catch {
+      // Read state is a convenience; failing to restore it must not block the
+      // session list from rendering.
+    }
+    // Unread marks ride the same boot path, for the same reason: the row should
+    // paint its mark from disk rather than flicker read until hydration lands.
+    // Live entries win — a mark applied this session is newer than the cache.
+    try {
+      const cached = parseReadState(await AsyncStorage.getItem(READ_STATE_KEY))
+      if (Object.keys(cached).length > 0) {
+        set((state) => ({ readState: { ...cached, ...state.readState } }))
+      }
     } catch {
       // Read state is a convenience; failing to restore it must not block the
       // session list from rendering.
@@ -393,6 +499,95 @@ export const useSessions = create<SessionsState>((set, get) => ({
     }
   },
 
+  applyServerReadState: (state) => {
+    set((prev) => {
+      const readState = applyServerState(prev.readState, state)
+      if (readState === prev.readState) return {}
+      persistReadState(readState)
+      return { readState }
+    })
+  },
+
+  markUnread: async (sessionID) => {
+    const session = get().sessions.find((s) => s.id === sessionID) ?? (get().currentSession?.id === sessionID ? get().currentSession : undefined)
+    const client = clientFor(session?.directory)
+    if (!client) {
+      set({ error: "No active connection" })
+      return
+    }
+
+    // Show it immediately: the mark is the whole point of the tap, and a
+    // round-trip's worth of "did that work?" is worse than a rare revert.
+    const before = get().readState
+    const optimistic = optimisticMarkUnread(before, sessionID, Date.now())
+    set({ readState: optimistic })
+    persistReadState(optimistic)
+
+    try {
+      const state = await client.sessionState.update(sessionID, {
+        markedUnread: true,
+        // Echoing the revision we last saw is what makes a retry idempotent
+        // and stops a stale client resurrecting a mark someone else cleared.
+        expectedRevision: revisionFor(before, sessionID),
+      })
+      if (!state) {
+        // 404: this daemon has no read-state route. Stop offering the action
+        // instead of leaving a mark the server will never know about.
+        set((prev) => ({ readState: dropReadState(prev.readState, sessionID), readStateSupported: false }))
+        persistReadState(get().readState)
+        return
+      }
+      get().applyServerReadState(state)
+    } catch (error) {
+      // Anything else is a real failure: put the row back the way the user
+      // found it, and say so rather than leaving a mark that does not exist.
+      set({ readState: before })
+      persistReadState(before)
+      Alert.alert(i18n.t("common.error"), i18n.t("sessionsList.alerts.markUnreadFailedMessage"))
+    }
+  },
+
+  markRead: (sessionID) => {
+    const session = get().sessions.find((s) => s.id === sessionID) ?? (get().currentSession?.id === sessionID ? get().currentSession : undefined)
+    const client = clientFor(session?.directory)
+    if (!client || !get().readStateSupported) return
+
+    const before = get().readState
+    // Only an explicit mark needs clearing. Sessions the user has simply never
+    // marked would otherwise write a pointless revision bump on every open.
+    if (isMarkedUnread(before, sessionID)) {
+      const optimistic = optimisticMarkRead(before, sessionID)
+      set({ readState: optimistic })
+      persistReadState(optimistic)
+    }
+
+    // This runs inside selectSession's try block, so a synchronous throw here
+    // would surface to the user as "Failed to load session" for a session that
+    // loaded perfectly. Opening must never fail because a read stamp did — the
+    // next open, or any SSE event, re-converges it.
+    try {
+      // Clearing is `seenAt`, not `markedUnread: false`, so it stays truthful
+      // under a race: the server only drops a mark whose timestamp this seen
+      // stamp actually covers. Stamped at least at the session's own updated
+      // time so a mark placed against activity we HAVE loaded clears cleanly.
+      void client.sessionState
+        ?.update(sessionID, {
+          seenAt: Math.max(session?.time?.updated ?? 0, Date.now()),
+          expectedRevision: revisionFor(before, sessionID),
+        })
+        .then((state) => {
+          if (!state) {
+            set({ readStateSupported: false })
+            return
+          }
+          get().applyServerReadState(state)
+        })
+        .catch(() => {})
+    } catch {
+      // As above.
+    }
+  },
+
   loadSessions: async () => {
     const connState = useConnections.getState()
     // Use a directory-less client so the server returns sessions from ALL projects,
@@ -423,6 +618,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
       const liveSessions = sessions.filter((session) => !session.parentID && !deletedSessionIDs.has(session.id))
       set({ sessions: liveSessions, isLoading: false, listSource: "network", listAsOf: Date.now(), listLoadFailed: false })
       persistSessionsSnapshot(liveSessions)
+      // Unread marks are not on /session/tree or /session/:id — the card-state
+      // route is the only way to learn them, so hydrate once the roots (and
+      // therefore the set of directories worth asking about) are known.
+      void hydrateReadState(connState.activeConnection?.id, liveSessions)
     } catch (error) {
       if (seq !== listLoadSeq) return
       // Keep whatever rows are on screen (previous load or disk snapshot) —
@@ -484,6 +683,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
     set((state) => {
       const current = state.currentSession?.id === sessionID
       const lastViewed = Object.fromEntries(Object.entries(state.lastViewed).filter(([id]) => id !== sessionID))
+      const readState = dropReadState(state.readState, sessionID)
       const next = {
         sessions: state.sessions.filter((session) => session.id !== sessionID),
         currentSession: current ? null : state.currentSession,
@@ -497,8 +697,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
         runningTools: clearSessionTools(state.runningTools, sessionID),
         pendingWakes: Object.fromEntries(Object.entries(state.pendingWakes).filter(([id]) => id !== sessionID)),
         lastViewed,
+        readState,
       }
       persistSessionsSnapshot(next.sessions)
+      persistReadState(readState)
       AsyncStorage.setItem(LAST_VIEWED_KEY, JSON.stringify(lastViewed)).catch(() => {})
       AsyncStorage.setItem(PREVIEWS_KEY, JSON.stringify(next.previews)).catch(() => {})
       return next
@@ -614,6 +816,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
       const viewedAt = Math.max(session.time?.updated ?? 0, get().lastViewed[sessionID] ?? 0)
       const nextViewed = markViewed(get().lastViewed, sessionID, viewedAt)
       AsyncStorage.setItem(LAST_VIEWED_KEY, JSON.stringify(nextViewed)).catch(() => {})
+      // Opening it is also what clears a server-side mark, so every device
+      // agrees. Fire-and-forget by contract: it must not be able to fail the
+      // open, which is why it sits after the local stamp rather than gating it.
+      get().markRead(sessionID)
 
       set((state) => ({
         lastViewed: nextViewed,

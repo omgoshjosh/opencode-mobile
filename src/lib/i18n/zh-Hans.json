@@ -291,7 +291,9 @@
     },
     "filesCount": "{{count}} 个文件",
     "actions": {
-      "rename": "重命名"
+      "rename": "重命名",
+      "markUnread": "标记为未读",
+      "markRead": "标记为已读"
     },
     "alerts": {
       "renameFailedTitle": "重命名失败",
@@ -300,7 +302,8 @@
       "deleteMessage": "删除 \"{{title}}\"？",
       "deleteFailedTitle": "删除失败",
       "deleteFailedMessage": "无法删除该会话。请重试。",
-      "createFailedMessage": "创建会话失败。请检查网络连接后重试。"
+      "createFailedMessage": "创建会话失败。请检查网络连接后重试。",
+      "markUnreadFailedMessage": "无法将该会话标记为未读，请重试。"
     },
     "empty": {
       "noConnectionTitle": "无连接",
@@ -489,5 +492,8 @@
     "action": "去获取",
     "dismiss": "暂不",
     "upToDate": "已是最新"
+  },
+  "sessionHub": {
+    "markUnread": "标记为未读"
   }
 }

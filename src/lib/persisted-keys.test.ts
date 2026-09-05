@@ -49,6 +49,12 @@ const ALLOWED_ASYNC_KEYS = new Map<string, string>([
   ["GROUP_MODE_KEY", "sessions list: chosen group-by mode"],
   ["DISMISSED_KEY", "update banner: version the user dismissed"],
   ["LAST_VIEWED_KEY", "sessionID -> last-opened timestamp; ids and numbers only, no content"],
+  [
+    "READ_STATE_KEY",
+    // Cache of a server-owned flag, not a client decision: the daemon holds
+    // the authoritative mark and overwrites this on every event.
+    "sessionID -> {markedUnreadAt, revision} unread marks; ids and numbers only, no content",
+  ],
   ["SESSION_FILTER_KEY", "sessions list: hide-subagents flag + chosen status names"],
   ["DRAFTS_KEY", "composer drafts: the user's own half-typed prompts, per session; never model output"],
   ["STATUS_CACHE_KEY", "last-known busy sessions for cold-start list rendering; ids and a type tag only"],

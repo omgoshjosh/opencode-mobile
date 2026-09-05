@@ -291,7 +291,9 @@
     },
     "filesCount": "{{count}} files",
     "actions": {
-      "rename": "Rename"
+      "rename": "Rename",
+      "markUnread": "Mark as unread",
+      "markRead": "Mark as read"
     },
     "alerts": {
       "renameFailedTitle": "Rename failed",
@@ -300,7 +302,8 @@
       "deleteMessage": "Delete \"{{title}}\"?",
       "deleteFailedTitle": "Delete failed",
       "deleteFailedMessage": "Could not delete the session. Please try again.",
-      "createFailedMessage": "Failed to create session. Check your connection and try again."
+      "createFailedMessage": "Failed to create session. Check your connection and try again.",
+      "markUnreadFailedMessage": "Could not mark the session unread. Please try again."
     },
     "empty": {
       "noConnectionTitle": "No Connection",
@@ -489,5 +492,8 @@
     "action": "Get it",
     "dismiss": "Not now",
     "upToDate": "Up to date"
+  },
+  "sessionHub": {
+    "markUnread": "Mark as unread"
   }
 }
