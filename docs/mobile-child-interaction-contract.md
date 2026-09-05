@@ -37,10 +37,14 @@ titles or from a parent merely being busy.
 ## Child and Card Filtering
 
 - A root is a session with no `parentID`.
-- The list renders roots first. A child is eligible only when its `parentID`
-  matches the visible root being expanded. A child from another root, an
-  unknown parent, or a deleted ID is discarded; it cannot become a phantom
-  root (`src/stores/sessions.ts:412`, `424-435`).
+- The list renders roots first. A child fetched while expanding a root is
+  eligible for visible child rows only when its `parentID` matches that root;
+  unrelated fetched children are filtered from that response. A
+  `session.created` event can still retain a child with an unknown or
+  currently non-visible parent in the store, but `session-worker-rows.ts`
+  prevents it from rendering as a root. Deleted IDs are removed from the
+  visible store (`src/stores/sessions.ts:412`, `424-435`, `1029-1035`,
+  `src/lib/session-worker-rows.ts:6-19`).
 - `src/lib/session-worker-rows.ts` intentionally exposes direct children only,
   at depth 1. Collapsed children never appear as roots. The hub likewise lists
   direct children only (`app/session-hub/[id].tsx:55-61`); grandchildren are
@@ -82,20 +86,21 @@ invent a new status variant.
 ## Reconnect Reconciliation
 
 SSE does not replay the interval before a newly connected stream. On the first
-live event after reconnect, the client therefore:
+live event after reconnect, the client starts several independent,
+best-effort reconciliation operations concurrently: busy sessions are checked
+with one bounded newest message page and busy is cleared only when the final
+message proves the session is idle (`src/stores/events.ts:305-360`); the open
+transcript is reconciled once by merging a bounded page without resetting
+pagination or deleting optimistic content (`src/lib/reconnect-transcript.ts:19-31`);
+status is hydrated; and one complete session-list snapshot removes rows that
+vanished while disconnected, except the currently open session
+(`src/stores/events.ts:489-505`, `src/stores/sessions.ts:442-460`).
 
-1. Resynchronizes sessions the client believes are busy by fetching one
-   bounded newest message page and clears busy only when the final message
-   proves the session is actually idle (`src/stores/events.ts:305-360`).
-2. Reconciles the currently open transcript once. The bounded page is merged
-   into existing messages and parts without resetting pagination or deleting
-   optimistic content (`src/lib/reconnect-transcript.ts:19-31`).
-3. Performs one complete session-list snapshot and removes rows that vanished
-   while disconnected, except the currently open session (`src/stores/events.ts:499-505`,
-   `src/stores/sessions.ts:442-460`).
-4. Hydrates status and pending permission/question state when the session is
-   opened. `resume()` also reconciles the open transcript even when the SSE
-   socket remained live (`src/stores/events.ts:766-777`).
+These operations may overlap and complete in any order. They are best-effort:
+failed requests preserve usable state. Lifecycle tokens, transcript revisions,
+active-session checks, and single-flight coordination are the correctness
+guards, not operation ordering. `resume()` also reconciles the open transcript
+even when the SSE socket remained live (`src/stores/events.ts:766-777`).
 
 Live events win over an in-flight GET. Lifecycle tokens, transcript revisions,
 the single-flight transcript coordinator, and active-session checks prevent a
@@ -111,10 +116,12 @@ coalesced by part ID and the newest part version wins
 - Repeated child loads replace the root's child set rather than append it.
   Repeated transcript reconciliation deduplicates parts by ID and preserves
   existing pagination (`src/lib/reconnect-transcript.ts:20-31`).
-- Only HTTP 404 is treated as a missing capability. `session.tree()` falls
-  back to the root list; live children fall back to the plain children route,
-  then to no child data. Other errors propagate, so authentication and server
-  failures are not silently reclassified (`src/lib/sdk.ts:499-556`).
+- At the SDK boundary, only HTTP 404 is treated as a missing capability.
+  `session.tree()` falls back to the root list; live children fall back to the
+  plain children route, then to `null`. Non-404 SDK errors are rethrown
+  (`src/lib/sdk.ts:499-556`). At the store boundary,
+  `loadSessionChildren()` catches every resulting error and preserves the
+  usable root without surfacing the error (`src/stores/sessions.ts:424-439`).
 - The global experimental session list itself falls back to legacy `/session`
   only on 404 (`src/lib/sdk.ts:461-497`). Message paging retries once without
   `partBudget` when the server rejects that optional parameter, then remembers
@@ -130,8 +137,9 @@ The existing tests are the executable references for these cases:
 - `src/lib/sdk-session-worker.test.ts`: live tree 404 falls back to roots;
   live children 404 falls back to plain children; non-404 errors remain
   errors.
-- `src/stores/sessions-workers.integration.test.ts`: only matching children
-  are retained, and a child never becomes a root.
+- `src/stores/sessions-workers.integration.test.ts`: only matching fetched
+  children are rendered in the expanded root list, and a child never becomes
+  a root.
 - `src/lib/session-worker-rows.test.ts`: collapsed roots hide children and
   direct children render at depth 1.
 - `src/lib/subagent-link.test.ts`: missing metadata is non-openable; running,
