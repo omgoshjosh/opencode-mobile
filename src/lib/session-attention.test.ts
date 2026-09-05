@@ -13,6 +13,32 @@ import {
   type LastViewedMap,
 } from "./session-attention.ts"
 
+// --- explicitly marked unread ---
+
+// The reader has already opened this session -- which is what stamps
+// lastViewedAt -- and asked for it back anyway. The activity heuristic cannot
+// express that, so the mark has to beat it.
+test("an explicit mark beats a lastViewed stamp that would read as idle", () => {
+  assert.equal(attentionFor({ status: "idle", updatedAt: 10, lastViewedAt: 99, markedUnreadAt: 500 }), "complete")
+})
+
+test("an explicit mark makes a never-updated session complete", () => {
+  assert.equal(attentionFor({ status: "idle", markedUnreadAt: 500 }), "complete")
+})
+
+// A marked session that is now blocked, or running, is a more urgent fact
+// about it than "you wanted to re-read this".
+test("needs-attention and busy still outrank an explicit mark", () => {
+  assert.equal(attentionFor({ status: "idle", pendingPermissions: 1, markedUnreadAt: 500 }), "needs-attention")
+  assert.equal(attentionFor({ status: "busy", markedUnreadAt: 500 }), "busy")
+  assert.equal(attentionFor({ status: "retry", markedUnreadAt: 500 }), "retry")
+})
+
+test("no mark leaves the lastViewed heuristic exactly as it was", () => {
+  assert.equal(attentionFor({ status: "idle", updatedAt: 10, lastViewedAt: 99 }), "idle")
+  assert.equal(attentionFor({ status: "idle", updatedAt: 100, lastViewedAt: 99 }), "complete")
+})
+
 // --- blocked on the user ---
 
 test("a pending permission means the session needs you", () => {

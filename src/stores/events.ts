@@ -620,6 +620,21 @@ export const useEvents = create<EventsState>((set, get) => ({
               break
             }
 
+            // Read state is server-owned and shared across every client the
+            // user has open, so the mark has to arrive by event rather than
+            // only as the response to our own write.
+            case "opencodex.session_state.updated": {
+              const state = props.state as { sessionID?: string; markedUnreadAt?: number; timeUpdated?: number } | undefined
+              const sessionID = (state?.sessionID ?? props.sessionID) as string | undefined
+              if (!sessionID || typeof state?.timeUpdated !== "number") break
+              useSessions.getState().applyServerReadState({
+                sessionID,
+                markedUnreadAt: state.markedUnreadAt,
+                timeUpdated: state.timeUpdated,
+              })
+              break
+            }
+
             case "session.deleted": {
               const sessionID = (props.sessionID || props.info?.id) as string | undefined
               if (!sessionID) break
