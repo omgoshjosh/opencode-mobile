@@ -50,9 +50,10 @@ export function resolveSessionAgent(input: {
   selectionTouched?: boolean
 }): string | null {
   if (input.selectionTouched) return null
-  const agent = input.lastUserMessageAgent || input.sessionAgent
-  if (!agent) return null
-  return input.availableAgents.includes(agent) ? agent : null
+  // The last message's agent can name one the catalog no longer offers; the
+  // session's own agent is the next best answer, not a reason to give up.
+  const candidates = [input.lastUserMessageAgent, input.sessionAgent]
+  return candidates.find((agent) => !!agent && input.availableAgents.includes(agent)) || null
 }
 
 export function sessionPromptSelection(input: {

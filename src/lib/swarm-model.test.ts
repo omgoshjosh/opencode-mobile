@@ -116,6 +116,19 @@ test("falls back to session.agent when the transcript records no agent", () => {
   )
 })
 
+test("falls back to session.agent when the last message names a retired agent", () => {
+  // Dropping "goal" from the catalog used to blank the chip entirely, even
+  // though the session's own agent was still on offer.
+  assert.equal(
+    resolveSessionAgent({
+      lastUserMessageAgent: "goal",
+      sessionAgent: "build",
+      availableAgents: ["build", "plan"],
+    }),
+    "build",
+  )
+})
+
 test("a late session hydration cannot overwrite a mode the user selected", () => {
   assert.equal(
     resolveSessionAgent({

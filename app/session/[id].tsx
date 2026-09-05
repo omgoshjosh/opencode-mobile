@@ -1397,7 +1397,7 @@ export default function SessionScreen() {
               }}
               hitSlop={8}
               accessibilityRole="button"
-              accessibilityLabel={`${workersRunningLabel(workersRunning)} ›`}
+              accessibilityLabel={workersRunningLabel(workersRunning)}
               testID="background-jobs-chip"
             >
               <Text style={[s.workingChipText, isDark && s.workingChipTextDark]}>{`${workersRunningLabel(workersRunning)} ›`}</Text>
