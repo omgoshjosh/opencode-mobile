@@ -124,6 +124,23 @@ test("a late reconnect response cannot overwrite a newly selected session", asyn
   assert.deepEqual(state.messages.map((item) => item.id), ["two"])
 })
 
+test("a snapshot replaces a transient synthetic user envelope without duplicates", () => {
+  const internal = { ...message("report"), role: "user" as const }
+  const state = {
+    messages: [internal],
+    parts: { report: [{ id: "report-part", messageID: "report", type: "text" as const, text: '<task id="x">internal</task>' }] },
+  }
+  const response = [
+    { info: internal, parts: [{ id: "report-part", messageID: "report", type: "text" as const, text: '<task id="x">internal</task>' }] },
+    ...page("answer", "answer"),
+  ]
+
+  const merged = mergeReconciledTranscript(state, response)
+  assert.deepEqual(merged.messages.map((item) => item.id), ["answer"])
+  assert.equal(merged.parts.report, undefined)
+  assert.deepEqual(merged.parts.answer.map((part) => part.id), ["p-answer"])
+})
+
 test("older-page API call keeps its cursor and merges beneath a reconnect page", async () => {
   const calls: Array<{ limit: number; before?: string }> = []
   const client = { session: { messagesPage: async (_sessionID: string, options: { limit: number; before?: string }) => {

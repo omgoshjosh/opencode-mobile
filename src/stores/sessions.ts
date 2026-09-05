@@ -29,6 +29,7 @@ import { createFocusReadCoordinator } from "../lib/focus-read"
 import { isTranscriptActive, nextActiveTranscript, shouldApplyTranscriptSnapshot } from "../lib/transcript-focus"
 import { createOpenTranscriptReconciler } from "../lib/open-transcript-reconcile"
 import { mergeReconciledTranscript } from "../lib/reconnect-transcript"
+import { isHiddenSyntheticUserMessage } from "../lib/transcript-visibility"
 import { warmSessionFor } from "../lib/warm-session"
 import { flushPendingPartStatusForTranscriptBoundary, streamPartKey } from "../lib/stream-part-batching"
 import AsyncStorage from "@react-native-async-storage/async-storage"
@@ -39,6 +40,7 @@ function parseMessages(response: MessageWithParts[]): { messages: Message[]; par
   const parts: Record<string, Part[]> = {}
 
   for (const item of response || []) {
+    if (isHiddenSyntheticUserMessage(item.info, item.parts)) continue
     messages.push(item.info)
     parts[item.info.id] = item.parts || []
   }
@@ -235,6 +237,7 @@ function flushStreamPartUpdates() {
     let previews = state.previews
     let runningTools = state.runningTools
     let pendingWakes = state.pendingWakes
+    let messages = state.messages
     let parts = state.parts
     let transcriptChanged = false
     for (const [key, { part, receivedAt }] of updates) {
@@ -243,6 +246,14 @@ function flushStreamPartUpdates() {
       // outgoing transcript while that request is in flight.
       if (selectingSessionID === part.sessionID && state.currentSession?.id !== part.sessionID) {
         pendingParts.set(key, { part, receivedAt })
+        continue
+      }
+      const message = state.messages.find((item) => item.id === part.messageID)
+      if (message && isHiddenSyntheticUserMessage(message, [...(parts[part.messageID] ?? []), part])) {
+        if (!transcriptChanged) parts = { ...parts }
+        delete parts[part.messageID]
+        messages = messages.filter((item) => item.id !== part.messageID)
+        transcriptChanged = true
         continue
       }
       if (part.sessionID && part.type === "text") {
@@ -272,7 +283,7 @@ function flushStreamPartUpdates() {
       ...(previews !== state.previews ? { previews } : null),
       ...(runningTools !== state.runningTools ? { runningTools } : null),
       ...(pendingWakes !== state.pendingWakes ? { pendingWakes } : null),
-      ...(transcriptChanged ? { parts, isLoading: false } : null),
+      ...(transcriptChanged ? { messages, parts, isLoading: false } : null),
     }
   })
 }
@@ -1060,7 +1071,9 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
         bumpTranscriptRevision(currentSession.id)
         set((state) => ({
-          messages: mergeIncomingMessage(state.messages, message),
+          messages: isHiddenSyntheticUserMessage(message, state.parts[message.id])
+            ? state.messages.filter((item) => item.id !== message.id)
+            : mergeIncomingMessage(state.messages, message),
           // A live update for the session on screen is proof it has content
           // to show — clear any stuck spinner even if the initial (or a
           // redundant re-focus) GET hasn't resolved yet, or never does

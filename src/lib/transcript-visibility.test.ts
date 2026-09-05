@@ -4,6 +4,7 @@ import {
   MISSING_RESPONSE_NOTICE,
   messageErrorText,
   messageNoticeText,
+  isHiddenSyntheticUserMessage,
   visibleTranscriptEntry,
   visibleTranscriptParts,
 } from "./transcript-visibility.ts"
@@ -34,6 +35,13 @@ test("synthetic ignored and compaction-only content is filtered", () => {
     ]),
     [],
   )
+})
+
+test("only complete documented assistant-audience user envelopes are hidden", () => {
+  assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, [{ type: "text", text: '<task id="x">report</task>' }]), true)
+  assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, [{ type: "text", text: "<swarm-briefing>rules</swarm-briefing>" }]), true)
+  assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, [{ type: "text", text: "Please mention <task> in the docs" }]), false)
+  assert.equal(isHiddenSyntheticUserMessage({ role: "assistant" }, [{ type: "text", text: "<task>report</task>" }]), false)
 })
 
 test("an assistant message remains hidden until a visible part arrives", () => {

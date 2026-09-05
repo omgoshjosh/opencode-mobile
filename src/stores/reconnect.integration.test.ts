@@ -8,6 +8,7 @@ let useConnections: typeof import("./connections").useConnections
 let useEvents: typeof import("./events").useEvents
 let useSessions: typeof import("./sessions").useSessions
 let useSettings: typeof import("./settings").useSettings
+let flushPendingStreamParts: typeof import("./sessions").flushPendingStreamParts
 
 function session(id: string): Session {
   return { id, slug: id, projectID: "project", directory: "/project", title: id, version: "1", time: { created: 1, updated: 1 } }
@@ -60,6 +61,7 @@ before(async () => {
   ;({ useConnections } = await import("./connections"))
   ;({ useEvents } = await import("./events"))
   ;({ useSessions } = await import("./sessions"))
+  ;({ flushPendingStreamParts } = await import("./sessions"))
   ;({ useSettings } = await import("./settings"))
 })
 
@@ -152,6 +154,22 @@ test("a live SSE update wins while lifecycle reconciliation is in flight", async
   await reconciliation
 
   assert.deepEqual(useSessions.getState().messages.map((item) => item.id), ["live"])
+})
+
+test("live synthetic user content is removed and a snapshot cannot restore it", async () => {
+  const client = { session: { messagesPage: async () => ({ items: [{
+    info: { ...message("internal"), role: "user" as const },
+    parts: [{ id: "internal-part", messageID: "internal", type: "text" as const, text: '<swarm-briefing>internal</swarm-briefing>' }],
+  }], nextCursor: undefined }) } }
+  useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
+  useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1", messages: [{ ...message("internal"), role: "user" }] })
+
+  useSessions.getState().handleEvent({ type: "message.part.updated", properties: { part: { id: "internal-part", sessionID: "s1", messageID: "internal", type: "text", text: '<swarm-briefing>internal</swarm-briefing>' } } } as never)
+  flushPendingStreamParts()
+  await useSessions.getState().reconcileOpenMessages()
+
+  assert.deepEqual(useSessions.getState().messages, [])
+  assert.equal(useSessions.getState().parts.internal, undefined)
 })
 
 test("overlapping lifecycle reconciliations are idempotent and preserve pagination", async () => {
