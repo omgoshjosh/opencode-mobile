@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { backgroundFor, backgroundJobRouteParams, mergeStatusEvent, mergeStatusSnapshot } from "./background-activity.ts"
+import { backgroundFor, backgroundJobRouteParams, compareJobs, mergeStatusEvent, mergeStatusSnapshot } from "./background-activity.ts"
 
 const parent = "parent"
 const child = (id: string) => ({ id, parentID: parent, title: id, agent: "general", time: { created: 1, updated: 20 } }) as any
@@ -150,4 +150,28 @@ test("swarm role derives a useful task title", () => {
     parts: [{ type: "tool", tool: "task", state: { status: "running", input: { swarm_role: "QA", prompt: "Review background activity" }, metadata: { sessionId: "child" } } } as any],
   })
   assert.equal(result?.jobs[0].title, "Task QA: Review background activity")
+})
+
+test("malformed modern jobs render safe placeholders and sort deterministically", () => {
+  const result = backgroundFor({
+    parentID: parent,
+    sessions: [],
+    statuses: { [parent]: { type: "busy", background: { running: 3, jobs: [
+      { role: "Goomba - Code (Implementer)", title: "Task Goomba - Code (Implementer): ...", owner: "local:65121:...:run_06fc..." },
+      null,
+      { role: null, title: null, owner: null, since: null },
+    ] } } } as any,
+  })
+  assert.deepEqual(result, {
+    running: 3,
+    jobs: [
+      { sessionID: "background-job-2", role: "Background worker", title: "Background task", since: 0, status: "busy" },
+      { sessionID: "background-job-3", role: "Background worker", title: "Background task", since: 0, status: "busy" },
+      { sessionID: "local:65121:...:run_06fc...", role: "Goomba - Code (Implementer)", title: "Task Goomba - Code (Implementer): ...", since: 0, status: "busy" },
+    ],
+  })
+})
+
+test("job comparison tolerates null fields without throwing", () => {
+  assert.doesNotThrow(() => [{}, null, { title: null, owner: null }].sort(compareJobs))
 })

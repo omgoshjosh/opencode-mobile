@@ -467,7 +467,7 @@ export function createClient(config: ClientConfig) {
       // loadSessionList; we fetch /experimental/session with no query params
       // because the server applies `limit` before we can filter to roots.
       // Falls back to the legacy /session path only on 404 (older servers).
-      list: (params?: { roots?: boolean; limit?: number; search?: string; includeChildren?: boolean }): Promise<Session[]> =>
+      list: (params?: { roots?: boolean; limit?: number; search?: string }): Promise<Session[]> =>
         loadSessionList(
           {
             // One page per call; loadSessionList drives the cursor loop. The
@@ -495,6 +495,17 @@ export function createClient(config: ClientConfig) {
           },
           params,
         ),
+
+      // Tree support shipped before live child state. A 404 is capability
+      // detection, not a failed list request: callers retain the legacy path.
+      tree: async (): Promise<Session[] | null> => {
+        try {
+          return await request<Session[]>(config, "/session/tree?live=true")
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 404) return null
+          throw err
+        }
+      },
 
         // Unlike list(), this exposes whether the global cursor walk was
         // exhaustive. It is used only by reconnect cleanup, never by filtered UI.
@@ -527,14 +538,22 @@ export function createClient(config: ClientConfig) {
          }
        },
 
-       children: async (sessionID: string, signal?: AbortSignal): Promise<Session[] | null> => {
-         try {
-           return await request<Session[]>(config, `/session/${sessionID}/children`, { signal })
-         } catch (error) {
-           if (error instanceof ApiError && error.status === 404) return null
-           throw error
-         }
-       },
+        // Newer servers return live child state. Older ones still expose the
+        // plain endpoint, so only an absent live route falls back.
+        children: async (sessionID: string, signal?: AbortSignal): Promise<Session[] | null> => {
+          const path = `/session/${encodeURIComponent(sessionID)}/children`
+          try {
+            return await request<Session[]>(config, `${path}?state=live`, { signal })
+          } catch (error) {
+            if (!(error instanceof ApiError) || error.status !== 404) throw error
+            try {
+              return await request<Session[]>(config, path, { signal })
+            } catch (fallbackError) {
+              if (fallbackError instanceof ApiError && fallbackError.status === 404) return null
+              throw fallbackError
+            }
+          }
+        },
 
       create: (params?: { title?: string }) =>
         request<Session>(config, "/session", {
