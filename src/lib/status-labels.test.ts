@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { statusFromPart, TOOL_STATUS } from "./status-labels.ts"
+import { retryStatusLabel, statusFromPart, TOOL_STATUS } from "./status-labels.ts"
 
 // These labels are shown live while the agent works. A new tool type must degrade
 // to a sensible "Running <tool>..." rather than a blank or wrong status.
@@ -46,4 +46,10 @@ test("every TOOL_STATUS entry is reachable via statusFromPart", () => {
   for (const [tool, label] of Object.entries(TOOL_STATUS)) {
     assert.equal(statusFromPart(part({ type: "tool", tool })), label)
   }
+})
+
+test("formats retry status with the local next-at time", () => {
+  const next = Date.UTC(2026, 0, 2, 15, 4)
+  const time = new Date(next).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+  assert.equal(retryStatusLabel({ attempt: 3, message: "Rate limited", next }), `Retrying (attempt 3): Rate limited, next at ${time}`)
 })

@@ -78,6 +78,7 @@ import { useSettings } from "../../src/stores/settings"
 import { nameOf } from "../../src/lib/path-utils"
 import { backgroundFor } from "../../src/lib/background-activity"
 import { SETUP_GUIDE_URL } from "../../src/lib/links"
+import { retryStatusLabel } from "../../src/lib/status-labels"
 
 // Badge palette per attention state. "needs you" is the only red — it is the
 // only state where the run is stopped waiting on the user.
@@ -169,6 +170,10 @@ const SessionItem = memo(function SessionItem({
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
   })
+  const retryStatus = useEvents((s) => {
+    const st = s.sessionStatus[session.id]
+    return st?.type === "retry" ? st : undefined
+  })
   const preview = useSessions((s) => s.previews[session.id]?.text)
   // An unsent draft is YOUR unfinished work in this session — worth a badge
   // distinct from the run status (which is the AGENT's state).
@@ -243,7 +248,7 @@ const SessionItem = memo(function SessionItem({
                 <PulsingDot color={attention === "busy" ? "#16a34a" : "#b45309"} size={5} active={false} />
               )}
               <Text style={[styles.statusBadgeText, ATTENTION_TEXT[attention]]}>
-                {attentionLabel(attention)}
+                {retryStatus ? retryStatusLabel(retryStatus) : attentionLabel(attention)}
                 {/* Stuck-vs-working at the glance layer — see the V2 twin. */}
                 {attention === "busy" &&
                   (() => {
@@ -298,6 +303,10 @@ const SessionRowV2 = memo(function SessionRowV2({
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
+  })
+  const retryStatus = useEvents((s) => {
+    const st = s.sessionStatus[session.id]
+    return st?.type === "retry" ? st : undefined
   })
   const pendingPermissions = useEvents((s) => s.permissions[session.id]?.length ?? 0)
   const pendingQuestions = useEvents((s) => s.questions[session.id]?.length ?? 0)
@@ -356,7 +365,7 @@ const SessionRowV2 = memo(function SessionRowV2({
         <Text style={[styles.rowV2Title, isDark && styles.textDark]} numberOfLines={1}>
           {session.title || t("sessionsList.untitledSession")}
         </Text>
-        {dot.label && <Text style={[styles.rowV2StateLabel, { color: dot.color }]}>{dot.label}</Text>}
+        {(retryStatus || dot.label) && <Text style={[styles.rowV2StateLabel, { color: dot.color }]}>{retryStatus ? retryStatusLabel(retryStatus) : dot.label}</Text>}
         <Text style={[styles.rowV2Time, isDark && styles.metaDark]}>
           {formatTime(session.time.updated, t)}
           {/* Busy lifecycle metadata is the only evidence for a quiet claim. */}

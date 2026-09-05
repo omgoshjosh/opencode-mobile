@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import { useEvents } from "../../stores/events"
 import { useSessions } from "../../stores/sessions"
 import { quietLabel } from "../../lib/quiet-hint"
+import { retryStatusLabel } from "../../lib/status-labels"
 
 interface Props {
   sessionID: string
@@ -39,8 +40,7 @@ export function StatusIndicator({ sessionID, isDark, hasRunningTool }: Props) {
 
   if (!busy) return null
 
-  const label =
-    status?.type === "retry" ? t("chat.statusIndicator.retrying", { attempt: status.attempt }) : text || t("chat.statusIndicator.working")
+  const label = status?.type === "retry" ? retryStatusLabel(status) : text || t("chat.statusIndicator.working")
   // "Working…" that has gone silent is the stuck-vs-thinking question — the
   // server can hold a run open with nothing in it (observed live: 25 quiet
   // minutes of busy). Name the silence so a nudge is an informed decision.
