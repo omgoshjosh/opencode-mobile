@@ -40,8 +40,15 @@ test("synthetic ignored and compaction-only content is filtered", () => {
 test("only complete documented assistant-audience user envelopes are hidden", () => {
   assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, [{ type: "text", text: '<task id="x">report</task>' }]), true)
   assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, [{ type: "text", text: "<swarm-briefing>rules</swarm-briefing>" }]), true)
+  assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, [{ type: "text", text: "<system-reminder>rules</system-reminder>" }]), true)
   assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, [{ type: "text", text: "Please mention <task> in the docs" }]), false)
+  assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, [{ type: "text", text: "Please mention <system-reminder> in the docs" }]), false)
   assert.equal(isHiddenSyntheticUserMessage({ role: "assistant" }, [{ type: "text", text: "<task>report</task>" }]), false)
+})
+
+test("compaction continuation hides only without explicit genuine provenance", () => {
+  assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, [{ type: "text", metadata: { compaction_continue: true } }]), true)
+  assert.equal(isHiddenSyntheticUserMessage({ role: "user" }, [{ type: "text", synthetic: false, metadata: { compaction_continue: true } }]), false)
 })
 
 test("an assistant message remains hidden until a visible part arrives", () => {

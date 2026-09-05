@@ -13,15 +13,21 @@ interface PartLike {
   mime?: string
   synthetic?: boolean
   ignored?: boolean
+  metadata?: Record<string, unknown>
 }
 
-const SYNTHETIC_USER_ENVELOPE = /^\s*<(?:task(?:\s[^>]*)?|swarm-briefing(?:\s[^>]*)?)>[\s\S]*<\/(?:task|swarm-briefing)>\s*$/
+const SYNTHETIC_USER_ENVELOPE = /^\s*<(?:task(?:\s[^>]*)?|swarm-briefing(?:\s[^>]*)?|system-reminder(?:\s[^>]*)?)>[\s\S]*<\/(?:task|swarm-briefing|system-reminder)>\s*$/
 
 /** Internal task reports are user-role messages addressed to an assistant. */
 export function isHiddenSyntheticUserMessage(message: MessageLike, parts: PartLike[] | null | undefined): boolean {
   if (message.role !== "user") return false
   return (parts ?? []).some(
-    (part) => part.type === "text" && (part.synthetic || part.ignored || SYNTHETIC_USER_ENVELOPE.test(part.text ?? "")),
+    (part) => part.type === "text" && (
+      part.synthetic ||
+      part.ignored ||
+      (part.synthetic === undefined && part.metadata?.compaction_continue === true) ||
+      SYNTHETIC_USER_ENVELOPE.test(part.text ?? "")
+    ),
   )
 }
 

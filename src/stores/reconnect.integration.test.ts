@@ -156,20 +156,27 @@ test("a live SSE update wins while lifecycle reconciliation is in flight", async
   assert.deepEqual(useSessions.getState().messages.map((item) => item.id), ["live"])
 })
 
-test("live synthetic user content is removed and a snapshot cannot restore it", async () => {
-  const client = { session: { messagesPage: async () => ({ items: [{
-    info: { ...message("internal"), role: "user" as const },
-    parts: [{ id: "internal-part", messageID: "internal", type: "text" as const, text: '<swarm-briefing>internal</swarm-briefing>' }],
-  }], nextCursor: undefined }) } }
+async function assertLiveSnapshotSyntheticFilter(part: Record<string, unknown>) {
+  const internal = { ...message("internal"), role: "user" as const }
+  const item = { info: internal, parts: [{ id: "internal-part", messageID: "internal", type: "text" as const, ...part }] }
+  const client = { session: { messagesPage: async () => ({ items: [item, item], nextCursor: undefined }) } }
   useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
-  useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1", messages: [{ ...message("internal"), role: "user" }] })
+  useSessions.setState({ currentSession: session("s1"), activeTranscriptSessionID: "s1", messages: [internal] })
 
-  useSessions.getState().handleEvent({ type: "message.part.updated", properties: { part: { id: "internal-part", sessionID: "s1", messageID: "internal", type: "text", text: '<swarm-briefing>internal</swarm-briefing>' } } } as never)
+  useSessions.getState().handleEvent({ type: "message.part.updated", properties: { part: { id: "internal-part", messageID: "internal", type: "text", sessionID: "s1", ...part } } } as never)
   flushPendingStreamParts()
   await useSessions.getState().reconcileOpenMessages()
 
   assert.deepEqual(useSessions.getState().messages, [])
   assert.equal(useSessions.getState().parts.internal, undefined)
+}
+
+test("live compaction continuation and duplicate snapshots stay hidden", async () => {
+  await assertLiveSnapshotSyntheticFilter({ metadata: { compaction_continue: true } })
+})
+
+test("live system reminders and duplicate snapshots stay hidden", async () => {
+  await assertLiveSnapshotSyntheticFilter({ text: "<system-reminder>internal</system-reminder>" })
 })
 
 test("overlapping lifecycle reconciliations are idempotent and preserve pagination", async () => {
