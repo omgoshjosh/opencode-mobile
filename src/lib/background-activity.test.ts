@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { backgroundFor, backgroundJobRouteParams, compareJobs, mergeStatusEvent, mergeStatusSnapshot } from "./background-activity.ts"
+import { backgroundFor, backgroundJobRouteParams, compareJobs, mergeStatusEvent, mergeStatusSnapshot, runningWorkerCount, workersRunningLabel } from "./background-activity.ts"
 
 const parent = "parent"
 const child = (id: string) => ({ id, parentID: parent, title: id, agent: "general", time: { created: 1, updated: 20 } }) as any
@@ -174,4 +174,40 @@ test("malformed modern jobs render safe placeholders and sort deterministically"
 
 test("job comparison tolerates null fields without throwing", () => {
   assert.doesNotThrow(() => [{}, null, { title: null, owner: null }].sort(compareJobs))
+})
+
+// --- one worker count for the list and the detail screen (#34) ---
+
+test("running is the count, not jobs.length: a settled session with stale jobs shows zero", () => {
+  // The list read `background.jobs.length` and kept advertising workers on a
+  // session the server had already reported as done.
+  const stale = { running: 0, jobs: [{ sessionID: "child", role: "QA", title: "Check", since: 1 }] }
+  const input = { parentID: parent, sessions: [child("child")], statuses: { [parent]: { type: "idle" as const, background: stale } } }
+  assert.equal(backgroundFor(input)?.jobs.length, 1)
+  assert.equal(runningWorkerCount(input), 0)
+})
+
+test("running counts the server's number even when it disagrees with jobs", () => {
+  assert.equal(
+    runningWorkerCount({
+      parentID: parent,
+      sessions: [],
+      statuses: { [parent]: { type: "busy", background: { running: 2, jobs: [] } } },
+    }),
+    2,
+  )
+})
+
+test("no background field falls back to busy children", () => {
+  assert.equal(runningWorkerCount({ parentID: parent, sessions: [child("child")], statuses: { child: { type: "busy" } } }), 1)
+})
+
+test("no background field and no busy children is zero, not undefined", () => {
+  assert.equal(runningWorkerCount({ parentID: parent, sessions: [child("child")], statuses: { child: { type: "idle" } } }), 0)
+})
+
+test("worker count is pluralised in one place", () => {
+  assert.equal(workersRunningLabel(0), "0 workers running")
+  assert.equal(workersRunningLabel(1), "1 worker running")
+  assert.equal(workersRunningLabel(2), "2 workers running")
 })

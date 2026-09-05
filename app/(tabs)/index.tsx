@@ -74,6 +74,7 @@ import {
   type Attention,
 } from "../../src/lib/session-attention"
 import { rowSubtitle, triageDot } from "../../src/lib/session-triage"
+import { runningWorkerCount, workersRunningLabel } from "../../src/lib/background-activity"
 import { SESSION_SORTS, parseSessionSort, sortSessions, type SessionSort } from "../../src/lib/session-sort"
 import { useDrafts } from "../../src/stores/drafts"
 import { useSettings } from "../../src/stores/settings"
@@ -117,6 +118,19 @@ function formatTime(timestamp: number, t: (key: string, opts?: Record<string, un
   if (diff < 604800000) return t("sessionsList.time.daysAgo", { count: Math.floor(diff / 86400000) })
 
   return date.toLocaleDateString()
+}
+
+/**
+ * How many workers this row's session is running.
+ *
+ * Both row variants and the session detail screen go through
+ * `runningWorkerCount`, so a row can never disagree with the screen it opens.
+ * The selector returns a number, so a status event that leaves the count
+ * unchanged does not re-render the row.
+ */
+function useRunningWorkers(sessionID: string): number {
+  const sessions = useSessions((s) => s.sessions)
+  return useEvents((s) => runningWorkerCount({ parentID: sessionID, statuses: s.sessionStatus, sessions }))
 }
 
 const SessionItem = memo(function SessionItem({
@@ -169,7 +183,7 @@ const SessionItem = memo(function SessionItem({
       ? modelDisplayLabel(providers, { providerID: session.model.providerID, modelID: session.model.id })
       : null
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
-  const workersRunning = useEvents((s) => s.sessionStatus[session.id]?.background?.jobs.length ?? 0)
+  const workersRunning = useRunningWorkers(session.id)
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
@@ -203,7 +217,7 @@ const SessionItem = memo(function SessionItem({
         style={styles.sessionContent}
         onPress={onPress}
         onLongPress={onLongPress}
-        accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunning} workers running` : ""}`}
+        accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunningLabel(workersRunning)}` : ""}`}
         testID={`session-item-${session.id}`}
       >
         <View style={styles.sessionHeader}>
@@ -270,10 +284,27 @@ const SessionItem = memo(function SessionItem({
               <Text style={[styles.sessionDirText, isDark && styles.metaDark]}>{shortDir}</Text>
             </View>
            )}
-           {!session.parentID && workersRunning > 0 && <Text style={styles.workersLabel}>{workersRunning} workers running</Text>}
+           {!session.parentID && workersRunning > 0 && <Text style={styles.workersLabel}>{workersRunningLabel(workersRunning)}</Text>}
         </View>
       </TouchableOpacity>
-      {!session.parentID ? <TouchableOpacity onPress={() => onToggleWorkers(session)} testID={`session-workers-${session.id}`}><Ionicons name={expanded ? "chevron-down" : "chevron-forward"} size={20} color={isDark ? "#9a9a9a" : "#999999"} /></TouchableOpacity> : <Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
+      {/* The chevron gets a fixed 24pt slot with a 44pt tap target, so the
+          content column ends at the same x on every row instead of shifting
+          with the icon. */}
+      {!session.parentID ? (
+        <TouchableOpacity
+          style={styles.chevronSlot}
+          onPress={() => onToggleWorkers(session)}
+          testID={`session-workers-${session.id}`}
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? "Hide workers" : "Show workers"}
+        >
+          <Ionicons name={expanded ? "chevron-down" : "chevron-forward"} size={18} color={isDark ? "#9a9a9a" : "#999999"} />
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.chevronSlot}>
+          <Ionicons name="chevron-forward" size={18} color={isDark ? "#9a9a9a" : "#999999"} />
+        </View>
+      )}
     </View>
   )
 })
@@ -308,7 +339,7 @@ const SessionRowV2 = memo(function SessionRowV2({
   const providers = useCatalog((c) => c.providers)
   const preview = useSessions((s) => s.previews[session.id]?.text)
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
-  const workersRunning = useEvents((s) => s.sessionStatus[session.id]?.background?.jobs.length ?? 0)
+  const workersRunning = useRunningWorkers(session.id)
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
@@ -328,7 +359,7 @@ const SessionRowV2 = memo(function SessionRowV2({
     updatedAt: session.time.updated,
     lastViewedAt,
   })
-  const dot = triageDot(attention)
+  const dot = triageDot(attention, workersRunning)
 
   const swarmLabel =
     session.model?.providerID === SWARM_PROVIDER_ID
@@ -357,14 +388,20 @@ const SessionRowV2 = memo(function SessionRowV2({
             { text: t("common.delete"), style: "destructive", onPress: () => onDelete(session) },
           ])
         }
-        accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunning} workers running` : ""}`}
+        accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunningLabel(workersRunning)}` : ""}`}
         testID={`session-item-${session.id}`}
       >
       <View style={styles.rowV2Line}>
+        {/* The dot carries the row's entire status vocabulary, so it is named
+            for screen readers even in the states that stay wordless. */}
         {dot.pulse ? (
-          <PulsingDot color={dot.color} size={8} active={false} />
+          <View accessibilityRole="image" accessibilityLabel={dot.a11yLabel}>
+            <PulsingDot color={dot.color} size={8} active={false} />
+          </View>
         ) : (
           <View
+            accessibilityRole="image"
+            accessibilityLabel={dot.a11yLabel}
             style={[
               styles.rowV2Dot,
               dot.hollow
@@ -377,16 +414,26 @@ const SessionRowV2 = memo(function SessionRowV2({
           {session.title || t("sessionsList.untitledSession")}
         </Text>
         {(retryStatus || dot.label) && <Text style={[styles.rowV2StateLabel, { color: dot.color }]}>{retryStatus ? retryStatusLabel(retryStatus) : dot.label}</Text>}
-        <Text style={[styles.rowV2Time, isDark && styles.metaDark]}>
-          {formatTime(session.time.updated, t)}
-          {/* Busy lifecycle metadata is the only evidence for a quiet claim. */}
-          {attention === "busy" &&
-            (() => {
-              const quiet = quietLabel({ lastTextAt: busyMeta?.lastActivityAt, hasRunningTool: Boolean(busyMeta?.runningTool), now })
-              return quiet ? ` · ${quiet}` : ""
-            })()}
-        </Text>
-        {!session.parentID && workersRunning > 0 && <Text style={styles.workersLabel}>{workersRunning} workers running</Text>}
+        {/* Time and workers travel together as the row's trailing meta. The
+            group shrinks and the workers label truncates, so a long worker
+            count pushes the title's ellipsis rather than overrunning the
+            chevron slot. */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0 }}>
+          <Text style={[styles.rowV2Time, isDark && styles.metaDark]}>
+            {formatTime(session.time.updated, t)}
+            {/* Busy lifecycle metadata is the only evidence for a quiet claim. */}
+            {attention === "busy" &&
+              (() => {
+                const quiet = quietLabel({ lastTextAt: busyMeta?.lastActivityAt, hasRunningTool: Boolean(busyMeta?.runningTool), now })
+                return quiet ? ` · ${quiet}` : ""
+              })()}
+          </Text>
+          {!session.parentID && workersRunning > 0 && (
+            <Text style={styles.workersLabel} numberOfLines={1} ellipsizeMode="tail">
+              {workersRunningLabel(workersRunning)}
+            </Text>
+          )}
+        </View>
       </View>
       {subtitle && (
         <Text
@@ -397,7 +444,17 @@ const SessionRowV2 = memo(function SessionRowV2({
         </Text>
       )}
       </TouchableOpacity>
-      {!session.parentID && <TouchableOpacity style={styles.workerToggle} onPress={() => onToggleWorkers(session)} testID={`session-workers-${session.id}`}><Ionicons name={expanded ? "chevron-down" : "chevron-forward"} size={18} color={isDark ? "#9a9a9a" : "#999999"} /></TouchableOpacity>}
+      {!session.parentID && (
+        <TouchableOpacity
+          style={styles.workerToggle}
+          onPress={() => onToggleWorkers(session)}
+          testID={`session-workers-${session.id}`}
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? "Hide workers" : "Show workers"}
+        >
+          <Ionicons name={expanded ? "chevron-down" : "chevron-forward"} size={18} color={isDark ? "#9a9a9a" : "#999999"} />
+        </TouchableOpacity>
+      )}
     </View>
   )
 })
@@ -1842,42 +1899,67 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#666666",
   },
+  // The chevron owns its own 24pt column (see chevronSlot), so the row only
+  // reserves the gap around it rather than a full 16pt of right padding.
   sessionItem: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 16,
-    borderBottomWidth: 1,
+    paddingVertical: 12,
+    paddingLeft: 16,
+    paddingRight: 8,
+    gap: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#e5e5e5",
   },
   sessionItemDark: {
-    borderBottomColor: "#1a1a1a",
+    borderBottomColor: "#262626",
   },
+  // Fixed width so the content column ends at the same x on every row; 44pt
+  // tall so the tap target survives the shrunken icon.
+  chevronSlot: {
+    width: 24,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  // Padding, not margin: the separator still spans the full row, so an
+  // expanded worker list reads as one block instead of a ragged stack.
   workerItem: {
-    marginLeft: 24,
+    paddingLeft: 40,
   },
+  // Green, to match the busy dot this label always accompanies.
   workersLabel: {
-    color: "#2563eb",
+    color: "#4ade80",
     fontSize: 12,
     fontWeight: "600",
   },
+  // Full-height strip pinned to the right edge: the tap target no longer
+  // depends on where the row's first line happens to land.
   workerToggle: {
     position: "absolute",
-    right: 16,
-    top: 12,
+    right: 8,
+    top: 0,
+    bottom: 0,
+    width: 24,
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   // --- V2 experiment row ---
   rowV2: {
-    paddingHorizontal: 16,
+    paddingLeft: 16,
+    paddingRight: 40,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#e5e5e5",
     gap: 3,
   },
-  rowV2Dark: { borderBottomColor: "#1f1f1f" },
+  rowV2Dark: { borderBottomColor: "#262626" },
   rowV2Line: { flexDirection: "row", alignItems: "center", gap: 8 },
   rowV2Dot: { width: 8, height: 8, borderRadius: 4 },
-  rowV2Title: { flex: 1, fontSize: 15, fontWeight: "600", color: "#0a0a0a" },
+  // minWidth 0 so the title is the flex child that actually shrinks — without
+  // it a long title refuses to ellipsize and shoves the meta off the row.
+  rowV2Title: { flex: 1, minWidth: 0, fontSize: 15, fontWeight: "600", color: "#0a0a0a" },
   // The timestamp never truncates — it was the first casualty of the chip
   // pileup in the classic row.
   rowV2Time: { fontSize: 12, color: "#999999", flexShrink: 0 },
@@ -2034,7 +2116,8 @@ const styles = StyleSheet.create({
   statusBadgeText: { fontSize: 10, fontWeight: "600" },
   statusBadgeTextBusy: { color: "#166534" },
   statusBadgeTextRetry: { color: "#92400e" },
-  statusBadgeTextIdle: { color: "#64748b" },
+  // #64748b cleared 4.5:1 on the light chip but not on the dark one.
+  statusBadgeTextIdle: { color: "#94a3b8" },
 
   sessionSwarmBadge: {
     flexDirection: "row",

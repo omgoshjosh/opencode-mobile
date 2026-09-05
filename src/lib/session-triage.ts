@@ -16,6 +16,16 @@
 
 import type { Attention } from "./session-attention"
 
+// The dot palette. Exported so the rows that render a dot and the styles that
+// have to match one (the workers label sits next to the busy dot) read the
+// same hex from here rather than re-typing it.
+export const DOT_NEEDS_ATTENTION = "#dc2626"
+export const DOT_RETRY = "#b45309"
+export const DOT_BUSY = "#16a34a"
+/** Was brand purple, which read as decoration; blue reads as "unread". */
+export const DOT_COMPLETE = "#60a5fa"
+export const DOT_IDLE = "#9a9a9a"
+
 export interface TriageDot {
   color: string
   /** Animate: the session is actively doing something. */
@@ -24,21 +34,35 @@ export interface TriageDot {
   hollow: boolean
   /** Present only for states that demand the user. */
   label?: string
+  /**
+   * Always present. The dot is the row's whole status vocabulary, so a screen
+   * reader needs a name for it even in the states that stay wordless on screen.
+   */
+  a11yLabel: string
 }
 
-export function triageDot(attention: Attention): TriageDot {
-  switch (attention) {
+/**
+ * @param runningWorkers How many background workers this row's session is
+ * running. A parent with running children is still working, so it must not
+ * settle into "complete" (or "idle") just because the parent's own turn ended.
+ * States that demand the user still outrank it: burying a pending permission
+ * under a green dot is the regression session-attention.ts exists to prevent.
+ */
+export function triageDot(attention: Attention, runningWorkers = 0): TriageDot {
+  const effective: Attention =
+    runningWorkers > 0 && attention !== "needs-attention" && attention !== "retry" ? "busy" : attention
+  switch (effective) {
     case "needs-attention":
-      return { color: "#dc2626", pulse: false, hollow: false, label: "Needs you" }
+      return { color: DOT_NEEDS_ATTENTION, pulse: false, hollow: false, label: "Needs you", a11yLabel: "Needs you" }
     case "retry":
-      return { color: "#b45309", pulse: true, hollow: false, label: "Retrying" }
+      return { color: DOT_RETRY, pulse: true, hollow: false, label: "Retrying", a11yLabel: "Retrying" }
     case "busy":
-      return { color: "#16a34a", pulse: true, hollow: false }
+      return { color: DOT_BUSY, pulse: true, hollow: false, a11yLabel: "Working" }
     case "complete":
       // Finished with output the user hasn't seen — worth a filled dot, not words.
-      return { color: "#8b5cf6", pulse: false, hollow: false }
+      return { color: DOT_COMPLETE, pulse: false, hollow: false, a11yLabel: "Finished, unread" }
     case "idle":
-      return { color: "#9a9a9a", pulse: false, hollow: true }
+      return { color: DOT_IDLE, pulse: false, hollow: true, a11yLabel: "Idle" }
   }
 }
 
