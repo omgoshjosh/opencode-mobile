@@ -44,6 +44,8 @@ import {
 } from "../../src/lib/session-group-modes"
 import { statusCounts, type StatusCount } from "../../src/lib/session-status-counts"
 import { depthOf, indexByID } from "../../src/lib/session-tree"
+import { sessionWorkerRows } from "../../src/lib/session-worker-rows"
+import { expandWorkers } from "../../src/lib/session-worker-interaction"
 import {
   FILTERABLE_STATUSES,
   NO_FILTER,
@@ -76,8 +78,8 @@ import { SESSION_SORTS, parseSessionSort, sortSessions, type SessionSort } from 
 import { useDrafts } from "../../src/stores/drafts"
 import { useSettings } from "../../src/stores/settings"
 import { nameOf } from "../../src/lib/path-utils"
-import { backgroundFor } from "../../src/lib/background-activity"
 import { SETUP_GUIDE_URL } from "../../src/lib/links"
+import { retryStatusLabel } from "../../src/lib/status-labels"
 
 // Badge palette per attention state. "needs you" is the only red — it is the
 // only state where the run is stopped waiting on the user.
@@ -121,6 +123,9 @@ const SessionItem = memo(function SessionItem({
   session,
   isDark,
   now,
+  depth,
+  expanded,
+  onToggleWorkers,
   onRename,
   onDelete,
 }: {
@@ -129,6 +134,9 @@ const SessionItem = memo(function SessionItem({
   /** Minute-granular clock from the screen's ticker — a busy-but-silent
    *  session produces no store events, so quiet labels need external time. */
   now: number
+  depth: 0 | 1
+  expanded: boolean
+  onToggleWorkers: (session: Session) => void
   onRename: (session: Session) => void
   onDelete: (session: Session) => void
 }) {
@@ -161,13 +169,14 @@ const SessionItem = memo(function SessionItem({
       ? modelDisplayLabel(providers, { providerID: session.model.providerID, modelID: session.model.id })
       : null
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
-  const allSessions = useSessions((s) => s.sessions)
-  const statuses = useEvents((s) => s.sessionStatus)
-  const terminalChildIDs = useEvents((s) => s.terminalChildIDs)
-  const backgroundRunning = backgroundFor({ parentID: session.id, statuses, sessions: allSessions, terminalChildIDs })?.running ?? 0
+  const workersRunning = useEvents((s) => s.sessionStatus[session.id]?.background?.jobs.length ?? 0)
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
+  })
+  const retryStatus = useEvents((s) => {
+    const st = s.sessionStatus[session.id]
+    return st?.type === "retry" ? st : undefined
   })
   const preview = useSessions((s) => s.previews[session.id]?.text)
   // An unsent draft is YOUR unfinished work in this session — worth a badge
@@ -187,14 +196,16 @@ const SessionItem = memo(function SessionItem({
   })
 
   return (
-    <TouchableOpacity
-      style={[styles.sessionItem, isDark && styles.sessionItemDark]}
-      onPress={onPress}
-      onLongPress={onLongPress}
-      accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${backgroundRunning > 0 ? `, ${backgroundRunning} working` : ""}`}
-      testID={`session-item-${session.id}`}
+    <View
+      style={[styles.sessionItem, depth > 0 && styles.workerItem, isDark && styles.sessionItemDark]}
     >
-      <View style={styles.sessionContent}>
+      <TouchableOpacity
+        style={styles.sessionContent}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunning} workers running` : ""}`}
+        testID={`session-item-${session.id}`}
+      >
         <View style={styles.sessionHeader}>
           <Text style={[styles.sessionTitle, isDark && styles.textDark]} numberOfLines={1}>
             {session.title || t("sessionsList.untitledSession")}
@@ -243,7 +254,7 @@ const SessionItem = memo(function SessionItem({
                 <PulsingDot color={attention === "busy" ? "#16a34a" : "#b45309"} size={5} active={false} />
               )}
               <Text style={[styles.statusBadgeText, ATTENTION_TEXT[attention]]}>
-                {attentionLabel(attention)}
+                {retryStatus ? retryStatusLabel(retryStatus) : attentionLabel(attention)}
                 {/* Stuck-vs-working at the glance layer — see the V2 twin. */}
                 {attention === "busy" &&
                   (() => {
@@ -259,11 +270,11 @@ const SessionItem = memo(function SessionItem({
               <Text style={[styles.sessionDirText, isDark && styles.metaDark]}>{shortDir}</Text>
             </View>
            )}
-          {!session.parentID && backgroundRunning > 0 && <View style={styles.backgroundBadge} accessible={false} importantForAccessibility="no-hide-descendants"><Text style={styles.backgroundBadgeText}>{backgroundRunning}</Text></View>}
+           {!session.parentID && workersRunning > 0 && <Text style={styles.workersLabel}>{workersRunning} workers running</Text>}
         </View>
-      </View>
-      <Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />
-    </TouchableOpacity>
+      </TouchableOpacity>
+      {!session.parentID ? <TouchableOpacity onPress={() => onToggleWorkers(session)} testID={`session-workers-${session.id}`}><Ionicons name={expanded ? "chevron-down" : "chevron-forward"} size={20} color={isDark ? "#9a9a9a" : "#999999"} /></TouchableOpacity> : <Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
+    </View>
   )
 })
 
@@ -277,6 +288,9 @@ const SessionRowV2 = memo(function SessionRowV2({
   session,
   isDark,
   now,
+  depth,
+  expanded,
+  onToggleWorkers,
   onRename,
   onDelete,
 }: {
@@ -284,6 +298,9 @@ const SessionRowV2 = memo(function SessionRowV2({
   isDark: boolean
   /** See SessionItem: external clock for quiet labels on silent sessions. */
   now: number
+  depth: 0 | 1
+  expanded: boolean
+  onToggleWorkers: (session: Session) => void
   onRename: (session: Session) => void
   onDelete: (session: Session) => void
 }) {
@@ -291,13 +308,14 @@ const SessionRowV2 = memo(function SessionRowV2({
   const providers = useCatalog((c) => c.providers)
   const preview = useSessions((s) => s.previews[session.id]?.text)
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
-  const allSessions = useSessions((s) => s.sessions)
-  const statuses = useEvents((s) => s.sessionStatus)
-  const terminalChildIDs = useEvents((s) => s.terminalChildIDs)
-  const backgroundRunning = backgroundFor({ parentID: session.id, statuses, sessions: allSessions, terminalChildIDs })?.running ?? 0
+  const workersRunning = useEvents((s) => s.sessionStatus[session.id]?.background?.jobs.length ?? 0)
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
+  })
+  const retryStatus = useEvents((s) => {
+    const st = s.sessionStatus[session.id]
+    return st?.type === "retry" ? st : undefined
   })
   const pendingPermissions = useEvents((s) => s.permissions[session.id]?.length ?? 0)
   const pendingQuestions = useEvents((s) => s.questions[session.id]?.length ?? 0)
@@ -322,24 +340,26 @@ const SessionRowV2 = memo(function SessionRowV2({
   const subtitle = draft ? `✏️ ${draft}` : rowSubtitle(swarmLabel, preview)
 
   return (
-    <TouchableOpacity
-      style={[styles.rowV2, isDark && styles.rowV2Dark]}
-      onPress={() =>
-        router.push({
-          pathname: `/session/[id]`,
-          params: { id: session.id, ...(session.directory ? { directory: session.directory } : {}) },
-        })
-      }
-      onLongPress={() =>
-        Alert.alert(session.title || t("sessionsList.untitledSession"), undefined, [
-          { text: t("common.cancel"), style: "cancel" },
-          { text: t("sessionsList.actions.rename"), onPress: () => onRename(session) },
-          { text: t("common.delete"), style: "destructive", onPress: () => onDelete(session) },
-        ])
-      }
-      accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${backgroundRunning > 0 ? `, ${backgroundRunning} working` : ""}`}
-      testID={`session-item-${session.id}`}
+    <View
+      style={[styles.rowV2, depth > 0 && styles.workerItem, isDark && styles.rowV2Dark]}
     >
+      <TouchableOpacity
+        onPress={() =>
+          router.push({
+            pathname: `/session/[id]`,
+            params: { id: session.id, ...(session.directory ? { directory: session.directory } : {}) },
+          })
+        }
+        onLongPress={() =>
+          Alert.alert(session.title || t("sessionsList.untitledSession"), undefined, [
+            { text: t("common.cancel"), style: "cancel" },
+            { text: t("sessionsList.actions.rename"), onPress: () => onRename(session) },
+            { text: t("common.delete"), style: "destructive", onPress: () => onDelete(session) },
+          ])
+        }
+        accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunning} workers running` : ""}`}
+        testID={`session-item-${session.id}`}
+      >
       <View style={styles.rowV2Line}>
         {dot.pulse ? (
           <PulsingDot color={dot.color} size={8} active={false} />
@@ -356,7 +376,7 @@ const SessionRowV2 = memo(function SessionRowV2({
         <Text style={[styles.rowV2Title, isDark && styles.textDark]} numberOfLines={1}>
           {session.title || t("sessionsList.untitledSession")}
         </Text>
-        {dot.label && <Text style={[styles.rowV2StateLabel, { color: dot.color }]}>{dot.label}</Text>}
+        {(retryStatus || dot.label) && <Text style={[styles.rowV2StateLabel, { color: dot.color }]}>{retryStatus ? retryStatusLabel(retryStatus) : dot.label}</Text>}
         <Text style={[styles.rowV2Time, isDark && styles.metaDark]}>
           {formatTime(session.time.updated, t)}
           {/* Busy lifecycle metadata is the only evidence for a quiet claim. */}
@@ -366,7 +386,7 @@ const SessionRowV2 = memo(function SessionRowV2({
               return quiet ? ` · ${quiet}` : ""
             })()}
         </Text>
-        {!session.parentID && backgroundRunning > 0 && <View style={styles.backgroundBadge} accessible={false} importantForAccessibility="no-hide-descendants"><Text style={styles.backgroundBadgeText}>{backgroundRunning}</Text></View>}
+        {!session.parentID && workersRunning > 0 && <Text style={styles.workersLabel}>{workersRunning} workers running</Text>}
       </View>
       {subtitle && (
         <Text
@@ -376,7 +396,9 @@ const SessionRowV2 = memo(function SessionRowV2({
           {subtitle}
         </Text>
       )}
-    </TouchableOpacity>
+      </TouchableOpacity>
+      {!session.parentID && <TouchableOpacity style={styles.workerToggle} onPress={() => onToggleWorkers(session)} testID={`session-workers-${session.id}`}><Ionicons name={expanded ? "chevron-down" : "chevron-forward"} size={18} color={isDark ? "#9a9a9a" : "#999999"} /></TouchableOpacity>}
+    </View>
   )
 })
 
@@ -418,7 +440,7 @@ function StatusBadges({ counts, isDark }: { counts: StatusCount[]; isDark: boole
 // instead of switching to SectionList.
 type ListRow =
   | { type: "header"; directory: string; shortName: string; count: number; collapsed: boolean; sessionIDs: string[] }
-  | { type: "session"; session: Session }
+  | { type: "session"; session: Session; depth: 0 | 1 }
 
 function GroupHeader({
   row,
@@ -526,6 +548,7 @@ export default function SessionsScreen() {
   const listSource = useSessions((s) => s.listSource)
   const listAsOf = useSessions((s) => s.listAsOf)
   const listLoadFailed = useSessions((s) => s.listLoadFailed)
+  const loadSessionChildren = useSessions((s) => s.loadSessionChildren)
   // REST latency verdict, separate from SSE liveness: slow and dead must
   // read differently (see src/lib/rest-latency.ts).
   const restSlow = useRestHealth((s) => s.slow)
@@ -553,6 +576,7 @@ export default function SessionsScreen() {
   // Directories collapsed in the grouped session list. Empty by default —
   // all groups start expanded (#67).
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set())
+  const [expandedRoots, setExpandedRoots] = useState<Set<string>>(new Set())
   // Single-select grouping mode. One nesting level plus this picker replaces
   // what would otherwise be nested groups — see src/lib/session-group-modes.ts.
   const [groupMode, setGroupMode] = useState<GroupMode>(DEFAULT_GROUP_MODE)
@@ -598,10 +622,9 @@ export default function SessionsScreen() {
       setFilter(next)
       filterRef.current = next
       AsyncStorage.setItem(SESSION_FILTER_KEY, JSON.stringify(next)).catch(() => {})
-      // The hide-subagents axis changes what the SERVER should send (roots
-      // only vs. everything) — refetch under the new narrowing. Old rows
-      // stay on screen until the response lands; no blank flash.
-      if (rootsChanged) loadSessions({ rootsOnly: next.hideSubagents })
+      // Hide-subagents is client-side because expanded children are loaded on
+      // demand; roots remain stable while this filter changes.
+      if (rootsChanged) loadSessions()
     },
     [loadSessions],
   )
@@ -687,12 +710,14 @@ export default function SessionsScreen() {
 
     // Sort BEFORE bucketing: group order is first-seen, so the chosen order
     // ranks the groups too, and children sort within their group.
-    const ordered = sortSessions(visible, sort)
+    const ordered = sessionWorkerRows(sortSessions(visible, sort), expandedRoots)
 
     const buckets = new Map<string, Session[]>()
     const order: string[] = []
-    for (const session of ordered) {
-      const key = groupKey(session as never, groupMode, { nowMs, statusOf, sessionsByID })
+    for (const row of ordered) {
+      const session = row.session
+      const root = session.parentID ? sessionsByID.get(session.parentID) : session
+      const key = groupKey((root ?? session) as never, groupMode, { nowMs, statusOf, sessionsByID })
       let bucket = buckets.get(key)
       if (!bucket) {
         bucket = []
@@ -729,7 +754,7 @@ export default function SessionsScreen() {
           sessionIDs: items.map((item) => item.id),
         })
       }
-      if (!collapsed || !hasHeader) for (const session of items) out.push({ type: "session", session })
+      if (!collapsed || !hasHeader) for (const session of items) out.push({ type: "session", session, depth: session.parentID ? 1 : 0 })
     }
     return out
   }, [
@@ -752,7 +777,18 @@ export default function SessionsScreen() {
     lastViewedDep,
     listV2,
     sort,
+    expandedRoots,
   ])
+
+  const toggleWorkers = useCallback((session: Session) => {
+    expandWorkers(expandedRoots.has(session.id), () => void loadSessionChildren(session.id))
+    setExpandedRoots((current) => {
+      const next = new Set(current)
+      if (next.has(session.id)) next.delete(session.id)
+      else next.add(session.id)
+      return next
+    })
+  }, [expandedRoots, loadSessionChildren])
 
   // Fetch server-known projects when the new session modal opens
   useEffect(() => {
@@ -763,14 +799,11 @@ export default function SessionsScreen() {
       .catch(() => setServerProjects([]))
   }, [showNewSession, client])
 
-  // Fetch narrowing follows the hide-subagents filter: roots-only views
-  // filter SERVER-side (children never leave the database) instead of paging
-  // the whole farm and discarding most of it. Ref-read so every reload site
-  // uses the CURRENT filter without re-subscribing callbacks to it.
+  // Ref-read keeps reload callbacks independent from filter changes.
   const filterRef = useRef(filter)
   filterRef.current = filter
   const reloadSessions = useCallback(
-    () => loadSessions({ rootsOnly: filterRef.current.hideSubagents }),
+    () => loadSessions(),
     [loadSessions],
   )
 
@@ -1370,9 +1403,9 @@ export default function SessionsScreen() {
           row.type === "header" ? (
             <GroupHeader row={row} isDark={isDark} onToggle={() => toggleGroup(row.directory)} />
           ) : listV2 ? (
-            <SessionRowV2 session={row.session} isDark={isDark} now={nowTick} onRename={handleRename} onDelete={handleDelete} />
+            <SessionRowV2 session={row.session} depth={row.depth} expanded={expandedRoots.has(row.session.id)} onToggleWorkers={toggleWorkers} isDark={isDark} now={nowTick} onRename={handleRename} onDelete={handleDelete} />
           ) : (
-            <SessionItem session={row.session} isDark={isDark} now={nowTick} onRename={handleRename} onDelete={handleDelete} />
+            <SessionItem session={row.session} depth={row.depth} expanded={expandedRoots.has(row.session.id)} onToggleWorkers={toggleWorkers} isDark={isDark} now={nowTick} onRename={handleRename} onDelete={handleDelete} />
           )
         }
         refreshControl={
@@ -1818,6 +1851,19 @@ const styles = StyleSheet.create({
   },
   sessionItemDark: {
     borderBottomColor: "#1a1a1a",
+  },
+  workerItem: {
+    marginLeft: 24,
+  },
+  workersLabel: {
+    color: "#2563eb",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  workerToggle: {
+    position: "absolute",
+    right: 16,
+    top: 12,
   },
 
   // --- V2 experiment row ---

@@ -139,7 +139,8 @@ interface SessionsState {
   listLoadFailed: boolean
 
   // Actions
-  loadSessions: (options?: { rootsOnly?: boolean }) => Promise<void>
+  loadSessions: () => Promise<void>
+  loadSessionChildren: (sessionID: string) => Promise<void>
   reconcileSessions: (lifecycle: number) => Promise<string[]>
   removeSession: (sessionID: string) => void
   loadLastViewed: () => Promise<void>
@@ -392,7 +393,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
     }
   },
 
-  loadSessions: async (options) => {
+  loadSessions: async () => {
     const connState = useConnections.getState()
     // Use a directory-less client so the server returns sessions from ALL projects,
     // not just the one matching the active connection's directory header.
@@ -407,9 +408,6 @@ export const useSessions = create<SessionsState>((set, get) => ({
       set({ isLoading: true, error: null })
       // A directory-less list includes sessions across projects. Each row carries
       // its own directory into the session route so subsequent operations stay scoped.
-      // includeChildren keeps swarm role/subagent sessions alongside their
-      // roots so the "Swarm root" grouping mode has something to nest. `limit`
-      // still counts roots only, so the visible session count is unchanged.
       // No limit. The transport already downloads the FULL global session
       // list (GET /experimental/session takes no params — see
       // src/lib/session-list.ts); `limit: 50` here just sliced away every
@@ -417,35 +415,12 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // was the "I feel like I'm missing sessions" bug: front-end filters
       // (recency, search) can only surface what survived it. FlatList
       // virtualizes, so row count is not a render concern.
-      // rootsOnly (the hide-subagents view) narrows SERVER-side: children
-      // never leave the database, so the fetch is one small page instead of
-      // paging the whole farm. Otherwise children ride along for the
-      // Swarm-root grouping as before.
-      // Roots-first two-phase (cold start only): the full farm download pages
-      // serially, so on a slow backend the glance view waited RTT×pages for
-      // rows it could have had in one. Phase 1 reuses the server-side roots
-      // narrowing (one small page) and commits immediately; phase 2 fetches
-      // the full list with children for the Swarm-root grouping and replaces.
-      // Warm refreshes skip phase 1: committing a roots-only interim over a
-      // list that already has children would collapse expanded swarm groups
-      // for a beat and then restore them — a flicker worse than the wait.
-      const cold = get().sessions.length === 0 || get().listSource !== "network"
-      const twoPhase = !options?.rootsOnly && cold
-      if (twoPhase) {
-        try {
-          const roots = await client.session.list({ roots: true, includeChildren: false })
-          if (seq === listLoadSeq && roots.length > 0) {
-            set({ sessions: roots.filter((session) => !deletedSessionIDs.has(session.id)), isLoading: false, listSource: "network", listAsOf: Date.now(), listLoadFailed: false })
-          }
-        } catch {
-          // Phase 1 is opportunistic; phase 2 below is the load of record and
-          // owns failure reporting.
-        }
-      }
-
-      const sessions = await client.session.list({ roots: true, includeChildren: !options?.rootsOnly })
+      // Prefer the live tree when available. Its roots are the only top-level
+      // rows; children are fetched on expansion, never mixed into root data.
+      const tree = await client.session.tree()
+      const sessions = tree ?? await client.session.list({ roots: true })
       if (seq !== listLoadSeq) return
-      const liveSessions = sessions.filter((session) => !deletedSessionIDs.has(session.id))
+      const liveSessions = sessions.filter((session) => !session.parentID && !deletedSessionIDs.has(session.id))
       set({ sessions: liveSessions, isLoading: false, listSource: "network", listAsOf: Date.now(), listLoadFailed: false })
       persistSessionsSnapshot(liveSessions)
     } catch (error) {
@@ -454,6 +429,24 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // but marked: listLoadFailed drives the "showing sessions from Xm ago
       // · Retry" banner rather than silently presenting stale data as fresh.
       set({ error: "Failed to load sessions", isLoading: false, listLoadFailed: true })
+    }
+  },
+
+  loadSessionChildren: async (sessionID) => {
+    const client = useConnections.getState().clientForDirectory(undefined) || useConnections.getState().client
+    if (!client) return
+    try {
+      const children = await client.session.children(sessionID)
+      set((state) => {
+        // A child belongs to a visible root only. This prevents an unrelated
+        // response from becoming a phantom top-level row.
+        if (!state.sessions.some((session) => session.id === sessionID && !session.parentID)) return state
+        const other = state.sessions.filter((session) => session.parentID !== sessionID)
+        return { sessions: [...other, ...(children ?? []).filter((session) => session.parentID === sessionID && !deletedSessionIDs.has(session.id))] }
+      })
+    } catch {
+      // Expansion is optional. Keep the root usable when an older server has
+      // neither children endpoint.
     }
   },
 

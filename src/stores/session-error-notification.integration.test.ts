@@ -55,7 +55,7 @@ test("session.error events dispatch session-scoped dedupe payloads", async () =>
         { payload: { type: "session.error", properties: { sessionID: "session-b", error: { message: "other" } } } },
       ),
     },
-    session: { status: async () => ({}) },
+    session: { status: async () => ({}), messagesPage: async () => ({ items: [] }) },
   }
   useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
 
@@ -87,5 +87,30 @@ test("session.error events dispatch session-scoped dedupe payloads", async () =>
       dedupeKey: "session-error-session-b",
       dedupeCooldownMs: 60_000,
     },
+  ])
+})
+
+test("retry status notifies once per series and resets after busy", async () => {
+  const next = Date.UTC(2026, 0, 2, 15, 4)
+  const client = {
+    global: {
+      events: liveStream(
+        { payload: { type: "session.status", properties: { sessionID: "session-a", status: { type: "retry", attempt: 1, message: "Rate limited", next } } } },
+        { payload: { type: "session.status", properties: { sessionID: "session-a", status: { type: "retry", attempt: 2, message: "Rate limited", next } } } },
+        { payload: { type: "session.status", properties: { sessionID: "session-a", status: { type: "busy" } } } },
+        { payload: { type: "session.status", properties: { sessionID: "session-a", status: { type: "retry", attempt: 1, message: "Retrying again", next } } } },
+      ),
+    },
+    session: { status: async () => ({}), messagesPage: async () => ({ items: [] }) },
+  }
+  useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
+
+  useEvents.getState().connect()
+  await settle()
+
+  const time = new Date(next).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+  assert.deepEqual(notifications.map(({ title, body, sessionId }) => ({ title, body, sessionId })), [
+    { title: "Retrying", body: `Retrying (attempt 1): Rate limited, next at ${time}`, sessionId: "session-a" },
+    { title: "Retrying", body: `Retrying (attempt 1): Retrying again, next at ${time}`, sessionId: "session-a" },
   ])
 })
