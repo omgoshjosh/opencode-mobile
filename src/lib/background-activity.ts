@@ -9,9 +9,12 @@ export interface BackgroundJob {
   status: "busy"
 }
 
+type SortableBackgroundJob = BackgroundJob & { owner: string; index: number }
+
 export function backgroundJobRouteParams(job: BackgroundJob, sessions: Session[], parentDirectory?: string) {
-  const directory = sessions.find((session) => session.id === job.sessionID)?.directory ?? parentDirectory
-  return { id: job.sessionID, ...(directory ? { directory } : {}) }
+  const sessionID = job?.sessionID ?? ""
+  const directory = (sessions ?? []).find((session) => session?.id === sessionID)?.directory ?? parentDirectory
+  return { id: sessionID, ...(directory ? { directory } : {}) }
 }
 
 export type SessionStatusSnapshot = SessionStatus
@@ -22,6 +25,32 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function number(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0
+}
+
+function normalizeJob(value: unknown, index: number): SortableBackgroundJob {
+  const job = record(value)
+  const owner = text(job?.owner) ?? text(job?.sessionID) ?? text(job?.id) ?? ""
+  return {
+    sessionID: (text(job?.sessionID) ?? text(job?.id) ?? owner) || `background-job-${index + 1}`,
+    role: text(job?.role) ?? "Background worker",
+    title: text(job?.title) ?? "Background task",
+    since: number(job?.since),
+    status: "busy",
+    owner,
+    index,
+  }
+}
+
+function sortedJobs(value: unknown): BackgroundJob[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map(normalizeJob)
+    .sort(compareJobs)
+    .map(({ owner: _owner, index: _index, ...job }) => job)
 }
 
 function taskFor(parts: Part[], sessionID: string): Part | undefined {
@@ -62,9 +91,8 @@ export function backgroundFor({
 }): { running: number; jobs: BackgroundJob[] } | undefined {
   const modern = statuses[parentID]?.background
   if (modern) {
-    const jobs: BackgroundJob[] = modern.jobs
-      .map((job) => ({ ...job, status: "busy" as const }))
-    return { running: modern.running, jobs: jobs.sort(compareJobs) }
+    const jobs = sortedJobs((modern as { jobs?: unknown }).jobs)
+    return { running: number(modern.running), jobs }
   }
 
   const jobs = sessions.flatMap((session) => {
@@ -85,8 +113,11 @@ export function backgroundFor({
   return jobs.length ? { running: jobs.length, jobs: jobs.sort(compareJobs) } : undefined
 }
 
-export function compareJobs(a: BackgroundJob, b: BackgroundJob): number {
-  return a.since - b.since || a.sessionID.localeCompare(b.sessionID)
+export function compareJobs(a: Partial<SortableBackgroundJob> | null | undefined, b: Partial<SortableBackgroundJob> | null | undefined): number {
+  return number(a?.since) - number(b?.since)
+    || String(a?.title ?? "").localeCompare(String(b?.title ?? ""))
+    || String(a?.owner ?? a?.sessionID ?? "").localeCompare(String(b?.owner ?? b?.sessionID ?? ""))
+    || number(a?.index) - number(b?.index)
 }
 
 export function mergeStatusEvent(previous: SessionStatus | undefined, incoming: SessionStatus, _now?: number): SessionStatus {
