@@ -709,13 +709,23 @@ export default function SessionScreen() {
   // depends on the persisted value rather than the session object identity, so
   // unrelated session.updated events cannot overwrite a local unsent change.
   useEffect(() => {
+    let lastUserMessageAgent: string | undefined
+    for (let i = (messages?.length ?? 0) - 1; i >= 0; i--) {
+      const msg = messages![i]
+      if (msg.role === "user") {
+        lastUserMessageAgent = msg.agent
+        break
+      }
+    }
+
     const resolved = resolveSessionAgent({
+      lastUserMessageAgent,
       sessionAgent: currentSession?.agent,
       availableAgents: agents.map((item) => item.name),
       selectionTouched: agentTouchedRef.current,
     })
     if (resolved) restoreAgent(resolved)
-  }, [currentSession?.id, currentSession?.agent, catalogLoaded])
+  }, [currentSession?.id, currentSession?.agent, catalogLoaded, messages?.length])
 
   // Slash command handler
   const handleSlashSelect = useCallback(

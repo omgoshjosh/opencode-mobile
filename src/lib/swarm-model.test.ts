@@ -92,9 +92,42 @@ test("restores a persisted goal agent only when the server still exposes it", ()
   assert.equal(resolveSessionAgent({ sessionAgent: undefined, availableAgents: ["build", "goal", "plan"] }), null)
 })
 
+test("the last user message's agent wins over a stale session.agent", () => {
+  // The footer chip read "build" on a session whose last prompt ran as "goal",
+  // because only session.agent was consulted.
+  assert.equal(
+    resolveSessionAgent({
+      lastUserMessageAgent: "goal",
+      sessionAgent: "build",
+      availableAgents: ["build", "goal", "plan"],
+    }),
+    "goal",
+  )
+})
+
+test("falls back to session.agent when the transcript records no agent", () => {
+  assert.equal(
+    resolveSessionAgent({
+      lastUserMessageAgent: undefined,
+      sessionAgent: "goal",
+      availableAgents: ["build", "goal", "plan"],
+    }),
+    "goal",
+  )
+})
+
 test("a late session hydration cannot overwrite a mode the user selected", () => {
   assert.equal(
     resolveSessionAgent({
+      sessionAgent: "build",
+      availableAgents: ["build", "goal", "plan"],
+      selectionTouched: true,
+    }),
+    null,
+  )
+  assert.equal(
+    resolveSessionAgent({
+      lastUserMessageAgent: "goal",
       sessionAgent: "build",
       availableAgents: ["build", "goal", "plan"],
       selectionTouched: true,

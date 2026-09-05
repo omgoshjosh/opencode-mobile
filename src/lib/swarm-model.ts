@@ -35,14 +35,24 @@ export interface SessionModel {
   variant?: string
 }
 
+/**
+ * Decide which agent the composer should restore for a session.
+ *
+ * `session.agent` is not updated for every prompt, so a session whose last user
+ * message ran under `goal` can still read `build` (or nothing) on the session
+ * row — which is how the footer chip ended up showing the wrong mode. The
+ * transcript is the more recent evidence, so it wins when present.
+ */
 export function resolveSessionAgent(input: {
+  lastUserMessageAgent?: string | null
   sessionAgent?: string | null
   availableAgents: readonly string[]
   selectionTouched?: boolean
 }): string | null {
   if (input.selectionTouched) return null
-  if (!input.sessionAgent) return null
-  return input.availableAgents.includes(input.sessionAgent) ? input.sessionAgent : null
+  const agent = input.lastUserMessageAgent || input.sessionAgent
+  if (!agent) return null
+  return input.availableAgents.includes(agent) ? agent : null
 }
 
 export function sessionPromptSelection(input: {
