@@ -113,6 +113,24 @@ export function backgroundFor({
   return jobs.length ? { running: jobs.length, jobs: jobs.sort(compareJobs) } : undefined
 }
 
+/**
+ * How many workers a session is running, by the same rule everywhere.
+ *
+ * The list used to read `background.jobs.length`, which is not the count: the
+ * server's `running` is authoritative *including zero*, and a finished run can
+ * leave its job descriptors behind, so a settled session kept advertising
+ * workers. Detail already went through `backgroundFor`; this is the one
+ * selector both screens share.
+ */
+export function runningWorkerCount(input: Parameters<typeof backgroundFor>[0]): number {
+  return backgroundFor(input)?.running ?? 0
+}
+
+/** One pluraliser, so the list row, its a11y label and the detail chip agree. */
+export function workersRunningLabel(count: number): string {
+  return `${count} ${count === 1 ? "worker" : "workers"} running`
+}
+
 export function compareJobs(a: Partial<SortableBackgroundJob> | null | undefined, b: Partial<SortableBackgroundJob> | null | undefined): number {
   return number(a?.since) - number(b?.since)
     || String(a?.title ?? "").localeCompare(String(b?.title ?? ""))
