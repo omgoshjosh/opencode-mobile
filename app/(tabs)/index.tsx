@@ -45,6 +45,7 @@ import {
 import { statusCounts, type StatusCount } from "../../src/lib/session-status-counts"
 import { depthOf, indexByID } from "../../src/lib/session-tree"
 import { sessionWorkerRows } from "../../src/lib/session-worker-rows"
+import { expandWorkers } from "../../src/lib/session-worker-interaction"
 import {
   FILTERABLE_STATUSES,
   NO_FILTER,
@@ -190,14 +191,16 @@ const SessionItem = memo(function SessionItem({
   })
 
   return (
-    <TouchableOpacity
+    <View
       style={[styles.sessionItem, depth > 0 && styles.workerItem, isDark && styles.sessionItemDark]}
-      onPress={onPress}
-      onLongPress={onLongPress}
-      accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunning} workers running` : ""}`}
-      testID={`session-item-${session.id}`}
     >
-      <View style={styles.sessionContent}>
+      <TouchableOpacity
+        style={styles.sessionContent}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunning} workers running` : ""}`}
+        testID={`session-item-${session.id}`}
+      >
         <View style={styles.sessionHeader}>
           <Text style={[styles.sessionTitle, isDark && styles.textDark]} numberOfLines={1}>
             {session.title || t("sessionsList.untitledSession")}
@@ -264,9 +267,9 @@ const SessionItem = memo(function SessionItem({
            )}
            {!session.parentID && workersRunning > 0 && <Text style={styles.workersLabel}>{workersRunning} workers running</Text>}
         </View>
-      </View>
+      </TouchableOpacity>
       {!session.parentID ? <TouchableOpacity onPress={() => onToggleWorkers(session)} testID={`session-workers-${session.id}`}><Ionicons name={expanded ? "chevron-down" : "chevron-forward"} size={20} color={isDark ? "#9a9a9a" : "#999999"} /></TouchableOpacity> : <Ionicons name="chevron-forward" size={20} color={isDark ? "#9a9a9a" : "#999999"} />}
-    </TouchableOpacity>
+    </View>
   )
 })
 
@@ -328,24 +331,26 @@ const SessionRowV2 = memo(function SessionRowV2({
   const subtitle = draft ? `✏️ ${draft}` : rowSubtitle(swarmLabel, preview)
 
   return (
-    <TouchableOpacity
+    <View
       style={[styles.rowV2, depth > 0 && styles.workerItem, isDark && styles.rowV2Dark]}
-      onPress={() =>
-        router.push({
-          pathname: `/session/[id]`,
-          params: { id: session.id, ...(session.directory ? { directory: session.directory } : {}) },
-        })
-      }
-      onLongPress={() =>
-        Alert.alert(session.title || t("sessionsList.untitledSession"), undefined, [
-          { text: t("common.cancel"), style: "cancel" },
-          { text: t("sessionsList.actions.rename"), onPress: () => onRename(session) },
-          { text: t("common.delete"), style: "destructive", onPress: () => onDelete(session) },
-        ])
-      }
-      accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunning} workers running` : ""}`}
-      testID={`session-item-${session.id}`}
     >
+      <TouchableOpacity
+        onPress={() =>
+          router.push({
+            pathname: `/session/[id]`,
+            params: { id: session.id, ...(session.directory ? { directory: session.directory } : {}) },
+          })
+        }
+        onLongPress={() =>
+          Alert.alert(session.title || t("sessionsList.untitledSession"), undefined, [
+            { text: t("common.cancel"), style: "cancel" },
+            { text: t("sessionsList.actions.rename"), onPress: () => onRename(session) },
+            { text: t("common.delete"), style: "destructive", onPress: () => onDelete(session) },
+          ])
+        }
+        accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunning} workers running` : ""}`}
+        testID={`session-item-${session.id}`}
+      >
       <View style={styles.rowV2Line}>
         {dot.pulse ? (
           <PulsingDot color={dot.color} size={8} active={false} />
@@ -373,7 +378,6 @@ const SessionRowV2 = memo(function SessionRowV2({
             })()}
         </Text>
         {!session.parentID && workersRunning > 0 && <Text style={styles.workersLabel}>{workersRunning} workers running</Text>}
-        {!session.parentID && <TouchableOpacity onPress={() => onToggleWorkers(session)} testID={`session-workers-${session.id}`}><Ionicons name={expanded ? "chevron-down" : "chevron-forward"} size={18} color={isDark ? "#9a9a9a" : "#999999"} /></TouchableOpacity>}
       </View>
       {subtitle && (
         <Text
@@ -383,7 +387,9 @@ const SessionRowV2 = memo(function SessionRowV2({
           {subtitle}
         </Text>
       )}
-    </TouchableOpacity>
+      </TouchableOpacity>
+      {!session.parentID && <TouchableOpacity style={styles.workerToggle} onPress={() => onToggleWorkers(session)} testID={`session-workers-${session.id}`}><Ionicons name={expanded ? "chevron-down" : "chevron-forward"} size={18} color={isDark ? "#9a9a9a" : "#999999"} /></TouchableOpacity>}
+    </View>
   )
 })
 
@@ -766,16 +772,14 @@ export default function SessionsScreen() {
   ])
 
   const toggleWorkers = useCallback((session: Session) => {
+    expandWorkers(expandedRoots.has(session.id), () => void loadSessionChildren(session.id))
     setExpandedRoots((current) => {
       const next = new Set(current)
       if (next.has(session.id)) next.delete(session.id)
-      else {
-        next.add(session.id)
-        loadSessionChildren(session.id)
-      }
+      else next.add(session.id)
       return next
     })
-  }, [loadSessionChildren])
+  }, [expandedRoots, loadSessionChildren])
 
   // Fetch server-known projects when the new session modal opens
   useEffect(() => {
@@ -1846,6 +1850,11 @@ const styles = StyleSheet.create({
     color: "#2563eb",
     fontSize: 12,
     fontWeight: "600",
+  },
+  workerToggle: {
+    position: "absolute",
+    right: 16,
+    top: 12,
   },
 
   // --- V2 experiment row ---
