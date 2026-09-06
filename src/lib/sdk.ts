@@ -200,7 +200,8 @@ export interface Event {
   properties: Record<string, unknown>
 }
 
-export type BackgroundStatus = { running: number; jobs: Array<{ sessionID: string; role: string; title: string; since: number }> }
+/** `running` is a worker count on some servers and a plain "any running" flag on others. */
+export type BackgroundStatus = { running: number | boolean; jobs: Array<{ sessionID: string; role: string; title: string; since: number }> }
 export type SessionStatus =
   | { type: "idle"; background?: BackgroundStatus }
   | { type: "busy"; since?: number; lastActivityAt?: number; runningTool?: { title?: string; startedAt?: number }; background?: BackgroundStatus }
