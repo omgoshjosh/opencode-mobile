@@ -75,6 +75,19 @@ function taskTitle(part: Part): string {
   })
 }
 
+/**
+ * The server reports `running` either as a count or as a boolean flag.
+ *
+ * A number is authoritative, including an explicit zero. A boolean only says
+ * whether anything is running, so the job list supplies the count — and a
+ * finished run can leave stale descriptors behind, which `false` must clear.
+ */
+function runningFrom(value: unknown, jobs: BackgroundJob[]): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "boolean") return value ? jobs.length : 0
+  return jobs.length
+}
+
 /** The server count is authoritative, including an explicit zero. */
 export function backgroundFor({
   parentID,
@@ -92,7 +105,7 @@ export function backgroundFor({
   const modern = statuses[parentID]?.background
   if (modern) {
     const jobs = sortedJobs((modern as { jobs?: unknown }).jobs)
-    return { running: number(modern.running), jobs }
+    return { running: runningFrom(modern.running, jobs), jobs }
   }
 
   const jobs = sessions.flatMap((session) => {

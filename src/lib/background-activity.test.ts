@@ -211,3 +211,86 @@ test("worker count is pluralised in one place", () => {
   assert.equal(workersRunningLabel(1), "1 worker running")
   assert.equal(workersRunningLabel(2), "2 workers running")
 })
+
+// --- `running` arrives as a boolean flag on some servers (#42) ---
+
+test("boolean running from a live daemon payload counts the jobs it carries", () => {
+  // Verbatim `session.status` properties from `GET /global/event` on daemon
+  // 0.0.0-dogfood-stack2-c69fc06-20260906030515. `number(true)` was 0, so the
+  // list never rendered "N workers running" and the detail chip never appeared.
+  const status = {
+    type: "busy",
+    background: {
+      running: true,
+      jobs: [{
+        id: "ses_f8a2a4333ffeMQZHA0BOthOTwd",
+        sessionID: "ses_f8a2a4333ffeMQZHA0BOthOTwd",
+        status: "running",
+        role: "Goomba - QA (Validation)",
+        title: "Task Goomba - QA (Validation): …",
+        owner: "local:78530:…",
+      }],
+    },
+  }
+  const input = { parentID: parent, sessions: [], statuses: { [parent]: status } } as any
+  assert.equal(runningWorkerCount(input), 1)
+  assert.deepEqual(backgroundFor(input)?.jobs, [{
+    sessionID: "ses_f8a2a4333ffeMQZHA0BOthOTwd",
+    role: "Goomba - QA (Validation)",
+    title: "Task Goomba - QA (Validation): …",
+    since: 0,
+    status: "busy",
+  }])
+})
+
+test("running true counts every job the server sent", () => {
+  assert.equal(
+    runningWorkerCount({
+      parentID: parent,
+      sessions: [],
+      statuses: { [parent]: { type: "busy", background: { running: true, jobs: [
+        { sessionID: "a", role: "Code", title: "A", since: 1 },
+        { sessionID: "b", role: "QA", title: "B", since: 2 },
+        { sessionID: "c", role: "Review", title: "C", since: 3 },
+      ] } } },
+    } as any),
+    3,
+  )
+})
+
+test("running false clears stale job descriptors", () => {
+  assert.equal(
+    runningWorkerCount({
+      parentID: parent,
+      sessions: [],
+      statuses: { [parent]: { type: "idle", background: { running: false, jobs: [
+        { sessionID: "done", role: "QA", title: "Finished", since: 1 },
+      ] } } },
+    } as any),
+    0,
+  )
+})
+
+test("a numeric running is still authoritative, including an explicit zero", () => {
+  const numeric = (running: number, jobs: unknown[]) => runningWorkerCount({
+    parentID: parent,
+    sessions: [],
+    statuses: { [parent]: { type: "busy", background: { running, jobs } } },
+  } as any)
+  assert.equal(numeric(2, [
+    { sessionID: "a", role: "Code", title: "A", since: 1 },
+    { sessionID: "b", role: "QA", title: "B", since: 2 },
+  ]), 2)
+  assert.equal(numeric(0, [{ sessionID: "done", role: "QA", title: "Finished", since: 1 }]), 0)
+})
+
+test("a boolean-running job without id or sessionID still sorts without throwing", () => {
+  assert.doesNotThrow(() => backgroundFor({
+    parentID: parent,
+    sessions: [],
+    statuses: { [parent]: { type: "busy", background: { running: true, jobs: [
+      { role: "Code", title: "No identity" },
+      { sessionID: "b", role: "QA", title: "B", since: 2 },
+    ] } } },
+  } as any))
+})
