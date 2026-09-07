@@ -88,6 +88,23 @@ function runningFrom(value: unknown, jobs: BackgroundJob[]): number {
   return jobs.length
 }
 
+/**
+ * Has this connection been observed describing background jobs at all?
+ *
+ * The daemon (audited at a2ddc01, `SessionStatus`) never sends an empty
+ * aggregate: `withBackground` attaches `background` only when a session has
+ * live jobs and otherwise returns the status untouched. So "this parent has no
+ * `background` key" cannot, on its own, be told apart from "this daemon has
+ * never heard of `background`" — and the legacy busy-child heuristic below is
+ * a guess we only want to make for the second case.
+ *
+ * Once ANY session on this connection has carried the key, the daemon
+ * demonstrably speaks it, and its absence for a parent is a real zero.
+ */
+export function speaksBackground(statuses: Record<string, SessionStatusSnapshot>): boolean {
+  return Object.values(statuses ?? {}).some((status) => !!status && "background" in status)
+}
+
 /** The server count is authoritative, including an explicit zero. */
 export function backgroundFor({
   parentID,
@@ -107,6 +124,11 @@ export function backgroundFor({
     const jobs = sortedJobs((modern as { jobs?: unknown }).jobs)
     return { running: runningFrom(modern.running, jobs), jobs }
   }
+  // An authoritative zero must not fall through to guessing: on a daemon that
+  // speaks `background`, an omitted aggregate means "nothing running", and the
+  // legacy heuristic would happily resurrect it from one child whose cached
+  // status never flipped to idle.
+  if (speaksBackground(statuses)) return { running: 0, jobs: [] }
 
   const jobs = sessions.flatMap((session) => {
     if (session.parentID !== parentID || statuses[session.id]?.type !== "busy" || terminalChildIDs[session.id]) return []
@@ -146,8 +168,19 @@ export function compareJobs(a: Partial<SortableBackgroundJob> | null | undefined
     || number(a?.index) - number(b?.index)
 }
 
+/**
+ * Fold one broadcast `session.status` into what we already knew.
+ *
+ * Preserve only the aggregate when omitted; status variants own their fields.
+ * The carry-forward is deliberate and must stay: the daemon persists and
+ * broadcasts the status with `background` stripped (`SessionStatus.write`
+ * destructures it off before `events.commit`), and re-attaches it only in
+ * `get`/`snapshot`. An event that omits `background` is therefore silence
+ * about background work, not a zero — dropping the aggregate here would blank
+ * the workers chip on the very next status tick. `mergeStatusSnapshot` below
+ * owns the other half: a GET *is* a verdict.
+ */
 export function mergeStatusEvent(previous: SessionStatus | undefined, incoming: SessionStatus, _now?: number): SessionStatus {
-  // Preserve only the aggregate when omitted; status variants own their fields.
   const background = "background" in incoming ? incoming.background : previous?.background
   return { ...incoming, ...(background !== undefined ? { background } : {}) }
 }
@@ -163,8 +196,14 @@ export function mergeStatusSnapshot(
       const latest = current[id]
       // Only an SSE event received while this GET was in flight can be newer
       // than the snapshot. A status omitted by the server is explicitly idle.
+      // The touched branch still merges: the live event owns the variant, and
+      // inherits the aggregate from the snapshot because events never carry one.
       if (latest && touched.has(id)) return [id, mergeStatusEvent(snapshot[id], latest, now)]
-      return [id, mergeStatusEvent(latest, snapshot[id] ?? { type: "idle" }, now)]
+      // Otherwise the snapshot REPLACES what we held. A GET is the only
+      // authoritative source of `background`, and it omits the key when a
+      // session has no live jobs — so inheriting the previous aggregate here is
+      // how a finished worker came back to life on every reopen and reconnect.
+      return [id, snapshot[id] ?? { type: "idle" }]
     }),
   )
 }

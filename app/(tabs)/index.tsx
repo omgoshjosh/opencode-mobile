@@ -135,7 +135,11 @@ function useWorkerSummary(sessionID: string): { count: number; label: string; to
   const sessions = useSessions((s) => s.sessions)
   return useEvents(
     useShallow((s) => {
-      const background = backgroundFor({ parentID: sessionID, statuses: s.sessionStatus, sessions })
+      // `terminalChildIDs` is store-wide and free here — it comes from live
+      // `message.part.updated` events, not from loaded parts. Without it the
+      // list's legacy fallback could never drop a finished child, so one child
+      // whose cached status never flipped to idle pinned the chip at 1 forever.
+      const background = backgroundFor({ parentID: sessionID, statuses: s.sessionStatus, sessions, terminalChildIDs: s.terminalChildIDs })
       const { counts } = workerStatesFor({ running: background?.running ?? 0, jobs: background?.jobs ?? [], questionsBySession: s.questions })
       return { count: activeWorkerCount(counts), label: workerStatesLabel(counts), top: summarizeWorkerStates(counts).top }
     }),
