@@ -32,6 +32,9 @@
 // status text, elapsed time, or absence. Do not guess a state.
 
 import { DOT_BUSY, DOT_COMPLETE, DOT_IDLE, DOT_NEEDS_ATTENTION, DOT_RETRY } from "./session-triage"
+import type { PendingQuestionLike } from "./question-hydration"
+
+export type { PendingQuestionLike }
 
 export type WorkerState = "awaiting-answer" | "failed" | "stalled" | "working" | "queued" | "ended"
 
@@ -120,11 +123,6 @@ export function workerStateColors(state: WorkerState): { background: string; for
     case "ended":
       return { background: DOT_COMPLETE, foreground: "#0a0a0a" }
   }
-}
-
-export interface PendingQuestionLike {
-  id: string
-  sessionID: string
 }
 
 /**

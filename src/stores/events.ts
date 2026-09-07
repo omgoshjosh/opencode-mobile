@@ -22,6 +22,7 @@ import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
+import { mergeQuestionSnapshot, type PendingQuestionLike } from "../lib/question-hydration"
 import { canFlushVisiblePartStatus, registerPartStatusFlusher } from "../lib/stream-part-batching"
 import { canApplyFocusedStatusHydration, canApplyResyncIdle, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "../lib/status-hydration"
 import { createReconnectTranscriptCoordinator } from "../lib/reconnect-transcript"
@@ -236,6 +237,43 @@ async function hydrateStatus(client: Client, lifecycle: number, signal: AbortSig
   } catch (error) {
     if (signal.aborted) return
     console.warn("[Events] Failed to hydrate session status:", error)
+  }
+}
+
+// Everything SSE delivered while a `GET /question` was in flight. Those
+// events are newer than the response being assembled, so they must survive it.
+let questionsInFlight: { added: PendingQuestionLike[]; removed: string[] } | null = null
+
+function noteQuestionAsked(request: PendingQuestionLike) {
+  questionsInFlight?.added.push(request)
+}
+
+function noteQuestionResolved(requestID: string) {
+  questionsInFlight?.removed.push(requestID)
+}
+
+/**
+ * Every pending question, for every session.
+ *
+ * `refreshPending` only ever hydrates the session being entered, and SSE
+ * resumes from "now" without replaying, so a child agent that asked before
+ * this connection existed was invisible: its parent's chip said "working" and
+ * nothing surfaced the block. The workers chip and the background jobs sheet
+ * both key `awaiting-answer` off this map, so it has to cover children.
+ */
+async function hydrateQuestions(client: Client, lifecycle: number, signal: AbortSignal) {
+  if (!client.question?.list) return
+  questionsInFlight = { added: [], removed: [] }
+  const inFlight = questionsInFlight
+  try {
+    const snapshot = await client.question.list(signal)
+    if (!canApplyStatusHydration(lifecycle, statusLifecycle, signal)) return
+    useEvents.setState({ questions: mergeQuestionSnapshot(snapshot as PendingQuestionLike[] | undefined, inFlight) as EventsState["questions"] })
+  } catch (error) {
+    if (signal.aborted) return
+    console.warn("[Events] Failed to hydrate pending questions:", error)
+  } finally {
+    if (questionsInFlight === inFlight) questionsInFlight = null
   }
 }
 
@@ -499,6 +537,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               set({ connected: true, transport: "live", reconnectAttempts: 0, lastDisconnectAt: null })
             }
             void hydrateStatus(client, lifecycle, currentController.signal)
+            void hydrateQuestions(client, lifecycle, currentController.signal)
             // One complete global snapshot per demonstrated-live lifecycle
             // removes sessions deleted while SSE was down.
             void useSessions.getState().reconcileSessions(lifecycle).then(clearDeletedSessionEventState)
@@ -717,6 +756,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               if (!req.id || !req.sessionID) break
               const existing = get().questions[req.sessionID] || []
               if (existing.some((item) => item.id === req.id)) break
+              noteQuestionAsked(req)
               set((state) => ({
                 questions: {
                   ...state.questions,
@@ -739,6 +779,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               const sessionID = props.sessionID as string
               const requestID = props.requestID as string
               if (!sessionID || !requestID) break
+              noteQuestionResolved(requestID)
               set((state) => ({
                 questions: {
                   ...state.questions,
