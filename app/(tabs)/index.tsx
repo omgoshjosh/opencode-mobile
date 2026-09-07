@@ -16,6 +16,7 @@ import {
   Platform,
   Linking,
 } from "react-native"
+import { useShallow } from "zustand/shallow"
 import { router, useFocusEffect } from "expo-router"
 import { Ionicons } from "@expo/vector-icons"
 import { useTranslation } from "react-i18next"
@@ -75,7 +76,8 @@ import {
 } from "../../src/lib/session-attention"
 import { unreadActionFor, unreadActionLabelKey } from "../../src/lib/session-unread-action"
 import { rowSubtitle, triageDot } from "../../src/lib/session-triage"
-import { runningWorkerCount, workersRunningLabel } from "../../src/lib/background-activity"
+import { backgroundFor } from "../../src/lib/background-activity"
+import { activeWorkerCount, summarizeWorkerStates, workerStateColors, workerStatesFor, workerStatesLabel, type WorkerState } from "../../src/lib/worker-states"
 import { SESSION_SORTS, parseSessionSort, sortSessions, type SessionSort } from "../../src/lib/session-sort"
 import { useDrafts } from "../../src/stores/drafts"
 import { useSettings } from "../../src/stores/settings"
@@ -122,16 +124,22 @@ function formatTime(timestamp: number, t: (key: string, opts?: Record<string, un
 }
 
 /**
- * How many workers this row's session is running.
+ * What this row's workers are doing, not just how many there are.
  *
  * Both row variants and the session detail screen go through
- * `runningWorkerCount`, so a row can never disagree with the screen it opens.
- * The selector returns a number, so a status event that leaves the count
- * unchanged does not re-render the row.
+ * `deriveWorkerStates`, so a row can never disagree with the screen it opens.
+ * The selector returns primitives (shallow-compared), so a status event that
+ * leaves the summary unchanged does not re-render the row.
  */
-function useRunningWorkers(sessionID: string): number {
+function useWorkerSummary(sessionID: string): { count: number; label: string; top: WorkerState } {
   const sessions = useSessions((s) => s.sessions)
-  return useEvents((s) => runningWorkerCount({ parentID: sessionID, statuses: s.sessionStatus, sessions }))
+  return useEvents(
+    useShallow((s) => {
+      const background = backgroundFor({ parentID: sessionID, statuses: s.sessionStatus, sessions })
+      const { counts } = workerStatesFor({ running: background?.running ?? 0, jobs: background?.jobs ?? [], questionsBySession: s.questions })
+      return { count: activeWorkerCount(counts), label: workerStatesLabel(counts), top: summarizeWorkerStates(counts).top }
+    }),
+  )
 }
 
 /**
@@ -209,7 +217,7 @@ const SessionItem = memo(function SessionItem({
       ? modelDisplayLabel(providers, { providerID: session.model.providerID, modelID: session.model.id })
       : null
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
-  const workersRunning = useRunningWorkers(session.id)
+  const workers = useWorkerSummary(session.id)
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
@@ -244,7 +252,7 @@ const SessionItem = memo(function SessionItem({
         style={styles.sessionContent}
         onPress={onPress}
         onLongPress={onLongPress}
-        accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunningLabel(workersRunning)}` : ""}`}
+        accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workers.count > 0 ? `, ${workers.label}` : ""}`}
         testID={`session-item-${session.id}`}
       >
         <View style={styles.sessionHeader}>
@@ -311,7 +319,7 @@ const SessionItem = memo(function SessionItem({
               <Text style={[styles.sessionDirText, isDark && styles.metaDark]}>{shortDir}</Text>
             </View>
            )}
-           {!session.parentID && workersRunning > 0 && <Text style={styles.workersLabel}>{workersRunningLabel(workersRunning)}</Text>}
+           {!session.parentID && workers.count > 0 && <Text style={[styles.workersLabel, { color: workerStateColors(workers.top).background }]}>{workers.label}</Text>}
         </View>
       </TouchableOpacity>
       {/* The chevron gets a fixed 24pt slot with a 44pt tap target, so the
@@ -370,7 +378,7 @@ const SessionRowV2 = memo(function SessionRowV2({
   const markedUnreadAt = useSessions((s) => s.readState[session.id]?.markedUnreadAt)
   const readStateSupported = useSessions((s) => s.readStateSupported)
   const ownStatus = useEvents((s) => (s.sessionStatus[session.id]?.type ?? "idle") as string)
-  const workersRunning = useRunningWorkers(session.id)
+  const workers = useWorkerSummary(session.id)
   const busyMeta = useEvents((s) => {
     const st = s.sessionStatus[session.id]
     return st?.type === "busy" ? st : undefined
@@ -391,7 +399,7 @@ const SessionRowV2 = memo(function SessionRowV2({
     lastViewedAt,
     markedUnreadAt,
   })
-  const dot = triageDot(attention, workersRunning)
+  const dot = triageDot(attention, workers.count)
 
   const swarmLabel =
     session.model?.providerID === SWARM_PROVIDER_ID
@@ -425,7 +433,7 @@ const SessionRowV2 = memo(function SessionRowV2({
           })
         }
         onLongPress={onLongPress}
-        accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workersRunning > 0 ? `, ${workersRunningLabel(workersRunning)}` : ""}`}
+        accessibilityLabel={`${session.title || t("sessionsList.untitledSession")}${workers.count > 0 ? `, ${workers.label}` : ""}`}
         testID={`session-item-${session.id}`}
       >
       <View style={styles.rowV2Line}>
@@ -465,9 +473,9 @@ const SessionRowV2 = memo(function SessionRowV2({
                 return quiet ? ` · ${quiet}` : ""
               })()}
           </Text>
-          {!session.parentID && workersRunning > 0 && (
-            <Text style={styles.workersLabel} numberOfLines={1} ellipsizeMode="tail">
-              {workersRunningLabel(workersRunning)}
+          {!session.parentID && workers.count > 0 && (
+            <Text style={[styles.workersLabel, { color: workerStateColors(workers.top).background }]} numberOfLines={1} ellipsizeMode="tail">
+              {workers.label}
             </Text>
           )}
         </View>
@@ -1973,7 +1981,9 @@ const styles = StyleSheet.create({
   workerItem: {
     paddingLeft: 40,
   },
-  // Green, to match the busy dot this label always accompanies.
+  // Hue is set per row from the top worker state (see workerStateColors), so
+  // "1 needs input" cannot read as the same calm green as "3 working". The
+  // colour here is only the fallback for a row with no state to show.
   workersLabel: {
     color: "#4ade80",
     fontSize: 12,

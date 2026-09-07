@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { backgroundFor, backgroundJobRouteParams, compareJobs, mergeStatusEvent, mergeStatusSnapshot, runningWorkerCount, workersRunningLabel } from "./background-activity.ts"
+import { backgroundFor, backgroundJobRouteParams, compareJobs, mergeStatusEvent, mergeStatusSnapshot, runningWorkerCount } from "./background-activity.ts"
 
 const parent = "parent"
 const child = (id: string) => ({ id, parentID: parent, title: id, agent: "general", time: { created: 1, updated: 20 } }) as any
@@ -204,12 +204,6 @@ test("no background field falls back to busy children", () => {
 
 test("no background field and no busy children is zero, not undefined", () => {
   assert.equal(runningWorkerCount({ parentID: parent, sessions: [child("child")], statuses: { child: { type: "idle" } } }), 0)
-})
-
-test("worker count is pluralised in one place", () => {
-  assert.equal(workersRunningLabel(0), "0 workers running")
-  assert.equal(workersRunningLabel(1), "1 worker running")
-  assert.equal(workersRunningLabel(2), "2 workers running")
 })
 
 // --- `running` arrives as a boolean flag on some servers (#42) ---

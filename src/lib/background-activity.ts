@@ -139,11 +139,6 @@ export function runningWorkerCount(input: Parameters<typeof backgroundFor>[0]): 
   return backgroundFor(input)?.running ?? 0
 }
 
-/** One pluraliser, so the list row, its a11y label and the detail chip agree. */
-export function workersRunningLabel(count: number): string {
-  return `${count} ${count === 1 ? "worker" : "workers"} running`
-}
-
 export function compareJobs(a: Partial<SortableBackgroundJob> | null | undefined, b: Partial<SortableBackgroundJob> | null | undefined): number {
   return number(a?.since) - number(b?.since)
     || String(a?.title ?? "").localeCompare(String(b?.title ?? ""))
