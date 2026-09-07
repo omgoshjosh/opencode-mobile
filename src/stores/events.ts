@@ -22,7 +22,7 @@ import { isSessionActuallyIdle } from "../lib/session-status-reconcile"
 import { parseStatusCache, toStatusCache } from "../lib/status-cache"
 import { nextSessionStatus, noteTextActivity, type SessionStatus } from "../lib/busy-lifecycle"
 import { mergeStatusEvent, mergeStatusSnapshot } from "../lib/background-activity"
-import { mergeQuestionSnapshot, type PendingQuestionLike } from "../lib/question-hydration"
+import { mergeQuestionSnapshot, observableSessionIDs, type PendingQuestionLike } from "../lib/question-hydration"
 import { canFlushVisiblePartStatus, registerPartStatusFlusher } from "../lib/stream-part-batching"
 import { canApplyFocusedStatusHydration, canApplyResyncIdle, canApplyStatusHydration, clearIdleSessionState, settledIdleSessionIDs } from "../lib/status-hydration"
 import { createReconnectTranscriptCoordinator } from "../lib/reconnect-transcript"
@@ -253,22 +253,46 @@ function noteQuestionResolved(requestID: string) {
 }
 
 /**
- * Every pending question, for every session.
+ * The sessions whose `question.*` events this connection will receive: the
+ * tracked sessions in the connected directory, plus the background workers
+ * they report. See `observableSessionIDs` for why the snapshot needs it.
+ */
+function observableQuestionScope(): Set<string> {
+  const { activeConnection, serverHome } = useConnections.getState()
+  const statuses = useEvents.getState().sessionStatus
+  return observableSessionIDs(
+    useSessions.getState().sessions.map((session) => ({
+      id: session.id,
+      directory: session.directory,
+      workers: (statuses[session.id]?.background?.jobs ?? []).map((job) => job.sessionID),
+    })),
+    activeConnection?.directory ?? serverHome,
+  )
+}
+
+/**
+ * Every pending question, for every session THIS CONNECTION CAN HEAR FROM.
  *
  * `refreshPending` only ever hydrates the session being entered, and SSE
  * resumes from "now" without replaying, so a child agent that asked before
  * this connection existed was invisible: its parent's chip said "working" and
  * nothing surfaced the block. The workers chip and the background jobs sheet
  * both key `awaiting-answer` off this map, so it has to cover children.
+ *
+ * `statusReady` is awaited alongside the GET — not before it — so the worker
+ * lists that define the scope have landed by the time the snapshot is
+ * narrowed, without adding a round trip or widening the in-flight window.
  */
-async function hydrateQuestions(client: Client, lifecycle: number, signal: AbortSignal) {
+async function hydrateQuestions(client: Client, lifecycle: number, signal: AbortSignal, statusReady: Promise<unknown>) {
   if (!client.question?.list) return
   questionsInFlight = { added: [], removed: [] }
   const inFlight = questionsInFlight
   try {
-    const snapshot = await client.question.list(signal)
+    const [snapshot] = await Promise.all([client.question.list(signal), statusReady])
     if (!canApplyStatusHydration(lifecycle, statusLifecycle, signal)) return
-    useEvents.setState({ questions: mergeQuestionSnapshot(snapshot as PendingQuestionLike[] | undefined, inFlight) as EventsState["questions"] })
+    useEvents.setState({
+      questions: mergeQuestionSnapshot(snapshot as PendingQuestionLike[] | undefined, inFlight, observableQuestionScope()) as EventsState["questions"],
+    })
   } catch (error) {
     if (signal.aborted) return
     console.warn("[Events] Failed to hydrate pending questions:", error)
@@ -536,8 +560,9 @@ export const useEvents = create<EventsState>((set, get) => ({
             if (shouldResetRetries({ receivedEvent: true })) {
               set({ connected: true, transport: "live", reconnectAttempts: 0, lastDisconnectAt: null })
             }
-            void hydrateStatus(client, lifecycle, currentController.signal)
-            void hydrateQuestions(client, lifecycle, currentController.signal)
+            const statusReady = hydrateStatus(client, lifecycle, currentController.signal).catch(() => {})
+            void statusReady
+            void hydrateQuestions(client, lifecycle, currentController.signal, statusReady)
             // One complete global snapshot per demonstrated-live lifecycle
             // removes sessions deleted while SSE was down.
             void useSessions.getState().reconcileSessions(lifecycle).then(clearDeletedSessionEventState)
