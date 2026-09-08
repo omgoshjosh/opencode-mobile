@@ -37,8 +37,8 @@ import {
   type SlashCommand,
   type Attachment,
 } from "../../src/components/chat"
-import { backgroundFor, backgroundJobRouteParams } from "../../src/lib/background-activity"
-import { activeWorkerCount, summarizeWorkerStates, workerStateColors, workerStatesFor, workerStatesLabel } from "../../src/lib/worker-states"
+import { backgroundFor, backgroundJobRouteParams, type BackgroundJob } from "../../src/lib/background-activity"
+import { activeWorkerCount, summarizeWorkerStates, trackEndedJobs, workerStateColors, workerStatesFor, workerStatesLabel } from "../../src/lib/worker-states"
 import { extractCopyText, hasCopyableText } from "../../src/lib/message-copy-text"
 import {
   resolveSessionAgent,
@@ -999,13 +999,17 @@ export default function SessionScreen() {
     }
   }
 
-  const handleQuestionReply = async (requestID: string, answers: string[][]) => {
-    if (!sessionClient || !sessionID) return
-    const snapshot = useEvents.getState().questions[sessionID] || []
+  // `target` defaults to the open session, but a question can belong
+  // to a CHILD: the background jobs sheet answers a blocked worker in place,
+  // and hardcoding the open session would clear the wrong row and roll back
+  // the wrong snapshot on failure.
+  const handleQuestionReply = async (requestID: string, answers: string[][], target = sessionID) => {
+    if (!sessionClient || !target) return
+    const snapshot = useEvents.getState().questions[target] || []
     useEvents.setState((state) => ({
       questions: {
         ...state.questions,
-        [sessionID]: snapshot.filter((q) => q.id !== requestID),
+        [target]: snapshot.filter((q) => q.id !== requestID),
       },
     }))
     try {
@@ -1013,19 +1017,19 @@ export default function SessionScreen() {
     } catch (err) {
       console.error("Question reply failed:", err)
       useEvents.setState((state) => ({
-        questions: { ...state.questions, [sessionID]: snapshot },
+        questions: { ...state.questions, [target]: snapshot },
       }))
       Alert.alert(t("session.alerts.replyFailedTitle"), t("session.alerts.replyFailedMessage"))
     }
   }
 
-  const handleQuestionReject = async (requestID: string) => {
-    if (!sessionClient || !sessionID) return
-    const snapshot = useEvents.getState().questions[sessionID] || []
+  const handleQuestionReject = async (requestID: string, target = sessionID) => {
+    if (!sessionClient || !target) return
+    const snapshot = useEvents.getState().questions[target] || []
     useEvents.setState((state) => ({
       questions: {
         ...state.questions,
-        [sessionID]: snapshot.filter((q) => q.id !== requestID),
+        [target]: snapshot.filter((q) => q.id !== requestID),
       },
     }))
     try {
@@ -1033,7 +1037,7 @@ export default function SessionScreen() {
     } catch (err) {
       console.error("Question reject failed:", err)
       useEvents.setState((state) => ({
-        questions: { ...state.questions, [sessionID]: snapshot },
+        questions: { ...state.questions, [target]: snapshot },
       }))
       Alert.alert(t("session.alerts.rejectFailedTitle"), t("session.alerts.rejectFailedMessage"))
     }
@@ -1100,6 +1104,17 @@ export default function SessionScreen() {
     return { jobs, count: activeWorkerCount(counts), label: workerStatesLabel(counts), top: summarizeWorkerStates(counts).top }
   }, [background, questionsBySession])
   const workersRunning = workers.count
+  // Client-observed only. A job leaving `jobs[]` is ambiguous — it finished, OR
+  // the daemon restarted, OR a decode failed — so this remembers the departure
+  // and nothing else; the sheet's section is titled "No longer running", not
+  // "Done", and shows no outcome or completion time.
+  const [endedJobs, setEndedJobs] = useState<readonly BackgroundJob[]>([])
+  const previousJobs = useRef<readonly BackgroundJob[]>([])
+  useEffect(() => {
+    const active = workers.jobs
+    setEndedJobs((ended) => trackEndedJobs(previousJobs.current, active, ended))
+    previousJobs.current = active
+  }, [workers.jobs])
   const siblings = useMemo(() => (background?.jobs ?? []).flatMap((job) => {
     const session = sessions.find((item) => item.id === job.sessionID)
     return session ? [session] : []
@@ -1541,13 +1556,23 @@ export default function SessionScreen() {
         onSelect={setVariant}
       />
 
-      <BackgroundJobsSheet sheetRef={jobsSheetRef} jobs={routeOwnsSession ? background?.jobs ?? [] : []} isDark={isDark} onOpen={(job) => {
-        jobsSheetRef.current?.close()
-        router.push({
-          pathname: "/session/[id]",
-          params: backgroundJobRouteParams(job, sessions, routeOwnsSession ? currentSession?.directory : undefined),
-        })
-      }} />
+      <BackgroundJobsSheet
+        sheetRef={jobsSheetRef}
+        jobs={routeOwnsSession ? workers.jobs : []}
+        endedJobs={routeOwnsSession ? endedJobs : []}
+        sessions={sessions}
+        questionsBySession={questionsBySession}
+        isDark={isDark}
+        onReplyQuestion={(childSessionID, requestID, answers) => handleQuestionReply(requestID, answers, childSessionID)}
+        onRejectQuestion={(childSessionID, requestID) => handleQuestionReject(requestID, childSessionID)}
+        onOpen={(job) => {
+          jobsSheetRef.current?.close()
+          router.push({
+            pathname: "/session/[id]",
+            params: backgroundJobRouteParams(job, sessions, routeOwnsSession ? currentSession?.directory : undefined),
+          })
+        }}
+      />
     </>
   )
 }
