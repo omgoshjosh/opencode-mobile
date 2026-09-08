@@ -37,7 +37,8 @@ import {
   type SlashCommand,
   type Attachment,
 } from "../../src/components/chat"
-import { backgroundFor, backgroundJobRouteParams, runningWorkerCount, workersRunningLabel } from "../../src/lib/background-activity"
+import { backgroundFor, backgroundJobRouteParams } from "../../src/lib/background-activity"
+import { activeWorkerCount, summarizeWorkerStates, workerStateColors, workerStatesFor, workerStatesLabel } from "../../src/lib/worker-states"
 import { extractCopyText, hasCopyableText } from "../../src/lib/message-copy-text"
 import {
   resolveSessionAgent,
@@ -261,6 +262,9 @@ export default function SessionScreen() {
   const sessionID = currentSession?.id
   const permissions = useEvents((s) => (sessionID ? s.permissions[sessionID] : undefined)) || []
   const questions = useEvents((s) => (sessionID ? s.questions[sessionID] : undefined)) || []
+  // The whole map, not just this session's: a worker's "needs input" state is
+  // a pending question on the CHILD's sessionID, never on the open one.
+  const questionsBySession = useEvents((s) => s.questions)
 
   const shortDir = getShortDir(currentSession?.directory)
   // Non-null only inside a subagent session — see src/lib/session-breadcrumb.ts.
@@ -1089,9 +1093,13 @@ export default function SessionScreen() {
     [activityParentID, statuses, sessions, parts, terminalChildIDs],
   )
   const background = useMemo(() => activityInput ? backgroundFor(activityInput) : undefined, [activityInput])
-  // The same count the list row shows, from the same selector — the chip and
+  // The same states the list row shows, from the same selector — the chip and
   // the row it was opened from can no longer disagree.
-  const workersRunning = useMemo(() => activityInput ? runningWorkerCount(activityInput) : 0, [activityInput])
+  const workers = useMemo(() => {
+    const { jobs, counts } = workerStatesFor({ running: background?.running ?? 0, jobs: background?.jobs ?? [], questionsBySession })
+    return { jobs, count: activeWorkerCount(counts), label: workerStatesLabel(counts), top: summarizeWorkerStates(counts).top }
+  }, [background, questionsBySession])
+  const workersRunning = workers.count
   const siblings = useMemo(() => (background?.jobs ?? []).flatMap((job) => {
     const session = sessions.find((item) => item.id === job.sessionID)
     return session ? [session] : []
@@ -1383,9 +1391,9 @@ export default function SessionScreen() {
               choose between, so it opens that session directly. */}
           {routeOwnsSession && !currentSession?.parentID && workersRunning > 0 && (
             <TouchableOpacity
-              style={[s.workingChip, isDark && s.workingChipDark]}
+              style={[s.workingChip, { backgroundColor: workerStateColors(workers.top).background }]}
               onPress={() => {
-                const job = background?.jobs[0]
+                const job = workers.jobs[0]
                 if (workersRunning === 1 && job) {
                   router.push({
                     pathname: "/session/[id]",
@@ -1397,10 +1405,10 @@ export default function SessionScreen() {
               }}
               hitSlop={8}
               accessibilityRole="button"
-              accessibilityLabel={workersRunningLabel(workersRunning)}
+              accessibilityLabel={workers.label}
               testID="background-jobs-chip"
             >
-              <Text style={[s.workingChipText, isDark && s.workingChipTextDark]}>{`${workersRunningLabel(workersRunning)} ›`}</Text>
+              <Text style={[s.workingChipText, { color: workerStateColors(workers.top).foreground }]}>{`${workers.label} ›`}</Text>
             </TouchableOpacity>
           )}
 
@@ -1737,10 +1745,11 @@ const s = StyleSheet.create({
   stopBarText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
   // Header
   headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
-  workingChip: { minHeight: 28, paddingHorizontal: 10, justifyContent: "center", borderRadius: 14, backgroundColor: "#6d28d9" },
-  workingChipDark: { backgroundColor: "#a78bfa" },
-  workingChipText: { color: "#ffffff", fontSize: 12, fontWeight: "700" },
-  workingChipTextDark: { color: "#1e1b4b" },
+  // Fill and text colour come from the top worker state (workerStateColors),
+  // not the theme: the old brand purple said nothing about what the workers
+  // were doing, and its dark variant said nothing different.
+  workingChip: { minHeight: 28, paddingHorizontal: 10, justifyContent: "center", borderRadius: 14 },
+  workingChipText: { fontSize: 12, fontWeight: "700" },
   siblingButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   siblingGesture: { height: 8 },
   dirBadge: {

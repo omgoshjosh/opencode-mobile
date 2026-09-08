@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { backgroundFor, backgroundJobRouteParams, compareJobs, mergeStatusEvent, mergeStatusSnapshot, runningWorkerCount, workersRunningLabel } from "./background-activity.ts"
+import { backgroundFor, backgroundJobRouteParams, compareJobs, mergeStatusEvent, mergeStatusSnapshot, runningWorkerCount, speaksBackground } from "./background-activity.ts"
 
 const parent = "parent"
 const child = (id: string) => ({ id, parentID: parent, title: id, agent: "general", time: { created: 1, updated: 20 } }) as any
@@ -76,6 +76,20 @@ test("local resync idle revision prevents an older snapshot from resurrecting bu
     mergeStatusSnapshot({ session: { type: "idle" } }, { session: { type: "busy" } }, new Set(["session"]), 1),
     { session: { type: "idle" } },
   )
+})
+
+test("a snapshot that omits background does not resurrect a finished worker", () => {
+  // The daemon omits `background` entirely when nothing is running, so a GET
+  // that leaves it out is a verdict. Inheriting the previous aggregate here is
+  // what brought a settled worker back on every reopen/reconnect.
+  const merged = mergeStatusSnapshot(
+    { [parent]: { type: "idle", background: { running: 1, jobs: [{ sessionID: "child", role: "QA", title: "Check", since: 1 }] } } },
+    { [parent]: { type: "idle" } },
+    new Set(),
+    1,
+  )
+  assert.deepEqual(merged[parent], { type: "idle" })
+  assert.equal(runningWorkerCount({ parentID: parent, sessions: [child("child")], statuses: merged }), 0)
 })
 
 test("omitted background preserves while explicit zero clears", () => {
@@ -206,12 +220,6 @@ test("no background field and no busy children is zero, not undefined", () => {
   assert.equal(runningWorkerCount({ parentID: parent, sessions: [child("child")], statuses: { child: { type: "idle" } } }), 0)
 })
 
-test("worker count is pluralised in one place", () => {
-  assert.equal(workersRunningLabel(0), "0 workers running")
-  assert.equal(workersRunningLabel(1), "1 worker running")
-  assert.equal(workersRunningLabel(2), "2 workers running")
-})
-
 // --- `running` arrives as a boolean flag on some servers (#42) ---
 
 test("boolean running from a live daemon payload counts the jobs it carries", () => {
@@ -293,4 +301,52 @@ test("a boolean-running job without id or sessionID still sorts without throwing
       { sessionID: "b", role: "QA", title: "B", since: 2 },
     ] } } },
   } as any))
+})
+
+// --- a finished child must not keep the list chip at 1 (#44) ---
+
+test("a completed child drops the list count with no parts and no session switch", () => {
+  // Exactly what the list passes: statuses + sessions + the store's terminal
+  // child IDs. No parts, no re-hydration, no navigation.
+  const listInput = (statuses: Record<string, any>, terminalChildIDs: Record<string, true> = {}) => ({
+    parentID: parent,
+    sessions: [child("child")],
+    statuses,
+    terminalChildIDs,
+  })
+  assert.equal(runningWorkerCount(listInput({ child: { type: "busy" } })), 1)
+  // The child's own status settles.
+  assert.equal(runningWorkerCount(listInput({ child: { type: "idle" } })), 0)
+})
+
+test("a terminal parent task settles the list count even while the child's cached status is still busy", () => {
+  // The reported bug: the parent's task part was `completed` and the child was
+  // idle server-side, but the list read a stale cached `busy` and had no way to
+  // exclude it, because it passed neither parts nor terminalChildIDs.
+  assert.equal(
+    runningWorkerCount({ parentID: parent, sessions: [child("child")], statuses: { child: { type: "busy" } }, terminalChildIDs: { child: true } }),
+    0,
+  )
+})
+
+test("an omitted parent aggregate is an authoritative zero on a daemon that speaks background", () => {
+  // The parent has a status entry with no `background`, and some other session
+  // on this same connection carries one — so the daemon demonstrably sends the
+  // key and its absence here means nothing is running. The legacy heuristic
+  // must not fire and re-count the stale busy child.
+  const statuses = {
+    [parent]: { type: "idle" as const },
+    other: { type: "busy" as const, background: { running: 1, jobs: [{ sessionID: "elsewhere", role: "QA", title: "Check", since: 1 }] } },
+    child: { type: "busy" as const },
+  }
+  assert.equal(speaksBackground(statuses), true)
+  assert.equal(runningWorkerCount({ parentID: parent, sessions: [child("child")], statuses }), 0)
+})
+
+test("a daemon that has never sent background still counts busy children", () => {
+  // The fallback must not become dead code: no `background` key anywhere on the
+  // connection is an old daemon, and the busy-child heuristic is all we have.
+  const statuses = { [parent]: { type: "busy" as const }, child: { type: "busy" as const } }
+  assert.equal(speaksBackground(statuses), false)
+  assert.equal(runningWorkerCount({ parentID: parent, sessions: [child("child")], statuses }), 1)
 })
