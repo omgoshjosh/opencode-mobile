@@ -46,18 +46,25 @@ afterEach(() => {
   useEvents.getState().disconnect()
 })
 
-test("session.error events dispatch session-scoped dedupe payloads", async () => {
+test("session.error suppresses aborts and routes child failures through the parent", async () => {
   const client = {
     global: {
       events: liveStream(
-        { payload: { type: "session.error", properties: { sessionID: "session-a", error: { message: "first" } } } },
-        { payload: { type: "session.error", properties: { sessionID: "session-a", error: { message: "again" } } } },
-        { payload: { type: "session.error", properties: { sessionID: "session-b", error: { message: "other" } } } },
+        { payload: { type: "session.error", properties: { sessionID: "aborted", error: { name: "MessageAbortedError", data: { message: "Stopped" } } } } },
+        { payload: { type: "session.error", properties: { sessionID: "child-a", error: { name: "UnknownError", data: { message: "first" } } } } },
+        { payload: { type: "session.error", properties: { sessionID: "child-b", error: { message: "second" } } } },
       ),
     },
     session: { status: async () => ({}), messagesPage: async () => ({ items: [] }) },
   }
   useConnections.setState({ client: client as never, clientForDirectory: () => client as never })
+  useSessions.setState({
+    sessions: [
+      { id: "parent" },
+      { id: "child-a", parentID: "parent" },
+      { id: "child-b", parentID: "parent" },
+    ] as never,
+  })
 
   useEvents.getState().connect()
   await settle()
@@ -67,24 +74,16 @@ test("session.error events dispatch session-scoped dedupe payloads", async () =>
       category: "errors",
       title: "Session error",
       body: "first",
-      sessionId: "session-a",
-      dedupeKey: "session-error-session-a",
+      sessionId: "parent",
+      dedupeKey: "session-error-parent",
       dedupeCooldownMs: 60_000,
     },
     {
       category: "errors",
       title: "Session error",
-      body: "again",
-      sessionId: "session-a",
-      dedupeKey: "session-error-session-a",
-      dedupeCooldownMs: 60_000,
-    },
-    {
-      category: "errors",
-      title: "Session error",
-      body: "other",
-      sessionId: "session-b",
-      dedupeKey: "session-error-session-b",
+      body: "second",
+      sessionId: "parent",
+      dedupeKey: "session-error-parent",
       dedupeCooldownMs: 60_000,
     },
   ])

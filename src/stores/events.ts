@@ -12,7 +12,7 @@ import {
 import { canRefreshPending } from "../lib/focus-read"
 import { send as notify } from "../lib/notifications"
 import { sanitizeBody } from "../lib/notify-format"
-import { notifySessionError } from "../lib/session-error-notification"
+import { isIntentionalSessionError, notifySessionError, type SessionError } from "../lib/session-error-notification"
 import { retryStatusLabel, statusFromPart } from "../lib/status-labels"
 import { addBreadcrumb } from "../lib/sentry"
 import { AnalyticsEvent, track } from "../lib/analytics"
@@ -708,21 +708,23 @@ export const useEvents = create<EventsState>((set, get) => ({
             }
 
             case "session.error": {
-              const error = props.error as { message?: string } | undefined
+              const error = props.error as SessionError
               const sessionID = props.sessionID as string
               if (!sessionID) break
               flushPendingStreamWork()
+              const aborted = isIntentionalSessionError(error) || abortedSessions.has(sessionID)
               // Mark so the eventual busy -> idle transition is not counted
               // as a success for the store review prompt
-              erroredSessions.add(sessionID)
+              if (aborted) abortedSessions.add(sessionID)
+              if (!aborted) erroredSessions.add(sessionID)
               // Clear sending state unconditionally — SSE is truth
               useSessions.setState((state) => ({
                 sending: { ...state.sending, [sessionID]: false },
                 // Surface error only if user is viewing this session
-                  ...(state.activeTranscriptSessionID === sessionID && state.currentSession?.id === sessionID
-                    ? { error: error?.message || "Session error occurred" }
-                    : {}),
-                }))
+                ...(!aborted && state.activeTranscriptSessionID === sessionID && state.currentSession?.id === sessionID
+                  ? { error: typeof error?.message === "string" ? error.message : "Session error occurred" }
+                  : {}),
+              }))
               const latestSessions = useSessions.getState()
               if (
                 latestSessions.activeTranscriptSessionID === sessionID &&
@@ -730,7 +732,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               ) {
                 latestSessions.refreshMessages()
               }
-              notifySessionError(notify, sessionID, error?.message)
+              if (!aborted) notifySessionError(notify, sessionID, error, latestSessions.sessions)
               break
             }
 
