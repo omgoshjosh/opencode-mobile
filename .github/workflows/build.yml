@@ -41,8 +41,8 @@ jobs:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
-      # PR validation builds must not publish source maps to Sentry.
-      SENTRY_DISABLE_AUTO_UPLOAD: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      # Only canonical-repository push builds may publish source maps to Sentry.
+      SENTRY_DISABLE_AUTO_UPLOAD: ${{ github.repository == 'dzianisv/opencode-mobile' && github.event_name == 'push' && 'false' || 'true' }}
     steps:
       - uses: actions/checkout@v6
 
