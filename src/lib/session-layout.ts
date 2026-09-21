@@ -21,10 +21,10 @@ export function composerMaxHeight(
 ): number {
   if (platform !== "android" || keyboardY === null) return COMPOSER_MAX_HEIGHT
 
-  // Keep a three-line editor usable on compact IME-resized windows while
+  // Keep multiple scaled draft lines usable on compact IME-resized windows while
   // reserving room for the question/transcript surface and composer controls.
   const visibleHeight = Math.max(0, Math.min(windowHeight, keyboardY) - Math.max(0, insetTop))
-  const scaledMinimum = Math.ceil(COMPOSER_LINE_HEIGHT * Math.max(1, fontScale) * 3 + COMPOSER_VERTICAL_PADDING)
+  const scaledMinimum = Math.ceil(COMPOSER_LINE_HEIGHT * Math.max(1, fontScale) * 2 + COMPOSER_VERTICAL_PADDING)
   return Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, scaledMinimum, visibleHeight - 250))
 }
 

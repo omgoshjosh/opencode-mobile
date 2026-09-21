@@ -30,8 +30,9 @@ test("composer keeps multiple lines visible on compact Android IME geometry", ()
   assert.equal(composerMaxHeight("android", 480, 250, 24), COMPOSER_MIN_HEIGHT)
 })
 
-test("composer preserves three draft lines at Android accessibility text scaling", () => {
-  assert.equal(composerMaxHeight("android", 768, 377, 39, 1.5), 110)
+test("composer preserves multiple draft lines at Android accessibility text scaling", () => {
+  assert.equal(composerMaxHeight("android", 768, 377, 39, 1.5), COMPOSER_MIN_HEIGHT)
+  assert.equal(composerMaxHeight("android", 768, 377, 39, 2), 100)
 })
 
 test("composer responds to keyboard resize without exceeding the established cap", () => {
