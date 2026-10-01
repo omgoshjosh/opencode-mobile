@@ -943,7 +943,8 @@ const s = StyleSheet.create({
   listWrap: { flex: 1, position: "relative" },
 
   // Messages
-  messageList: { padding: 16, paddingBottom: 8 },
+  // Reserve the controls' 44pt width + 16pt right inset + 16pt text gap.
+  messageList: { padding: 16, paddingBottom: 8, paddingRight: 76 },
 
   // Scroll button
   scrollControls: {
