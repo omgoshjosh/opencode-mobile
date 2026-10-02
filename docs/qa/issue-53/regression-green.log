@@ -1,0 +1,80 @@
+TAP version 13
+# (node:19726) ExperimentalWarning: Module mocking is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# [SSE] Disconnecting
+# [SSE] Connecting to event stream...
+# [SSE] Disconnecting
+# [SSE] Disconnected (aborted)
+# [SSE] Disconnecting
+# [SSE] Connecting to event stream...
+# Subtest: \#53 an idle root shows its working descendants: live child, grandchild, and an unrelated background aggregate
+ok 1 - \#53 an idle root shows its working descendants: live child, grandchild, and an unrelated background aggregate
+  ---
+  duration_ms: 83.7205
+  type: 'test'
+  ...
+# [Events] Failed to resync session status for child TypeError: client.session.messagesPage is not a function
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:407:47)
+#     at Array.map (<anonymous>)
+#     at resyncBusySessions (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:391:20)
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:558:18)
+# [SSE] Disconnecting
+# [SSE] Disconnected (aborted)
+# [SSE] Disconnecting
+# [SSE] Connecting to event stream...
+# [Events] Failed to resync session status for stale TypeError: client.session.messagesPage is not a function
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:407:47)
+#     at Array.map (<anonymous>)
+#     at resyncBusySessions (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:391:20)
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:558:18)
+# Subtest: \#53 the chip follows workers starting and finishing, and counts nested workers accurately
+ok 2 - \#53 the chip follows workers starting and finishing, and counts nested workers accurately
+  ---
+  duration_ms: 61.851042
+  type: 'test'
+  ...
+# [SSE] Disconnecting
+# [SSE] Connecting to event stream...
+# [SSE] Disconnected (aborted)
+# [SSE] Disconnecting
+# [SSE] Disconnected (aborted)
+# [SSE] Disconnecting
+# [SSE] Connecting to event stream...
+# Subtest: \#53 a cold start / reconnect restores the chip from the daemon and drops a stale cached worker
+ok 3 - \#53 a cold start / reconnect restores the chip from the daemon and drops a stale cached worker
+  ---
+  duration_ms: 13.141042
+  type: 'test'
+  ...
+# [Events] Failed to resync session status for worker TypeError: client.session.messagesPage is not a function
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:407:47)
+#     at Array.map (<anonymous>)
+#     at resyncBusySessions (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:391:20)
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:558:18)
+# [Events] Failed to resync session status for orphan TypeError: client.session.messagesPage is not a function
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:407:47)
+#     at Array.map (<anonymous>)
+#     at resyncBusySessions (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:391:20)
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:558:18)
+# [Events] Failed to resync session status for loop-a TypeError: client.session.messagesPage is not a function
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:407:47)
+#     at Array.map (<anonymous>)
+#     at resyncBusySessions (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:391:20)
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:558:18)
+# [SSE] Disconnecting
+# [SSE] Disconnected (aborted)
+# Subtest: \#53 deleted, orphaned and cyclic sessions never count and never hang
+ok 4 - \#53 deleted, orphaned and cyclic sessions never count and never hang
+  ---
+  duration_ms: 76.602375
+  type: 'test'
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 352.32925

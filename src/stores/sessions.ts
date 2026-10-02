@@ -37,6 +37,7 @@ import { serializeSnapshot, parseSnapshot } from "../lib/list-freshness"
 import { trackToolPart, clearSessionTools, type RunningToolMap } from "../lib/running-tools"
 import { trackWakePart, type PendingWakeMap } from "../lib/pending-wakes"
 import { toolCallTitle } from "../lib/tool-titles"
+import { parentLinks, unresolvedAncestor, type ParentIndex } from "../lib/session-ancestry"
 import { createFocusReadCoordinator } from "../lib/focus-read"
 import { isTranscriptActive, nextActiveTranscript, shouldApplyTranscriptSnapshot } from "../lib/transcript-focus"
 import { createOpenTranscriptReconciler } from "../lib/open-transcript-reconcile"
@@ -122,6 +123,11 @@ function pageSize(): number {
 
 interface SessionsState {
   sessions: Session[]
+  /**
+   * Parent links for sessions that are not list rows (#53). The list holds
+   * roots only, so a worker under an idle manager is placed through this.
+   */
+  sessionParents: ParentIndex
   currentSession: Session | null
   // Selection survives native-stack navigation; visibility does not.
   activeTranscriptSessionID: string | null
@@ -174,6 +180,14 @@ interface SessionsState {
   // Actions
   loadSessions: () => Promise<void>
   loadSessionChildren: (sessionID: string) => Promise<void>
+  noteSessionParents: (sessions: ReadonlyArray<{ id?: string; parentID?: string | null } | null | undefined>) => void
+  /**
+   * Place working sessions under their roots: walk each id's chain and fetch
+   * `GET /session/:id` for the first link we do not know. Each id is asked at
+   * most once per connection lifetime of the store (failures included), so a
+   * 404/orphan or a cycle costs one request, never a loop.
+   */
+  resolveSessionAncestry: (sessionIDs: readonly string[]) => Promise<void>
   reconcileSessions: (lifecycle: number) => Promise<string[]>
   removeSession: (sessionID: string) => void
   loadLastViewed: () => Promise<void>
@@ -236,6 +250,11 @@ let listLoadSeq = 0
 let sessionReconcileLifecycle = 0
 const sessionMembershipRevisions = new Map<string, number>()
 const deletedSessionIDs = new Set<string>()
+// #53: GET /session/:id lookups in flight, and ids whose lookup failed. A
+// failed id is recorded in `sessionParents` as a chain end (`null`) so it is
+// not asked again; the next full list load forgets those and may ask anew.
+const ancestryInFlight = new Set<string>()
+const ancestryFailed = new Set<string>()
 
 // Monotonic token guarding selectSession against out-of-order resolution: a
 // slow fetch for a session the user has already navigated away from must not
@@ -418,6 +437,7 @@ function clientFor(directory?: string): Client | null {
 
 export const useSessions = create<SessionsState>((set, get) => ({
   sessions: [],
+  sessionParents: {},
   currentSession: null,
   activeTranscriptSessionID: null,
   messages: [],
@@ -616,7 +636,23 @@ export const useSessions = create<SessionsState>((set, get) => ({
       const sessions = tree ?? await client.session.list({ roots: true })
       if (seq !== listLoadSeq) return
       const liveSessions = sessions.filter((session) => !session.parentID && !deletedSessionIDs.has(session.id))
-      set({ sessions: liveSessions, isLoading: false, listSource: "network", listAsOf: Date.now(), listLoadFailed: false })
+      // The live tree's children are not rows, but they are the cheapest
+      // ancestry the chip gets (#53). Failed lookups are forgotten here.
+      const treeChildren = sessions.flatMap((session) => ((session as { children?: unknown }).children as Session[] | undefined) ?? [])
+      const forgotten = [...ancestryFailed]
+      ancestryFailed.clear()
+      set((state) => ({
+        sessions: liveSessions,
+        isLoading: false,
+        listSource: "network",
+        listAsOf: Date.now(),
+        listLoadFailed: false,
+        sessionParents: {
+          ...Object.fromEntries(Object.entries(state.sessionParents).filter(([id]) => !forgotten.includes(id))),
+          ...parentLinks(liveSessions),
+          ...parentLinks(treeChildren.filter((child) => child?.parentID && !deletedSessionIDs.has(child.id))),
+        },
+      }))
       persistSessionsSnapshot(liveSessions)
       // Unread marks are not on /session/tree or /session/:id — the card-state
       // route is the only way to learn them, so hydrate once the roots (and
@@ -636,6 +672,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
     if (!client) return
     try {
       const children = await client.session.children(sessionID)
+      get().noteSessionParents((children ?? []).filter((session) => session?.parentID === sessionID && !deletedSessionIDs.has(session.id)))
       set((state) => {
         // A child belongs to a visible root only. This prevents an unrelated
         // response from becoming a phantom top-level row.
@@ -646,6 +683,38 @@ export const useSessions = create<SessionsState>((set, get) => ({
     } catch {
       // Expansion is optional. Keep the root usable when an older server has
       // neither children endpoint.
+    }
+  },
+
+  noteSessionParents: (sessions) => {
+    const links = parentLinks((sessions ?? []).filter((session) => session?.id && !deletedSessionIDs.has(session.id)))
+    const changed = Object.entries(links).some(([id, parent]) => get().sessionParents[id] !== parent)
+    if (!changed) return
+    for (const id of Object.keys(links)) ancestryFailed.delete(id)
+    set((state) => ({ sessionParents: { ...state.sessionParents, ...links } }))
+  },
+
+  resolveSessionAncestry: async (sessionIDs) => {
+    const client = useConnections.getState().clientForDirectory(undefined) || useConnections.getState().client
+    if (!client?.session?.get) return
+    const pending = [...new Set(sessionIDs ?? [])]
+    while (pending.length) {
+      const id = unresolvedAncestor(pending.shift()!, get().sessionParents)
+      if (!id || ancestryInFlight.has(id) || deletedSessionIDs.has(id)) continue
+      ancestryInFlight.add(id)
+      try {
+        const session = await client.session.get(id)
+        get().noteSessionParents([{ id, parentID: session?.parentID ?? null }])
+        // Keep climbing from the newly learned parent.
+        if (session?.parentID) pending.push(session.parentID)
+      } catch {
+        // Gone or unreadable: a chain end, so it never counts and is not asked
+        // again until the next full list load.
+        ancestryFailed.add(id)
+        set((state) => ({ sessionParents: { ...state.sessionParents, [id]: null } }))
+      } finally {
+        ancestryInFlight.delete(id)
+      }
     }
   },
 
@@ -686,6 +755,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
       const readState = dropReadState(state.readState, sessionID)
       const next = {
         sessions: state.sessions.filter((session) => session.id !== sessionID),
+        sessionParents: Object.fromEntries(Object.entries(state.sessionParents).filter(([id]) => id !== sessionID)),
         currentSession: current ? null : state.currentSession,
         activeTranscriptSessionID: current ? null : state.activeTranscriptSessionID,
         messages: current ? [] : state.messages,
@@ -1241,6 +1311,11 @@ export const useSessions = create<SessionsState>((set, get) => ({
       const sessionID = (props.sessionID || props.info?.id) as string | undefined
       if (sessionID) get().removeSession(sessionID)
       return
+    }
+
+    if (event.type === "session.created" || event.type === "session.updated") {
+      const info = (props.info || props) as Session | undefined
+      if (info?.id && !(event.type === "session.updated" && deletedSessionIDs.has(info.id))) get().noteSessionParents([info])
     }
 
     if (event.type === "session.created") {
