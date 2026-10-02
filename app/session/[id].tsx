@@ -943,8 +943,14 @@ const s = StyleSheet.create({
   listWrap: { flex: 1, position: "relative" },
 
   // Messages
-  // Reserve the controls' 44pt width + 16pt right inset + 16pt text gap.
-  messageList: { padding: 16, paddingBottom: 8, paddingRight: 76 },
+  // Reserve 44pt controls + 16pt inset + 16pt gap on the physical right.
+  // Android's inverted list flips both axes, so its content padding is mirrored.
+  messageList: {
+    padding: 16,
+    paddingBottom: 8,
+    paddingLeft: Platform.OS === "android" ? 76 : 16,
+    paddingRight: Platform.OS === "android" ? 16 : 76,
+  },
 
   // Scroll button
   scrollControls: {
