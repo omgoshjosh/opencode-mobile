@@ -187,7 +187,7 @@ interface SessionsState {
    * most once per connection lifetime of the store (failures included), so a
    * 404/orphan or a cycle costs one request, never a loop.
    */
-  resolveSessionAncestry: (sessionIDs: readonly string[]) => Promise<void>
+  resolveSessionAncestry: (sessionIDs: readonly string[], options?: { retryFailed?: boolean }) => Promise<void>
   reconcileSessions: (lifecycle: number) => Promise<string[]>
   removeSession: (sessionID: string) => void
   loadLastViewed: () => Promise<void>
@@ -251,8 +251,9 @@ let sessionReconcileLifecycle = 0
 const sessionMembershipRevisions = new Map<string, number>()
 const deletedSessionIDs = new Set<string>()
 // #53: GET /session/:id lookups in flight, and ids whose lookup failed. A
-// failed id is recorded in `sessionParents` as a chain end (`null`) so it is
-// not asked again; the next full list load forgets those and may ask anew.
+// failed id is NOT a root: it stays absent from `sessionParents`, so workers
+// under it read as unplaced (partial), and only a status hydration retries it
+// (`retryFailed`) — a live status event never re-asks, so a dead id cannot loop.
 const ancestryInFlight = new Set<string>()
 const ancestryFailed = new Set<string>()
 
@@ -637,10 +638,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
       if (seq !== listLoadSeq) return
       const liveSessions = sessions.filter((session) => !session.parentID && !deletedSessionIDs.has(session.id))
       // The live tree's children are not rows, but they are the cheapest
-      // ancestry the chip gets (#53). Failed lookups are forgotten here.
+      // ancestry the chip gets (#53).
       const treeChildren = sessions.flatMap((session) => ((session as { children?: unknown }).children as Session[] | undefined) ?? [])
-      const forgotten = [...ancestryFailed]
-      ancestryFailed.clear()
       set((state) => ({
         sessions: liveSessions,
         isLoading: false,
@@ -648,7 +647,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
         listAsOf: Date.now(),
         listLoadFailed: false,
         sessionParents: {
-          ...Object.fromEntries(Object.entries(state.sessionParents).filter(([id]) => !forgotten.includes(id))),
+          ...state.sessionParents,
           ...parentLinks(liveSessions),
           ...parentLinks(treeChildren.filter((child) => child?.parentID && !deletedSessionIDs.has(child.id))),
         },
@@ -694,13 +693,17 @@ export const useSessions = create<SessionsState>((set, get) => ({
     set((state) => ({ sessionParents: { ...state.sessionParents, ...links } }))
   },
 
-  resolveSessionAncestry: async (sessionIDs) => {
+  resolveSessionAncestry: async (sessionIDs, options) => {
     const client = useConnections.getState().clientForDirectory(undefined) || useConnections.getState().client
     if (!client?.session?.get) return
     const pending = [...new Set(sessionIDs ?? [])]
+    // Each id is asked at most once per call, whatever the chain looks like.
+    const asked = new Set<string>()
     while (pending.length) {
       const id = unresolvedAncestor(pending.shift()!, get().sessionParents)
-      if (!id || ancestryInFlight.has(id) || deletedSessionIDs.has(id)) continue
+      if (!id || asked.has(id) || ancestryInFlight.has(id) || deletedSessionIDs.has(id)) continue
+      if (ancestryFailed.has(id) && !options?.retryFailed) continue
+      asked.add(id)
       ancestryInFlight.add(id)
       try {
         const session = await client.session.get(id)
@@ -708,10 +711,9 @@ export const useSessions = create<SessionsState>((set, get) => ({
         // Keep climbing from the newly learned parent.
         if (session?.parentID) pending.push(session.parentID)
       } catch {
-        // Gone or unreadable: a chain end, so it never counts and is not asked
-        // again until the next full list load.
+        // Gone or unreadable: unknown, not a root. Workers under it stay
+        // unplaced until a later hydration retries this id.
         ancestryFailed.add(id)
-        set((state) => ({ sessionParents: { ...state.sessionParents, [id]: null } }))
       } finally {
         ancestryInFlight.delete(id)
       }

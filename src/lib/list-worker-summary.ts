@@ -22,7 +22,7 @@
 
 import type { Session, SessionStatus } from "./sdk"
 import type { PendingQuestionLike } from "./question-hydration"
-import { descendsFrom, isWorkingStatus, parentLinks, type ParentIndex } from "./session-ancestry.ts"
+import { isWorkingStatus, parentLinks, placementOf, type ParentIndex } from "./session-ancestry.ts"
 import { activeWorkerCount, summarizeWorkerStates, workerStatesFor, workerStatesLabel, type WorkerState } from "./worker-states.ts"
 
 export interface ListWorkerSummaryInput {
@@ -76,12 +76,45 @@ export function listWorkerSummary({
 }: ListWorkerSummaryInput): ListWorkerSummary {
   const index: ParentIndex = { ...parents, ...parentLinks(sessions) }
   const aggregate = aggregateWorkers(statuses?.[rootID]?.background)
-  const ids = new Set(aggregate.ids)
+  // A job the client already saw finish (its parent task completed) is not work (#53 review #5).
+  const ids = new Set(aggregate.ids.filter((id) => !terminalChildIDs[id]))
+  let undescribed = aggregate.undescribed
   for (const [id, status] of Object.entries(statuses ?? {})) {
-    if (!isWorkingStatus(status) || terminalChildIDs[id]) continue
-    if (descendsFrom(id, rootID, index)) ids.add(id)
+    if (id === rootID || !isWorkingStatus(status) || terminalChildIDs[id]) continue
+    if (placementOf(id, rootID, index) !== "descendant") continue
+    // A legacy numeric count describes the root's own working children; one
+    // found here is that count's worker, not an extra one (#53 review #3).
+    if (!ids.has(id) && index[id] === rootID && undescribed > 0) undescribed--
+    ids.add(id)
   }
   const jobs = [...ids].map((sessionID) => ({ sessionID }))
-  const { counts } = workerStatesFor({ running: jobs.length + aggregate.undescribed, jobs, questionsBySession })
+  const { counts } = workerStatesFor({ running: jobs.length + undescribed, jobs, questionsBySession })
   return { count: activeWorkerCount(counts), label: workerStatesLabel(counts), top: summarizeWorkerStates(counts).top }
+}
+
+/**
+ * Working sessions the list cannot tie to any root yet: an ancestry lookup is
+ * pending or failed, so the chain stops at an unknown link (#53 review #2).
+ * They are never folded into a row's N; the list says they exist instead.
+ */
+export function unplacedWorkerIDs({
+  statuses,
+  sessions,
+  parents = {},
+  terminalChildIDs = {},
+}: Omit<ListWorkerSummaryInput, "rootID" | "questionsBySession">): string[] {
+  const index: ParentIndex = { ...parents, ...parentLinks(sessions) }
+  return Object.entries(statuses ?? {})
+    .filter(([id, status]) => isWorkingStatus(status) && !terminalChildIDs[id] && placementOf(id, undefined, index) === "unplaced")
+    .map(([id]) => id)
+    .sort()
+}
+
+/**
+ * The list-level hint for workers no row can claim yet. Says only what is
+ * known: these sessions are working, and which root they belong to is not.
+ */
+export function unplacedWorkersLabel(n: number): string {
+  if (!(n > 0)) return ""
+  return `${n} working ${n === 1 ? "session" : "sessions"} not yet placed under a root — counts may be low`
 }

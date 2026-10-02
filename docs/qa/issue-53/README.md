@@ -15,3 +15,16 @@ Live evidence (daemon `0.0.0-dogfood-stack2-5a3a7f3-202609231712`, read-only DB,
 → Bowser Jr (busy). Neither worker carries `metadata.opencodex.delegation.background`, so the daemon
 attaches no `background` aggregate to either root. GET `/session/status` needs auth (401); no
 credentials were used.
+
+## Review round 2 (PR #54 review 5962102961)
+
+Command (both runs):
+
+    node --experimental-test-module-mocks --import tsx --test --test-concurrency=1 src/lib/list-worker-summary-r2.test.ts src/stores/worker-chip-53-r2.integration.test.ts
+
+- `regression-red-r2.log`: clean `git archive aea4579` plus only the two new test files. Exit 1, 0/7:
+  depth-40 worker 0 (expected 1), unplaced worker not reported, numeric overlap 4 (expected 2), terminal
+  aggregate job 1 (expected 0), no hint label, failed manager lookup recorded as a root / never recovered,
+  pending lookup not reported.
+- `regression-green-r2.log`: with the round-2 fix. Exit 0, 7/7.
+The round-1 logs above are unchanged.

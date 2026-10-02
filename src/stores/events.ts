@@ -237,7 +237,8 @@ async function hydrateStatus(client: Client, lifecycle: number, signal: AbortSig
     persistStatusCache(merged)
     // #53: place every working session under its root so the list chip can
     // count workers that are not rows (idle managers, nested subagents).
-    void useSessions.getState().resolveSessionAncestry(workingSessionIDs(merged))
+    // A hydration is also when a previously failed lookup is retried.
+    void useSessions.getState().resolveSessionAncestry(workingSessionIDs(merged), { retryFailed: true })
   } catch (error) {
     if (signal.aborted) return
     console.warn("[Events] Failed to hydrate session status:", error)

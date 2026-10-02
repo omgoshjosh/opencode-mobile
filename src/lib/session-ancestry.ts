@@ -27,34 +27,49 @@ export function workingSessionIDs(statuses: Record<string, { type?: unknown } | 
   return Object.entries(statuses ?? {}).flatMap(([id, status]) => (isWorkingStatus(status) ? [id] : []))
 }
 
-/** Deep enough for any real swarm, small enough that malformed data stays cheap. */
-export const MAX_ANCESTRY_DEPTH = 32
+/**
+ * Where a session sits relative to `rootID`, walking known parent links only.
+ *
+ * - `descendant`: the chain reaches `rootID`.
+ * - `elsewhere`: the chain reaches a different known root (`null`), or cycles
+ *   (malformed data is nobody's worker).
+ * - `unplaced`: the chain stops at a link we do not know yet — a lookup that
+ *   is pending or failed. That is partial knowledge, not a root (#53 review).
+ *
+ * No depth cap: `seen` guarantees termination, and a walk can never be longer
+ * than the index it walks. A real daemon tree measured 36 deep (#53 review).
+ */
+export type Placement = "descendant" | "elsewhere" | "unplaced"
+
+export function placementOf(id: string, rootID: string | undefined, parents: ParentIndex): Placement {
+  const seen = new Set<string>([id])
+  let current = id
+  for (;;) {
+    if (!(current in parents)) return "unplaced"
+    const parent = parents[current]
+    if (!parent) return "elsewhere"
+    if (parent === rootID) return "descendant"
+    if (seen.has(parent)) return "elsewhere"
+    seen.add(parent)
+    current = parent
+  }
+}
 
 /** True when `id` is a strict descendant of `rootID`. Unknown links and cycles answer false. */
 export function descendsFrom(id: string, rootID: string, parents: ParentIndex): boolean {
   if (!id || id === rootID) return false
-  const seen = new Set<string>([id])
-  let current = id
-  for (let depth = 0; depth < MAX_ANCESTRY_DEPTH; depth++) {
-    const parent = parents[current]
-    if (!parent) return false
-    if (parent === rootID) return true
-    if (seen.has(parent)) return false
-    seen.add(parent)
-    current = parent
-  }
-  return false
+  return placementOf(id, rootID, parents) === "descendant"
 }
 
 /**
  * The first session on `id`'s chain whose parent is not known yet, or
- * undefined when the chain is fully resolved (reaches a root), cyclic, or too
- * deep. This is the one id worth asking the server about next.
+ * undefined when the chain is fully resolved (reaches a root) or cyclic. This
+ * is the one id worth asking the server about next.
  */
 export function unresolvedAncestor(id: string, parents: ParentIndex): string | undefined {
   const seen = new Set<string>()
   let current = id
-  for (let depth = 0; depth < MAX_ANCESTRY_DEPTH; depth++) {
+  for (;;) {
     if (seen.has(current)) return undefined
     seen.add(current)
     if (!(current in parents)) return current
@@ -62,7 +77,6 @@ export function unresolvedAncestor(id: string, parents: ParentIndex): string | u
     if (!parent) return undefined
     current = parent
   }
-  return undefined
 }
 
 /** Parent links a batch of sessions vouches for. Roots are recorded as `null`. */
