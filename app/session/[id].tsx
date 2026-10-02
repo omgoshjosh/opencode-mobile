@@ -296,7 +296,7 @@ export default function SessionScreen() {
   }, [applyRevertResult, t])
 
   const scrollToBottom = useCallback((animated = true) => {
-    navigation.manual()
+    navigation.manual(0)
     if (retry.current) clearTimeout(retry.current)
     flatListRef.current?.scrollToOffset({ offset: 0, animated })
   }, [navigation])

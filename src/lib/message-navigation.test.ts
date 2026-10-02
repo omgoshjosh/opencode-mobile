@@ -171,3 +171,47 @@ test("manual cancellation and retry exhaustion stop all seek side effects", () =
   nav.manual()
   assert.equal(nav.seek(driver, 1), false)
 })
+
+test("delayed native offsets cannot discard the latest rapid-tap boundary", () => {
+  const nav = new MessageNavigation()
+  nav.sync(["reply3", "reply2", "reply1", "user3", "user2", "user1"])
+  nav.observe(0, 200)
+  nav.ids.forEach((id, index) => nav.frames.set(id, { y: index * 600, height: 600 }))
+  const driver = { scrollToOffset() {}, scrollToIndex() {} }
+  assert.equal(nav.move(1), 1)
+  nav.seek(driver, 0)
+  assert.equal(nav.move(1), 2)
+  nav.seek(driver, 0)
+  // The callback for tap 1 arrives after tap 2 has issued its native scroll.
+  nav.observe(1000, 200)
+  assert.equal(nav.move(1), 3)
+  assert.equal(nav.target, "user3")
+})
+
+test("Latest resets the logical viewport before its native callback arrives", () => {
+  const nav = list()
+  nav.frames.set("new", { y: 0, height: 600 })
+  nav.frames.set("long", { y: 600, height: 1000 })
+  nav.frames.set("old", { y: 1600, height: 100 })
+  nav.observe(1500, 200)
+  nav.manual(0)
+  nav.observe(1500, 200) // an older scroll event still queued during Latest
+  assert.equal(nav.offset, 0)
+  assert.equal(nav.move(1), 1)
+  assert.equal(nav.target, "long")
+})
+
+test("acknowledged navigation resumes scroll reanchoring and manual cancellation", () => {
+  const nav = list()
+  nav.move(1)
+  nav.complete(1000)
+  nav.observe(1000, 200)
+  nav.observe(400, 200)
+  assert.equal(nav.current(), 1)
+  nav.move(-1)
+  nav.complete(0)
+  nav.manual()
+  nav.observe(400, 200)
+  assert.equal(nav.current(), 1)
+  assert.equal(nav.expected, undefined)
+})

@@ -5,6 +5,7 @@ export class MessageNavigation {
   frames = new Map<string, { y: number; height: number }>()
   offset = 0
   height = 0
+  expected: number | undefined
   target: string | undefined
   anchor: { id: string; offset: number; height: number } | undefined
 
@@ -53,12 +54,19 @@ export class MessageNavigation {
     return Math.max(0, frame.y + frame.height - this.height)
   }
 
-  manual() {
+  manual(offset?: number) {
     this.target = undefined
     this.anchor = undefined
+    this.expected = offset
+    if (offset !== undefined) this.offset = offset
   }
 
   observe(offset: number, height: number) {
+    if (this.height !== height) this.expected = undefined
+    // Earlier programmatic scroll callbacks can arrive after a newer tap.
+    // Keep its boundary until native scrolling acknowledges the latest command.
+    if (this.expected !== undefined && Math.abs(this.expected - offset) > 1) return
+    this.expected = undefined
     this.offset = offset
     this.height = height
     if (this.anchor && (Math.abs(this.anchor.offset - offset) > 1 || this.anchor.height !== height)) {
@@ -68,6 +76,8 @@ export class MessageNavigation {
 
   complete(offset: number) {
     if (this.target) this.anchor = { id: this.target, offset, height: this.height }
+    this.expected = offset
+    this.offset = offset
     this.target = undefined
   }
 
