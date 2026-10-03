@@ -1,0 +1,128 @@
+TAP version 13
+# (node:19581) ExperimentalWarning: Module mocking is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# [SSE] Disconnecting
+# [SSE] Connecting to event stream...
+# [SSE] Disconnecting
+# [SSE] Disconnected (aborted)
+# [SSE] Disconnecting
+# [SSE] Connecting to event stream...
+# Subtest: \#53 an idle root shows its working descendants: live child, grandchild, and an unrelated background aggregate
+not ok 1 - \#53 an idle root shows its working descendants: live child, grandchild, and an unrelated background aggregate
+  ---
+  duration_ms: 1621.491333
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/worker-chip-53.integration.test.ts:2:3888'
+  failureType: 'testCodeFailure'
+  error: |-
+    root-a: busy direct child that is not a background delegation
+    
+    0 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    eventually (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/worker-chip-53.integration.test.ts:64:10)
+    async TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/worker-chip-53.integration.test.ts:146:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# [Events] Failed to resync session status for child TypeError: client.session.messagesPage is not a function
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:403:47)
+#     at Array.map (<anonymous>)
+#     at resyncBusySessions (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:387:20)
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:554:18)
+# [SSE] Disconnecting
+# [SSE] Disconnecting
+# [SSE] Connecting to event stream...
+# [Events] Failed to resync session status for stale TypeError: client.session.messagesPage is not a function
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:403:47)
+#     at Array.map (<anonymous>)
+#     at resyncBusySessions (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:387:20)
+#     at <anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/events.ts:554:18)
+# Subtest: \#53 the chip follows workers starting and finishing, and counts nested workers accurately
+not ok 2 - \#53 the chip follows workers starting and finishing, and counts nested workers accurately
+  ---
+  duration_ms: 1534.712791
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/worker-chip-53.integration.test.ts:2:5052'
+  failureType: 'testCodeFailure'
+  error: |-
+    child and its grandchild both working
+    
+    1 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    eventually (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/worker-chip-53.integration.test.ts:64:10)
+    async TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/worker-chip-53.integration.test.ts:178:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# [SSE] Disconnecting
+# [SSE] Disconnected (aborted)
+# [SSE] Disconnecting
+# [SSE] Connecting to event stream...
+# Subtest: \#53 a cold start / reconnect restores the chip from the daemon and drops a stale cached worker
+not ok 3 - \#53 a cold start / reconnect restores the chip from the daemon and drops a stale cached worker
+  ---
+  duration_ms: 1502.508875
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/worker-chip-53.integration.test.ts:2:6445'
+  failureType: 'testCodeFailure'
+  error: |-
+    restored: goomba only, stale cache dropped by the snapshot
+    
+    0 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    eventually (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/worker-chip-53.integration.test.ts:64:10)
+    async TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/worker-chip-53.integration.test.ts:198:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# [SSE] Disconnecting
+# Subtest: \#53 deleted, orphaned and cyclic sessions never count and never hang
+not ok 4 - \#53 deleted, orphaned and cyclic sessions never count and never hang
+  ---
+  duration_ms: 1503.938416
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/worker-chip-53.integration.test.ts:2:7188'
+  failureType: 'testCodeFailure'
+  error: |-
+    only the resolvable worker counts
+    
+    0 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    eventually (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/worker-chip-53.integration.test.ts:64:10)
+    async TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/worker-chip-53.integration.test.ts:223:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 0
+# fail 4
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 6352.912916

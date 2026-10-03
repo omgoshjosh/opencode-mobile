@@ -10,6 +10,7 @@ import {
   STREAM_PART_FLUSH_WINDOW_MS,
 } from "./sessions"
 import { canRefreshPending } from "../lib/focus-read"
+import { isWorkingStatus, workingSessionIDs } from "../lib/session-ancestry"
 import { send as notify } from "../lib/notifications"
 import { sanitizeBody } from "../lib/notify-format"
 import { notifySessionError } from "../lib/session-error-notification"
@@ -234,6 +235,10 @@ async function hydrateStatus(client: Client, lifecycle: number, signal: AbortSig
     })
     clearIdleSessions(settledIdleSessionIDs(merged, changed))
     persistStatusCache(merged)
+    // #53: place every working session under its root so the list chip can
+    // count workers that are not rows (idle managers, nested subagents).
+    // A hydration is also when a previously failed lookup is retried.
+    void useSessions.getState().resolveSessionAncestry(workingSessionIDs(merged), { retryFailed: true })
   } catch (error) {
     if (signal.aborted) return
     console.warn("[Events] Failed to hydrate session status:", error)
@@ -591,6 +596,7 @@ export const useEvents = create<EventsState>((set, get) => ({
               }
               const next = nextSessionStatus(previous, mergeStatusEvent(previous, status), Date.now())
               set((state) => ({ sessionStatus: { ...state.sessionStatus, [sessionID]: next } }))
+              if (isWorkingStatus(next)) void useSessions.getState().resolveSessionAncestry([sessionID])
               if (status.type === "retry" && previous?.type !== "retry") {
                 notify({ category: "errors", title: "Retrying", body: retryStatusLabel(status), sessionId: sessionID })
               }

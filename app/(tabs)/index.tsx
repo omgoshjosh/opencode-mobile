@@ -76,8 +76,8 @@ import {
 } from "../../src/lib/session-attention"
 import { unreadActionFor, unreadActionLabelKey } from "../../src/lib/session-unread-action"
 import { rowSubtitle, triageDot } from "../../src/lib/session-triage"
-import { backgroundFor } from "../../src/lib/background-activity"
-import { activeWorkerCount, summarizeWorkerStates, workerStateColors, workerStatesFor, workerStatesLabel, type WorkerState } from "../../src/lib/worker-states"
+import { listWorkerSummary, unplacedWorkerIDs, unplacedWorkersLabel } from "../../src/lib/list-worker-summary"
+import { workerStateColors, type WorkerState } from "../../src/lib/worker-states"
 import { SESSION_SORTS, parseSessionSort, sortSessions, type SessionSort } from "../../src/lib/session-sort"
 import { useDrafts } from "../../src/stores/drafts"
 import { useSettings } from "../../src/stores/settings"
@@ -133,16 +133,33 @@ function formatTime(timestamp: number, t: (key: string, opts?: Record<string, un
  */
 function useWorkerSummary(sessionID: string): { count: number; label: string; top: WorkerState } {
   const sessions = useSessions((s) => s.sessions)
+  const parents = useSessions((s) => s.sessionParents)
   return useEvents(
     useShallow((s) => {
       // `terminalChildIDs` is store-wide and free here — it comes from live
       // `message.part.updated` events, not from loaded parts. Without it the
       // list's legacy fallback could never drop a finished child, so one child
       // whose cached status never flipped to idle pinned the chip at 1 forever.
-      const background = backgroundFor({ parentID: sessionID, statuses: s.sessionStatus, sessions, terminalChildIDs: s.terminalChildIDs })
-      const { counts } = workerStatesFor({ running: background?.running ?? 0, jobs: background?.jobs ?? [], questionsBySession: s.questions })
-      return { count: activeWorkerCount(counts), label: workerStatesLabel(counts), top: summarizeWorkerStates(counts).top }
+      return listWorkerSummary({ rootID: sessionID, statuses: s.sessionStatus, sessions, parents, terminalChildIDs: s.terminalChildIDs, questionsBySession: s.questions })
     }),
+  )
+}
+
+/**
+ * Working sessions whose root is not known yet (an ancestry lookup is pending
+ * or failed). Rows never fold them into their N, so the list says they exist
+ * rather than letting every chip look complete (#53).
+ */
+function UnplacedWorkersHint({ isDark }: { isDark: boolean }) {
+  const sessions = useSessions((s) => s.sessions)
+  const parents = useSessions((s) => s.sessionParents)
+  const count = useEvents((s) => unplacedWorkerIDs({ statuses: s.sessionStatus, sessions, parents, terminalChildIDs: s.terminalChildIDs }).length)
+  if (count === 0) return null
+  const label = unplacedWorkersLabel(count)
+  return (
+    <Text style={[styles.unplacedWorkers, isDark && styles.unplacedWorkersDark]} accessibilityRole="text" accessibilityLabel={label} testID="unplaced-workers-hint">
+      {label}
+    </Text>
   )
 }
 
@@ -1511,6 +1528,7 @@ export default function SessionsScreen() {
         </TouchableOpacity>
       </Modal>
 
+      <UnplacedWorkersHint isDark={isDark} />
       <FlatList
         data={rows}
         keyExtractor={(row) => (row.type === "header" ? `dir:${row.directory}` : row.session.id)}
@@ -1988,6 +2006,15 @@ const styles = StyleSheet.create({
   // Hue is set per row from the top worker state (see workerStateColors), so
   // "1 needs input" cannot read as the same calm green as "3 working". The
   // colour here is only the fallback for a row with no state to show.
+  unplacedWorkers: {
+    color: "#6b7280",
+    fontSize: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+  },
+  unplacedWorkersDark: {
+    color: "#9ca3af",
+  },
   workersLabel: {
     color: "#4ade80",
     fontSize: 12,

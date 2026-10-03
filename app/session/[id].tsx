@@ -9,6 +9,7 @@ import {
   useColorScheme,
   KeyboardAvoidingView,
   Keyboard,
+  AppState,
   Platform,
   ActivityIndicator,
   Alert,
@@ -57,7 +58,7 @@ import { summarizeModel } from "../../src/lib/summarize-model"
 import { awaitingTurn, inFlightUserCreatedAt } from "../../src/lib/message-delivery"
 import { cancelledQueuedMessages, prependQueuedAttachments, queuedUserMessages, recoverQueuedMessages, shouldApplyQueuedEdit } from "../../src/lib/queued-message-edit"
 import type { MessageCancelOutcome } from "../../src/lib/message-cancel"
-import { shouldApplyRestoredDraft, shouldPersistFocusedDraft } from "../../src/lib/draft-lifecycle"
+import { createDraftAutosave, shouldApplyRestoredDraft, shouldPersistFocusedDraft } from "../../src/lib/draft-lifecycle"
 import { TitlePeek } from "../../src/components/chat/TitlePeek"
 import { visibleTranscriptEntry } from "../../src/lib/transcript-visibility"
 import { useSessions } from "../../src/stores/sessions"
@@ -154,7 +155,6 @@ export default function SessionScreen() {
   const terminalChildIDs = useEvents((state) => state.terminalChildIDs)
   const loadDrafts = useDrafts((state) => state.load)
   const saveDraft = useDrafts((state) => state.save)
-  const clearDraft = useDrafts((state) => state.clear)
 
   // Derive sending state for this specific session
   const isSending = useSessions((s) => !!(currentSession && s.sending[currentSession.id]))
@@ -385,13 +385,28 @@ export default function SessionScreen() {
   const queuedEditInFlight = useRef(false)
   const revertSnapshotRef = useRef<{ sessionID: string; text: string; files: Attachment[] } | null>(null)
 
+  // #55: ~1 s debounced save while typing, flushed on blur, background,
+  // session change, navigation and unmount; cleared only after an accepted send.
+  const autosaveRef = useRef<ReturnType<typeof createDraftAutosave> | null>(null)
+  autosaveRef.current ??= createDraftAutosave({
+    save: (sessionID, text) => {
+      useDrafts.getState().save(sessionID, text)
+      savedDraftRef.current[sessionID] = text
+    },
+    stored: (sessionID) => useDrafts.getState().drafts[sessionID]?.text,
+  })
+  const autosave = autosaveRef.current
+  useEffect(() => () => autosave.flush(), [autosave])
+
   const persistDraft = useCallback(() => {
+    // Whatever the debounce still holds is written to its own session first.
+    autosave.flush()
     if (!id) return
     const text = inputRef.current
     if (!shouldPersistFocusedDraft(draftFocusedRef.current, draftRestoredRef.current, draftTouchedRef.current, savedDraftRef.current[id], text)) return
     saveDraft(id, text)
     savedDraftRef.current[id] = text
-  }, [id, saveDraft])
+  }, [id, saveDraft, autosave])
 
   // Native-stack routes remain mounted while another session is pushed above
   // them. Focus owns draft restoration, persistence, and keyboard handling so
@@ -414,8 +429,13 @@ export default function SessionScreen() {
         setInput(text)
       })
       const sub = Keyboard.addListener("keyboardDidHide", persistDraft)
+      // Backgrounding is the last reliable moment before the OS may evict us.
+      const appState = AppState.addEventListener("change", (next) => {
+        if (next === "background" || next === "inactive") persistDraft()
+      })
       return () => {
         sub.remove()
+        appState.remove()
         persistDraft()
         focused = false
         draftFocusedRef.current = false
@@ -871,20 +891,27 @@ export default function SessionScreen() {
 
       const text = input.trim()
       const files = [...attachments]
+      // #55: the draft stays durable until the server ACCEPTS the send. Capture
+      // exactly what is being sent; `accepted` clears only that text, so a
+      // failed send keeps it and anything typed during the flight survives.
+      const draftToken = id ? autosave.beginSend(id, inputRef.current) : null
+      const sendAccepted = () => {
+        if (draftToken) autosave.accepted(draftToken)
+      }
       setInput("")
       setAttachments([])
-      // A sent message is no longer a draft.
-      if (id) {
-        clearDraft(id)
-        savedDraftRef.current[id] = ""
-      }
+      // The composer is empty now, but the stored draft is not cleared yet:
+      // mark the empty composer as "already saved" so a blur/background
+      // persist cannot wipe the in-flight draft.
+      if (id) savedDraftRef.current[id] = ""
 
       // Server slash commands (no attachments for commands)
       if (text.startsWith("/") && files.length === 0) {
         const [cmdName, ...args] = text.split(" ")
         const name = cmdName.slice(1)
         if (name === "compact") {
-          runCompact()
+          if (await runCompact()) sendAccepted()
+          else setInput((prev) => (prev ? prev : text))
           return
         }
         const match = serverCommands.find((c) => c.name === name)
@@ -899,6 +926,7 @@ export default function SessionScreen() {
               agent,
               model: model ? `${model.providerID}/${model.modelID}` : undefined,
             })
+            sendAccepted()
           } catch (err) {
             console.error("Command failed:", err)
             setInput((prev) => (prev ? prev : text))
@@ -924,7 +952,13 @@ export default function SessionScreen() {
           }
         }
         const selection = sessionPromptSelection({ agent, model: effectiveModel })
-        await sendMessage(text, selection.model, selection.agent, files, variant || undefined)
+        const accepted = await sendMessage(text, selection.model, selection.agent, files, variant || undefined)
+        if (accepted) sendAccepted()
+        else {
+          // Nothing reached the server: give the text back; the draft was never cleared.
+          setInput((prev) => (prev ? prev : text))
+          setAttachments((prev) => (prev.length ? prev : files))
+        }
       } catch (err) {
         console.error("Send failed:", err)
         // Restore the user's text and attachments so their input isn't lost.
@@ -1051,17 +1085,23 @@ export default function SessionScreen() {
   // must still win, so the guard keys on this flag, not on the mismatch.
   // /compact: summarize with the model that actually RAN this session (the
   // swarm facade is not a model — see src/lib/summarize-model.ts).
-  const runCompact = useCallback(() => {
-    if (!sessionClient || !currentSession) return
+  // Resolves true once the server accepted the summarize request (#55: the
+  // composer's "/compact" draft is cleared only then).
+  const runCompact = useCallback(async (): Promise<boolean> => {
+    if (!sessionClient || !currentSession) return false
     const chosen = summarizeModel(messages, model ? { providerID: model.providerID, modelID: model.modelID } : null)
     if (!chosen) {
       Alert.alert(t("session.alerts.notSupportedTitle"), "No usable model found to summarize with yet.")
-      return
+      return false
     }
-    sessionClient.session.summarize(currentSession.id, chosen).catch((err: unknown) => {
+    try {
+      await sessionClient.session.summarize(currentSession.id, chosen)
+      return true
+    } catch (err: unknown) {
       console.error("Compact failed:", err)
       Alert.alert(t("session.alerts.sendFailedTitle"), "Compact failed — the server may not support summarize.")
-    })
+      return false
+    }
   }, [sessionClient, currentSession, messages, model, t])
 
   // Tap the (truncated) header title -> full title unfurls in a banner
@@ -1493,6 +1533,7 @@ export default function SessionScreen() {
                   : (text) => {
                       draftTouchedRef.current = true
                       setInput(text)
+                      if (id) autosave.change(id, text)
                     }
               }
               onBlur={persistDraft}
