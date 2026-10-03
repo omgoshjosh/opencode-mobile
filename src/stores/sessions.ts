@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import { ApiError, type Session, type Message, type Part, type Event, type MessageWithParts, type Client } from "../lib/sdk"
 import { useConnections } from "./connections"
+import { useDrafts } from "./drafts"
 import { useSettings } from "./settings"
 import { addBreadcrumb } from "../lib/sentry"
 import { AnalyticsEvent, track } from "../lib/analytics"
@@ -207,7 +208,7 @@ interface SessionsState {
     agent?: string,
     files?: Array<{ uri: string; mime: string; filename?: string; base64?: string }>,
     variant?: string,
-  ) => Promise<void>
+  ) => Promise<boolean>
   abortSession: () => Promise<void>
   refreshMessages: (signal?: AbortSignal) => Promise<void>
   reconcileOpenMessages: () => Promise<void>
@@ -743,6 +744,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
   removeSession: (sessionID) => {
     deletedSessionIDs.add(sessionID)
+    // A deleted session's composer draft can never be sent; keep storage bounded (#55).
+    useDrafts.getState().prune(sessionID)
     sessionMembershipRevisions.set(sessionID, (sessionMembershipRevisions.get(sessionID) ?? 0) + 1)
     bumpTranscriptRevision(sessionID)
     if (get().currentSession?.id === sessionID || selectingSessionID === sessionID) selectSeq += 1
@@ -1039,7 +1042,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
     const session = get().currentSession
     if (!client || !session) {
       set({ error: "No active session" })
-      return
+      // Nothing reached the server, so nothing was accepted (#55).
+      return false
     }
 
     // Declared out here so the catch below can mark exactly this message
@@ -1111,6 +1115,9 @@ export const useSessions = create<SessionsState>((set, get) => ({
       // streamed response) so a failure here can propagate to the caller — SSE
       // events still update messages/parts/status in real-time on success.
       await client.session.prompt(session.id, { parts: promptParts, model, agent, variant })
+      // Resolving means the daemon answered 2xx: the prompt is ACCEPTED. This
+      // is the only signal a composer may use to drop its draft (#55).
+      return true
     } catch (err) {
       console.error("[sendMessage] error:", err)
       const stillCurrent = get().currentSession?.id === session.id

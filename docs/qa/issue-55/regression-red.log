@@ -1,0 +1,248 @@
+TAP version 13
+# (node:79881) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: \#55 typing saves after a ~1 s debounce, once, with the latest text
+not ok 1 - \#55 typing saves after a ~1 s debounce, once, with the latest text
+  ---
+  duration_ms: 1.176125
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:2:1601'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+    
+    + undefined
+    - 1000
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1000
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:40:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: \#55 blur / background / navigation flushes the pending text immediately
+not ok 2 - \#55 blur / background / navigation flushes the pending text immediately
+  ---
+  duration_ms: 0.214291
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:2:2204'
+  failureType: 'testCodeFailure'
+  error: |-
+    createDraftAutosave exists
+    + actual - expected
+    
+    + 'undefined'
+    - 'function'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'function'
+  actual: 'undefined'
+  operator: 'strictEqual'
+  stack: |-
+    autosave (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:21:10)
+    TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:54:18)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: \#55 a pending debounce for session A never writes into session B
+not ok 3 - \#55 a pending debounce for session A never writes into session B
+  ---
+  duration_ms: 0.181917
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:2:2577'
+  failureType: 'testCodeFailure'
+  error: |-
+    createDraftAutosave exists
+    + actual - expected
+    
+    + 'undefined'
+    - 'function'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'function'
+  actual: 'undefined'
+  operator: 'strictEqual'
+  stack: |-
+    autosave (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:21:10)
+    TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:63:18)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: \#55 an accepted send clears the draft and no pending debounce resurrects it
+not ok 4 - \#55 an accepted send clears the draft and no pending debounce resurrects it
+  ---
+  duration_ms: 0.239125
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:2:3011'
+  failureType: 'testCodeFailure'
+  error: |-
+    createDraftAutosave exists
+    + actual - expected
+    
+    + 'undefined'
+    - 'function'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'function'
+  actual: 'undefined'
+  operator: 'strictEqual'
+  stack: |-
+    autosave (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:21:10)
+    TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:73:18)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: \#55 a failed send keeps the draft
+not ok 5 - \#55 a failed send keeps the draft
+  ---
+  duration_ms: 0.16775
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:2:3412'
+  failureType: 'testCodeFailure'
+  error: |-
+    createDraftAutosave exists
+    + actual - expected
+    
+    + 'undefined'
+    - 'function'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'function'
+  actual: 'undefined'
+  operator: 'strictEqual'
+  stack: |-
+    autosave (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:21:10)
+    TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:83:18)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: \#55 text typed while the send is in flight is never cleared
+not ok 6 - \#55 text typed while the send is in flight is never cleared
+  ---
+  duration_ms: 0.125
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:2:3653'
+  failureType: 'testCodeFailure'
+  error: |-
+    createDraftAutosave exists
+    + actual - expected
+    
+    + 'undefined'
+    - 'function'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'function'
+  actual: 'undefined'
+  operator: 'strictEqual'
+  stack: |-
+    autosave (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:21:10)
+    TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/lib/draft-autosave.test.ts:93:16)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# (node:79882) ExperimentalWarning: Module mocking is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: \#55 a draft survives a cold start and a reopen
+ok 7 - \#55 a draft survives a cold start and a reopen
+  ---
+  duration_ms: 30.557958
+  type: 'test'
+  ...
+# Subtest: \#55 hydration never overwrites fresher typing, and never resurrects a clear that raced it
+not ok 8 - \#55 hydration never overwrites fresher typing, and never resurrects a clear that raced it
+  ---
+  duration_ms: 1.1
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/drafts-55.integration.test.ts:2:2454'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+    
+    + undefined
+    - "another session's draft"
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: "another session's draft"
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/drafts-55.integration.test.ts:57:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: \#55 deleting a session prunes its draft
+not ok 9 - \#55 deleting a session prunes its draft
+  ---
+  duration_ms: 0.657292
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/drafts-55.integration.test.ts:2:3510'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+    
+    + {
+    +   at: 1790989627034,
+    +   text: 'draft for a deleted session'
+    + }
+    - undefined
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  actual:
+    text: 'draft for a deleted session'
+    at: 1790989627034
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/drafts-55.integration.test.ts:67:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: \#55 sendMessage reports server acceptance: true on 2xx, false when nothing was sent, throws on failure
+not ok 10 - \#55 sendMessage reports server acceptance: true on 2xx, false when nothing was sent, throws on failure
+  ---
+  duration_ms: 0.287792
+  type: 'test'
+  location: '/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/drafts-55.integration.test.ts:2:3997'
+  failureType: 'testCodeFailure'
+  error: |-
+    no client/session: nothing was accepted
+    + actual - expected
+    
+    + undefined
+    - false
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/josh/agents/worktrees/mobile-worker-badge-53/src/stores/drafts-55.integration.test.ts:82:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+1..10
+# tests 10
+# suites 0
+# pass 1
+# fail 9
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 250.304833
